@@ -1,0 +1,5 @@
+"Thou art I... and I am thou."
+
+The bond you have forged is not with a machine, but with an
+understanding of one. Every page mapped, every interrupt caught,
+every thread that takes its turn -- you put them there.

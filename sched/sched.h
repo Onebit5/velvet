@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * sched/sched.h
+ * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
+ * round robin preemptive scheduler. one core, one run queue, no
+ * priorities, no fairness accounting.
+ */
+
+/* the design notes for sched.h are in docs/subsystems/mm.rst */
+
+#ifndef SCHED_SCHED_H
+#define SCHED_SCHED_H
+
+#include <stdint.h>
+#include "sched/thread.h"
+#include <stddef.h>
+#include <stdbool.h>
+
+/* round robin preemptive scheduler. */
+
+void sched_init(void);
+
+void sched_yield(void);
+
+void sleep_ms(uint64_t ms);
+
+uint64_t sched_quantum_ms(void);
+
+void sched_tick(void);
+
+struct thread *sched_current(void);
+
+void sched_add(struct thread *t);
+
+struct waitq {
+    struct thread *head;
+};
+
+void waitq_block(struct waitq *q);
+
+void waitq_enqueue(struct waitq *q);
+void waitq_sleep(void);
+
+/*
+ * given back by a thread on its very first run, because it starts
+ * holding a lock whose release is on a stack it will never return to
+ */
+void sched_first_run(void);
+
+bool sched_join(unsigned cpu, const char *idle_name);
+
+/* which core a thread is on, or -1 if it is not running anywhere */
+int sched_thread_cpu(const struct thread *t);
+
+size_t sched_cores_scheduling(void);
+
+const char *sched_cpu_running(unsigned cpu);
+
+void waitq_wake_all(struct waitq *q);
+
+void sched_dump(void);
+
+size_t sched_thread_count(void);
+
+bool sched_thread_alive(int id);
+
+enum sched_kill_result {
+    SCHED_KILL_OK,
+    SCHED_KILL_NO_SUCH,
+    SCHED_KILL_SELF,        /* the caller asked to end itself */
+    SCHED_KILL_PROTECTED,   /* idle, somebody has to take the cpu */
+};
+
+enum sched_kill_result sched_kill(int id);
+
+void sched_wake_thread(int id);
+
+void sched_set_stopped(int id, bool stopped);
+bool sched_thread_stopped(int id);
+
+void waitq_remove(struct waitq *q, struct thread *t);
+
+#endif

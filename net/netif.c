@@ -1,0 +1,1304 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * net/netif.c
+ * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
+ * the interface: the one place that knows both card and stack.
+ */
+
+#include "net/netif.h"
+#include "net/ether.h"
+#include "net/ip.h"
+#include "net/icmp.h"
+#include "net/udp.h"
+#include "net/socket.h"
+#include "net/dhcp.h"
+#include "net/tcp.h"
+#include "net/dns.h"
+#include "drivers/e1000.h"
+#include "drivers/pit.h"
+#include "lib/string.h"
+#include "lib/kprintf.h"
+#include "sched/spinlock.h"
+#include "sched/sched.h"
+#include "sched/thread.h"
+
+/* NOTE: everything this file *calls* is checked against packets built from the rfcs. */
+
+static bool up;
+static ipv4 my_ip, my_mask;
+static ipv4 my_router, my_dns;
+
+/* the conversation with whoever hands out addresses. */
+static struct dhcp dhcp;
+static struct arp_cache cache;
+static struct net_stats stats;
+
+/* the interface's own state, which the poll thread writes and the shell reads. */
+static struct spinlock net_lock = SPINLOCK("net", LOCK_RANK_DEVICE);
+
+/* one buffer for building, one for receiving. */
+static uint8_t out_frame[ETHER_HEADER_LEN + ETHER_MTU];
+static uint8_t in_frame[2048];
+
+bool net_is_up(void)
+{
+    return up;
+}
+ipv4 net_address(void)
+{
+    return my_ip;
+}
+ipv4 net_netmask(void)
+{
+    return my_mask;
+}
+const struct mac *net_mac(void)
+{
+    return e1000_mac();
+}
+const struct arp_cache *net_arp_cache(void)
+{
+    return &cache;
+}
+
+void net_get_stats(struct net_stats *out)
+{
+    uint64_t flags = spin_lock_irq(&net_lock);
+    *out = stats;
+    spin_unlock_irq(&net_lock, flags);
+}
+
+bool net_up(ipv4 address, ipv4 netmask)
+{
+    if (!e1000_present()) {
+        return false;
+    }
+    uint64_t flags = spin_lock_irq(&net_lock);
+    my_ip = address;
+    my_mask = netmask;
+    arp_cache_reset(&cache);
+    up = true;
+    spin_unlock_irq(&net_lock, flags);
+    return true;
+}
+
+/* the receive path, needed by the send path, see the loopback note in net_send_ip. */
+static void got_ip(const uint8_t *p, size_t len);
+
+
+
+static bool send_frame(const struct mac *to, uint16_t type,
+                       const void *payload, size_t len)
+{
+    /*
+     * FIXME: this buffer is one for the whole machine, and so are the two
+     * static datagrams the callers build into (net_send_ip and
+     * net_socket_send each declare one). two processes sending at once on
+     * two cores assemble into the same bytes: a frame can leave carrying
+     * one program's header and another program's payload, and a short
+     * datagram written over a long one leaves the long one's tail in
+     * place. nothing on this path takes a lock, which is deliberate in
+     * net_socket_send, the socket table is locked and the buffers it
+     * feeds are not. one transmit lock across build and send, or a
+     * buffer per core, makes a frame one unit again.
+     */
+    if (len > ETHER_MTU) {
+        return false;
+    }
+    size_t at = ether_build(out_frame, to, e1000_mac(), type);
+    memcpy(out_frame + at, payload, len);
+
+    if (!e1000_send(out_frame, at + len)) {
+        return false;
+    }
+    stats.frames_out++;
+    return true;
+}
+
+bool net_arp_request(ipv4 who)
+{
+    if (!up) {
+        return false;
+    }
+    uint8_t p[ARP_PACKET_LEN];
+    arp_build(p, ARP_REQUEST, e1000_mac(), my_ip, &MAC_ZERO, who);
+
+    stats.arp_out++;
+    return send_frame(&MAC_BROADCAST, ETHERTYPE_ARP, p, sizeof p);
+}
+
+/*
+ * a table of connections rather than a list, for the same reason the
+ * socket table is one: this runs on a poll thread and is read by a
+ * shell, and a fixed table with a lock over it has no allocation to get
+ * wrong at either end.
+ *
+ * four of them, and that is not a small number here, each carries
+ * eight kilobytes of buffers, so the table is a third of a megabyte of
+ * static memory. that is the honest cost of a protocol that must keep
+ * what it has said until the other end confirms it
+ */
+static struct tcp_conn conns[TCP_CONN_MAX];
+static uint16_t next_port = 40000;
+
+/* one waitq for all connection activity rather than one per connection. */
+static struct waitq tcp_activity;
+
+/* one buffer for building segments, on the poll thread */
+static uint8_t tcp_out[TCP_HEADER_MIN + TCP_MSS];
+
+static struct tcp_conn *find_conn(ipv4 from, uint16_t from_port,
+                                  uint16_t to_port)
+{
+    struct tcp_conn *listening = NULL;
+
+    for (int i = 0; i < TCP_CONN_MAX; i++) {
+        struct tcp_conn *c = &conns[i];
+        if (c->state == TCP_CLOSED) {
+            continue;
+        }
+        if (c->local_port != to_port) {
+            continue;
+        }
+        if (c->state == TCP_LISTEN) {
+            listening = c;
+            continue;
+        }
+        if (c->remote == from && c->remote_port == from_port) {
+            return c;
+        }
+    }
+    /*
+     * an established connection is preferred over a listening one, which
+     * is why the whole table is walked before this is returned: a
+     * segment belonging to a live connection must never be handed to
+     * the listener on the same port
+     */
+    return listening;
+}
+
+static void got_tcp(ipv4 from, ipv4 to, const uint8_t *p, size_t len)
+{
+    struct tcp_segment seg;
+    if (!tcp_parse(p, len, from, to, &seg)) {
+        stats.dropped_bad++;
+        return;
+    }
+
+    struct tcp_conn *c = find_conn(from, seg.from_port, seg.to_port);
+    if (c == NULL) {
+        /*
+         * nobody is listening. the right answer is a reset, so the other
+         * end finds out now rather than retrying for a minute, and it
+         * is built by hand because there is no connection to build it
+         * from
+         */
+        if (!(seg.flags & TCP_RST)) {
+            size_t n = tcp_build(tcp_out, to, from, seg.to_port,
+                                 seg.from_port, seg.ack,
+                                 seg.seq + seg.payload_len
+                                     + ((seg.flags & TCP_SYN) ? 1 : 0),
+                                 TCP_RST | TCP_ACK, 0, NULL, 0);
+            net_send_ip(from, IP_PROTO_TCP, tcp_out, n);
+        }
+        return;
+    }
+
+    if (c->state == TCP_LISTEN) {
+        /*
+         * the address is in the ip header and a segment does not carry
+         * it, so it is filled in here before the state machine sees it
+         */
+        c->remote = from;
+    }
+    enum tcp_state before = c->state;
+    size_t had = c->recv_len;
+
+    tcp_input(c, &seg, p + seg.payload_at, pit_uptime_ms());
+
+    /*
+     * anything a blocked reader could care about: bytes arrived, or the
+     * connection changed state. the second matters as much as the first
+     *, a read waiting on a stream that just ended must return zero
+     * rather than sleep forever waiting for bytes that are not coming
+     */
+    if (c->recv_len != had || c->state != before) {
+        waitq_wake_all(&tcp_activity);
+    }
+}
+
+/* give every connection its chance to speak. */
+static void tcp_run(void)
+{
+    uint64_t now = pit_uptime_ms();
+
+    /*
+     * what each was, so a state that changed while nothing arrived,
+     * a retransmission timer giving up, a TIME_WAIT ending, still
+     * wakes whoever is blocked on it
+     */
+    static enum tcp_state was[TCP_CONN_MAX];
+
+    for (int i = 0; i < TCP_CONN_MAX; i++) {
+        struct tcp_conn *c = &conns[i];
+        if (c->state == TCP_CLOSED) {
+            continue;
+        }
+        for (int guard = 0; guard < 16; guard++) {
+            size_t n = tcp_tick(c, now, tcp_out, sizeof tcp_out);
+            if (n == 0) {
+                if (c->state != was[i]) {
+                    waitq_wake_all(&tcp_activity);
+                    was[i] = c->state;
+                }
+                break;
+            }
+            if (c->state != was[i]) {
+                waitq_wake_all(&tcp_activity);
+                was[i] = c->state;
+            }
+            if (!net_send_ip(c->remote, IP_PROTO_TCP, tcp_out, n)) {
+                /* arp has not answered yet. */
+                break;
+            }
+        }
+    }
+}
+
+int net_tcp_connect(ipv4 to, uint16_t port)
+{
+    if (!up) {
+        return -1;
+    }
+
+    /* a finished connection still holding its slot is fair game. */
+    uint64_t now = pit_uptime_ms();
+    bool any_free = false;
+    for (int i = 0; i < TCP_CONN_MAX; i++) {
+        if (tcp_finished(&conns[i], now)) {
+            any_free = true;
+            break;
+        }
+    }
+    if (!any_free) {
+        int oldest = -1;
+        for (int i = 0; i < TCP_CONN_MAX; i++) {
+            if (conns[i].state != TCP_TIME_WAIT) {
+                continue;
+            }
+            if (oldest < 0 || conns[i].closed_ms < conns[oldest].closed_ms) {
+                oldest = i;
+            }
+        }
+        if (oldest >= 0) {
+            memset(&conns[oldest], 0, sizeof conns[oldest]);
+        }
+    }
+
+    for (int i = 0; i < TCP_CONN_MAX; i++) {
+        if (!tcp_finished(&conns[i], now)) {
+            continue;
+        }
+        /* the initial sequence number has to differ between connections. */
+        uint32_t iss = (uint32_t)(pit_uptime_ms() * 2654435761u) + next_port;
+
+        tcp_connect(&conns[i], my_ip, next_port, to, port, iss,
+                    pit_uptime_ms());
+        next_port++;
+        if (next_port < 40000) {
+            next_port = 40000;
+        }
+        return i;
+    }
+    return -1;
+}
+
+int net_tcp_listen(uint16_t port)
+{
+    if (!up) {
+        return -1;
+    }
+    for (int i = 0; i < TCP_CONN_MAX; i++) {
+        if (conns[i].state == TCP_CLOSED) {
+            uint32_t iss = (uint32_t)(pit_uptime_ms() * 2654435761u) + port;
+            tcp_listen(&conns[i], my_ip, port, iss);
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* one waitq for all connection activity rather than one per connection. */
+static struct waitq tcp_activity;
+
+static struct tcp_conn *owned(int owner, int handle)
+{
+    int i = handle - TCP_HANDLE_BASE;
+    if (i < 0 || i >= TCP_CONN_MAX) {
+        return NULL;
+    }
+    struct tcp_conn *c = &conns[i];
+    if (c->state == TCP_CLOSED && c->error == NULL) {
+        return NULL;
+    }
+    return c->owner == owner ? c : NULL;
+}
+
+int net_tcp_open(int owner, ipv4 to, uint16_t port)
+{
+    int i = net_tcp_connect(to, port);
+    if (i < 0) {
+        return -1;
+    }
+    conns[i].owner = owner;
+    return TCP_HANDLE_BASE + i;
+}
+
+int net_tcp_serve(int owner, uint16_t port)
+{
+    int i = net_tcp_listen(port);
+    if (i < 0) {
+        return -1;
+    }
+    conns[i].owner = owner;
+    return TCP_HANDLE_BASE + i;
+}
+
+/*
+ * a listening connection *becomes* the accepted one when a syn arrives,
+ * because there is one entry per port and no backlog. so accept waits
+ * for that entry to reach ESTABLISHED and hands back the same handle,
+ * then opens a fresh listener on the same port if there is room.
+ *
+ * that is not what accept does on a real system, where the listening
+ * socket survives and each connection is a new one. the difference
+ * matters for a server taking two connections at once, and it is the
+ * honest shape of a four-entry table, documented rather than hidden,
+ * because a program written against this will need changing if the
+ * table ever grows a backlog
+ */
+int net_tcp_accept(int owner, int handle, int64_t timeout_ms)
+{
+    struct tcp_conn *c = owned(owner, handle);
+    if (c == NULL) {
+        return -1;
+    }
+    uint64_t deadline = pit_uptime_ms() + (uint64_t)(timeout_ms < 0 ? 0
+                                                     : timeout_ms);
+    for (;;) {
+        uint64_t flags = spin_lock_irq(&net_lock);
+        enum tcp_state st = c->state;
+        if (st == TCP_ESTABLISHED || st == TCP_CLOSE_WAIT) {
+            spin_unlock_irq(&net_lock, flags);
+            return handle;
+        }
+        if (st == TCP_CLOSED) {
+            spin_unlock_irq(&net_lock, flags);
+            return -1;
+        }
+        if (timeout_ms == 0
+         || (timeout_ms > 0 && pit_uptime_ms() >= deadline)) {
+            spin_unlock_irq(&net_lock, flags);
+            return -1;
+        }
+        waitq_enqueue(&tcp_activity);
+        spin_unlock_irq(&net_lock, flags);
+        waitq_sleep();
+    }
+}
+
+int64_t net_tcp_send(int owner, int handle, const void *data, size_t len)
+{
+    struct tcp_conn *c = owned(owner, handle);
+    if (c == NULL) {
+        return -1;
+    }
+    uint64_t flags = spin_lock_irq(&net_lock);
+    size_t n = tcp_write(c, data, len);
+    spin_unlock_irq(&net_lock, flags);
+
+    if (n == 0 && c->state != TCP_ESTABLISHED && c->state != TCP_CLOSE_WAIT) {
+        return -1;      /* not a full buffer, there is no connection */
+    }
+    return (int64_t)n;
+}
+
+int64_t net_tcp_recv(int owner, int handle, void *out, size_t max,
+                     int64_t timeout_ms)
+{
+    struct tcp_conn *c = owned(owner, handle);
+    if (c == NULL) {
+        return -1;
+    }
+    uint64_t deadline = pit_uptime_ms() + (uint64_t)(timeout_ms < 0 ? 0
+                                                     : timeout_ms);
+    for (;;) {
+        uint64_t flags = spin_lock_irq(&net_lock);
+        size_t n = tcp_read(c, out, max);
+        if (n > 0) {
+            spin_unlock_irq(&net_lock, flags);
+            return (int64_t)n;
+        }
+
+        /* nothing to read, and nothing ever will be. */
+        enum tcp_state st = c->state;
+        if (st == TCP_CLOSE_WAIT || st == TCP_CLOSED || st == TCP_LAST_ACK
+         || st == TCP_TIME_WAIT) {
+            spin_unlock_irq(&net_lock, flags);
+            return 0;
+        }
+        if (timeout_ms == 0
+         || (timeout_ms > 0 && pit_uptime_ms() >= deadline)) {
+            spin_unlock_irq(&net_lock, flags);
+            return -1;
+        }
+        waitq_enqueue(&tcp_activity);
+        spin_unlock_irq(&net_lock, flags);
+        waitq_sleep();
+    }
+}
+
+bool net_tcp_shut(int owner, int handle)
+{
+    struct tcp_conn *c = owned(owner, handle);
+    if (c == NULL) {
+        return false;
+    }
+    uint64_t flags = spin_lock_irq(&net_lock);
+    tcp_close(c);
+    spin_unlock_irq(&net_lock, flags);
+    return true;
+}
+
+void net_tcp_close_all(int owner)
+{
+    uint64_t flags = spin_lock_irq(&net_lock);
+    for (int i = 0; i < TCP_CONN_MAX; i++) {
+        if (conns[i].owner == owner && conns[i].state != TCP_CLOSED) {
+            tcp_close(&conns[i]);
+        }
+    }
+    spin_unlock_irq(&net_lock, flags);
+}
+
+int net_tcp_state(int owner, int handle)
+{
+    struct tcp_conn *c = owned(owner, handle);
+    return c == NULL ? -1 : (int)c->state;
+}
+
+void net_tcp_forget(int i)
+{
+    if (i >= 0 && i < TCP_CONN_MAX) {
+        /*
+         * a finished connection is left in the table on purpose, so
+         * `tcp` can still say how it ended, "nothing is listening
+         * there" is the answer somebody wanted, and a slot that
+         * vanishes the moment it fails takes the answer with it. this
+         * is how it gets tidied away once it has been read
+         */
+        memset(&conns[i], 0, sizeof conns[i]);
+    }
+}
+
+struct tcp_conn *net_tcp_at(int i)
+{
+    if (i < 0 || i >= TCP_CONN_MAX) {
+        return NULL;
+    }
+    return &conns[i];
+}
+
+/*
+ * the resolver. dns.c is the pure half, build a question, read an
+ * answer, believe as little of it as possible, and this is the part
+ * that puts it on the wire and waits.
+ *
+ * it is a *blocking* call made from whatever thread wanted the name,
+ * rather than a state machine driven by the poll thread like dhcp. the
+ * difference is that dhcp runs whether or not anybody asked, and this
+ * only ever happens because a caller is sitting there wanting an answer.
+ * so the caller does the waiting, and the poll thread's only job is to
+ * hand over the reply when it turns up.
+ *
+ * the server comes from dhcp, which recorded option 6 long before
+ * anything used it.
+ */
+#define DNS_CACHE_MAX   8
+#define DNS_RETRIES     3
+#define DNS_WAIT_MS     1000
+
+struct dns_entry {
+    char     name[DNS_NAME_MAX + 1];
+    ipv4     address;
+    uint64_t expires_ms;
+};
+static struct dns_entry dns_cache[DNS_CACHE_MAX];
+static size_t dns_cache_at;
+
+/* the one question outstanding at a time. */
+static struct {
+    bool     waiting;
+    uint64_t started_ms;        /* so a jammed one can be taken over */
+    uint16_t id;
+    char     name[DNS_NAME_MAX + 1];
+    bool     answered;
+    ipv4     address;
+    uint32_t ttl;
+    enum dns_result result;
+} query;
+
+static struct waitq dns_waiters;
+static uint16_t dns_next_id = 1;
+static uint64_t dns_queries, dns_replies, dns_hits;
+
+/* a reply arrived on the poll thread. called with the lock held */
+static void got_dns(const uint8_t *p, size_t len)
+{
+    if (!query.waiting || query.answered) {
+        return;
+    }
+    ipv4 address = 0;
+    uint32_t ttl = 0;
+    enum dns_result r = dns_parse_response(p, len, query.id, query.name,
+                                           &address, &ttl);
+    if (r == DNS_MALFORMED) {
+        /* not an answer to this question, a stray reply, or somebody guessing at the id. */
+        return;
+    }
+    dns_replies++;
+    query.address = address;
+    query.ttl     = ttl;
+    query.result  = r;
+    query.answered = true;
+    waitq_wake_all(&dns_waiters);
+}
+
+static void cache_put(const char *name, ipv4 address, uint32_t ttl_s)
+{
+    /*
+     * a ttl of an hour is plenty for a machine that reboots often, and
+     * caps whatever a server claims, some hand out days, and this
+     * table has eight entries
+     */
+    if (ttl_s > 3600) {
+        ttl_s = 3600;
+    }
+    if (ttl_s == 0) {
+        return;         /* it asked not to be remembered */
+    }
+    struct dns_entry *e = &dns_cache[dns_cache_at % DNS_CACHE_MAX];
+    dns_cache_at++;
+
+    size_t n = 0;
+    while (name[n] != '\0' && n < DNS_NAME_MAX) {
+        e->name[n] = name[n];
+        n++;
+    }
+    e->name[n] = '\0';
+    e->address = address;
+    e->expires_ms = pit_uptime_ms() + (uint64_t)ttl_s * 1000;
+}
+
+static bool cache_get(const char *name, ipv4 *out)
+{
+    uint64_t now = pit_uptime_ms();
+    for (int i = 0; i < DNS_CACHE_MAX; i++) {
+        struct dns_entry *e = &dns_cache[i];
+        if (e->address == 0 || now >= e->expires_ms) {
+            continue;
+        }
+        if (strcasecmp(e->name, name) == 0) {
+            *out = e->address;
+            return true;
+        }
+    }
+    return false;
+}
+
+enum dns_result net_resolve(const char *name, ipv4 *out)
+{
+    if (name == NULL || name[0] == '\0') {
+        return DNS_MALFORMED;
+    }
+
+    /* a name that is already an address is not a question */
+    if (ipv4_parse(name, out)) {
+        return DNS_OK;
+    }
+    if (!up) {
+        return DNS_REFUSED;
+    }
+    if (cache_get(name, out)) {
+        dns_hits++;
+        return DNS_OK;
+    }
+
+    ipv4 server = my_dns;
+    if (server == 0) {
+        /* dhcp offered none, and there is nothing sensible to guess. */
+        return DNS_REFUSED;
+    }
+
+    uint8_t message[DNS_MESSAGE_MAX];
+    size_t n;
+
+    /* the longest one question can take: every try, plus its wait */
+    const uint64_t whole_thing = (uint64_t)DNS_RETRIES * DNS_WAIT_MS;
+
+    uint64_t flags = spin_lock_irq(&net_lock);
+    if (query.waiting
+     && pit_uptime_ms() - query.started_ms < whole_thing + DNS_WAIT_MS) {
+        spin_unlock_irq(&net_lock, flags);
+        return DNS_REFUSED;     /* somebody else is asking, just now */
+    }
+    /* an older one than that is abandoned rather than respected. */
+    query.started_ms = pit_uptime_ms();
+    query.waiting  = true;
+    query.answered = false;
+    query.id = dns_next_id++;
+    if (dns_next_id == 0) {
+        dns_next_id = 1;
+    }
+    size_t at = 0;
+    while (name[at] != '\0' && at < DNS_NAME_MAX) {
+        query.name[at] = name[at];
+        at++;
+    }
+    query.name[at] = '\0';
+    uint16_t id = query.id;
+    spin_unlock_irq(&net_lock, flags);
+
+    n = dns_build_query(message, sizeof message, name, id);
+    if (n == 0) {
+        query.waiting = false;
+        return DNS_MALFORMED;   /* not a name this could ever ask about */
+    }
+
+    enum dns_result result = DNS_REFUSED;
+
+    /* how many times the send itself may fail before those stop being free. */
+    unsigned stalled = 0;
+
+    for (int try = 0; try < DNS_RETRIES; try++) {
+        uint8_t datagram[UDP_HEADER_LEN + DNS_MESSAGE_MAX];
+        size_t dn = udp_build(datagram, my_ip, server, DNS_PORT + 10000 + try,
+                              DNS_PORT, message, n);
+        if (!net_send_ip(server, IP_PROTO_UDP, datagram, dn)) {
+            /* it did not go: the hardware address is not known yet and an arp request has gone off instead. */
+            sleep_ms(50);
+            if (++stalled < 20) {
+                try--;      /* this try has not happened yet */
+            }
+            continue;
+        }
+        dns_queries++;
+
+        uint64_t deadline = pit_uptime_ms() + DNS_WAIT_MS;
+        for (;;) {
+            flags = spin_lock_irq(&net_lock);
+            if (query.answered) {
+                result = query.result;
+                *out   = query.address;
+                spin_unlock_irq(&net_lock, flags);
+                goto done;
+            }
+            if (pit_uptime_ms() >= deadline) {
+                spin_unlock_irq(&net_lock, flags);
+                break;          /* ask again */
+            }
+            /* the poll thread wakes this queue every time it runs, whether or not anything arrived. */
+            waitq_enqueue(&dns_waiters);
+            spin_unlock_irq(&net_lock, flags);
+            waitq_sleep();
+        }
+    }
+
+done:
+    flags = spin_lock_irq(&net_lock);
+    query.waiting = false;
+    spin_unlock_irq(&net_lock, flags);
+
+    if (result == DNS_OK && *out != 0) {
+        cache_put(name, *out, query.ttl);
+    }
+    return result;
+}
+
+void net_dns_stats(uint64_t *asked, uint64_t *answered, uint64_t *cached)
+{
+    *asked    = dns_queries;
+    *answered = dns_replies;
+    *cached   = dns_hits;
+}
+
+/*
+ * this is the one thing that has to be sent by a machine with no
+ * address, so it goes round net_send_ip entirely rather than through it.
+ *
+ * net_send_ip refuses when the interface is down, resolves the
+ * destination through arp, and drops anything not on this wire. every
+ * one of those is right, and every one of them is fatal here: there is
+ * no address to send from, arp cannot ask on behalf of a machine that
+ * has none, and 255.255.255.255 is on no wire in particular. so the
+ * frame is built and handed to the card directly, addressed to the
+ * ethernet broadcast.
+ *
+ * a *renewal* is the exception and goes the ordinary way, by then
+ * there is an address, and the server it is talking to is a machine on
+ * this wire like any other
+ */
+static uint8_t dhcp_msg[DHCP_MAX_LEN];
+static uint8_t dhcp_packet[IP_HEADER_MIN + UDP_HEADER_LEN + DHCP_MAX_LEN];
+
+static bool dhcp_broadcast(const uint8_t *msg, size_t len)
+{
+    uint8_t datagram[UDP_HEADER_LEN + DHCP_MAX_LEN];
+    size_t n = udp_build(datagram, 0, 0xffffffff,
+                         DHCP_CLIENT_PORT, DHCP_SERVER_PORT, msg, len);
+
+    size_t at = ip_build(dhcp_packet, 0, 0xffffffff, IP_PROTO_UDP,
+                         (uint16_t)n, (uint16_t)(pit_uptime_ms() & 0xffff));
+    memcpy(dhcp_packet + at, datagram, n);
+
+    return send_frame(&MAC_BROADCAST, ETHERTYPE_IPV4, dhcp_packet, at + n);
+}
+
+/*
+ * time passed. called from the poll thread, which is the only thread
+ * that touches the client
+ */
+static void dhcp_run(void)
+{
+    uint64_t now = pit_uptime_ms();
+
+    size_t n = dhcp_tick(&dhcp, now, dhcp_msg, sizeof dhcp_msg);
+    if (n > 0) {
+        if (dhcp.state == DHCP_RENEWING && up) {
+            /* it has an address now, so this one is an ordinary datagram to an ordinary machine. */
+            uint8_t datagram[UDP_HEADER_LEN + DHCP_MAX_LEN];
+            size_t dn = udp_build(datagram, my_ip, dhcp.server,
+                                  DHCP_CLIENT_PORT, DHCP_SERVER_PORT,
+                                  dhcp_msg, n);
+            net_send_ip(dhcp.server, IP_PROTO_UDP, datagram, dn);
+        } else {
+            dhcp_broadcast(dhcp_msg, n);
+        }
+    }
+
+    if (dhcp_take_address(&dhcp)) {
+        ipv4 mask = dhcp.mask != 0 ? dhcp.mask : IPV4(255, 255, 255, 0);
+        net_up(dhcp.address, mask);
+        my_router = dhcp.router;
+        my_dns    = dhcp.dns;
+
+        char a[32], m[32];
+        ipv4_format(dhcp.address, a, sizeof a);
+        ipv4_format(mask, m, sizeof m);
+        /* to the log rather than the screen. */
+        klog_printf("net        : %s netmask %s, leased for %u seconds\n",
+                    a, m, dhcp.lease_s);
+    }
+}
+
+void net_dhcp_start(void)
+{
+    if (!e1000_present()) {
+        return;
+    }
+    /*
+     * the conversation's number has to differ between runs, or a reply
+     * left over from the last one is indistinguishable from an answer
+     * to this one. there is no random source in this kernel, so it is
+     * the clock and the hardware address, which differ between two
+     * machines and between two boots of one
+     */
+    const struct mac *me = e1000_mac();
+    uint32_t xid = (uint32_t)pit_uptime_ms();
+    for (int i = 0; i < MAC_LEN; i++) {
+        xid = xid * 31 + me->b[i];
+    }
+    dhcp_start(&dhcp, me, xid, pit_uptime_ms());
+}
+
+void net_dhcp_stop(void)
+{
+    dhcp_stop(&dhcp);
+}
+
+const struct dhcp *net_dhcp(void)
+{
+    return &dhcp;
+}
+
+ipv4 net_router(void)
+{
+    return my_router;
+}
+ipv4 net_dns(void)
+{
+    return my_dns;
+}
+
+bool net_send_ip(ipv4 to, uint8_t protocol, const void *payload, size_t len)
+{
+    if (!up || len + IP_HEADER_MIN > ETHER_MTU) {
+        return false;
+    }
+
+    /* a datagram addressed to this machine's own address must never reach the wire. */
+    if (to == my_ip) {
+        /*
+         * on the stack rather than static, unlike every other buffer in
+         * this file, and for one reason: this path *re-enters itself*.
+         * a loopback echo request reaches got_icmp, which answers it,
+         * which comes straight back through here, and a shared buffer
+         * would have the inner datagram overwrite the outer one while
+         * the outer parse still holds pointers into it.
+         *
+         * the depth is two and cannot be more: an echo reply provokes no
+         * further send, and a udp datagram reaching a socket provokes
+         * none either. two of these plus got_icmp's own reply buffer is
+         * about four and a half kilobytes of a sixteen kilobyte kernel
+         * stack, which is worth it to not depend on that
+         */
+        uint8_t loop[ETHER_MTU];
+        size_t at = ip_build(loop, my_ip, to, protocol, (uint16_t)len,
+                             (uint16_t)(pit_uptime_ms() & 0xffff));
+        memcpy(loop + at, payload, len);
+
+        stats.frames_out++;
+        stats.frames_in++;
+        got_ip(loop, at + len);
+        return true;
+    }
+
+    /* who to hand it to. an address on this wire goes straight to that machine. */
+    ipv4 hop = ip_next_hop(to, my_ip, my_mask, my_router);
+    if (hop == 0) {
+        return false;
+    }
+
+    struct mac to_mac;
+    bool known;
+
+    uint64_t flags = spin_lock_irq(&net_lock);
+    known = arp_lookup(&cache, hop, pit_uptime_ms(), &to_mac);
+    spin_unlock_irq(&net_lock, flags);
+
+    if (!known) {
+        /*
+         * ask, and say no. a send that blocked here would be a machine
+         * that stops when one address does not answer, and the caller
+         * trying again in a moment is both simpler and what every stack
+         * actually does underneath.
+         *
+         * the question is about the *next hop*: asking this wire who
+         * has 104.20.23.154 gets no answer from anybody, forever
+         */
+        net_arp_request(hop);
+        return false;
+    }
+
+    static uint8_t datagram[ETHER_MTU];
+    size_t at = ip_build(datagram, my_ip, to, protocol, (uint16_t)len,
+                         (uint16_t)(pit_uptime_ms() & 0xffff));
+    memcpy(datagram + at, payload, len);
+
+    return send_frame(&to_mac, ETHERTYPE_IPV4, datagram, at + len);
+}
+
+/*
+ * every one of these takes the interface's lock, because a datagram is
+ * delivered on the poll thread and taken on whichever thread the program
+ * happens to be. the pure half in socket.c has no idea any of that is
+ * happening, which is what let it be tested against a table in memory
+ */
+
+static struct socket_table sockets;
+
+int net_socket_open(int owner, uint16_t port)
+{
+    uint64_t flags = spin_lock_irq(&net_lock);
+    int h = socket_open(&sockets, owner, port);
+    spin_unlock_irq(&net_lock, flags);
+    return h;
+}
+
+bool net_socket_close(int owner, int handle)
+{
+    uint64_t flags = spin_lock_irq(&net_lock);
+    bool ok = socket_close(&sockets, owner, handle);
+    spin_unlock_irq(&net_lock, flags);
+    return ok;
+}
+
+void net_socket_close_all(int owner)
+{
+    uint64_t flags = spin_lock_irq(&net_lock);
+    socket_close_all(&sockets, owner);
+    spin_unlock_irq(&net_lock, flags);
+}
+
+/* a program that wanted a datagram asked, was told "not yet", slept a while and asked again. */
+static struct waitq socket_waiters[SOCKET_MAX];
+static struct waitq socket_activity;
+
+/* called with the lock held, from the poll thread */
+static void socket_arrived(int index)
+{
+    if (index >= 0 && index < SOCKET_MAX) {
+        waitq_wake_all(&socket_waiters[index]);
+    }
+    waitq_wake_all(&socket_activity);
+}
+
+int64_t net_socket_take(int owner, int handle, ipv4 *from,
+                        uint16_t *from_port, void *out, size_t max)
+{
+    uint64_t flags = spin_lock_irq(&net_lock);
+    int64_t n = socket_take(&sockets, owner, handle, from, from_port, out, max);
+    spin_unlock_irq(&net_lock, flags);
+    return n;
+}
+
+int64_t net_socket_wait(int owner, int handle, ipv4 *from,
+                        uint16_t *from_port, void *out, size_t max,
+                        int64_t timeout_ms)
+{
+    if (handle < 0 || handle >= SOCKET_MAX) {
+        return -1;
+    }
+    uint64_t deadline = pit_uptime_ms() + (uint64_t)(timeout_ms < 0 ? 0
+                                                     : timeout_ms);
+
+    for (;;) {
+        uint64_t flags = spin_lock_irq(&net_lock);
+        int64_t n = socket_take(&sockets, owner, handle, from, from_port,
+                                out, max);
+        if (n >= 0) {
+            spin_unlock_irq(&net_lock, flags);
+            return n;
+        }
+
+        /*
+         * nothing waiting. a zero timeout is the old behaviour, kept
+         * because a program that genuinely wants to look and move on
+         * should not have to spawn a thread to do it
+         */
+        if (timeout_ms == 0) {
+            spin_unlock_irq(&net_lock, flags);
+            return -1;
+        }
+        if (timeout_ms > 0 && pit_uptime_ms() >= deadline) {
+            spin_unlock_irq(&net_lock, flags);
+            return -1;
+        }
+
+        /* on the queue *before* the lock is dropped. */
+        waitq_enqueue(&socket_waiters[handle]);
+        spin_unlock_irq(&net_lock, flags);
+        waitq_sleep();
+
+        /* and round again to look properly. */
+    }
+}
+
+size_t net_socket_ready(int owner, const int *handles, size_t count,
+                        int64_t timeout_ms, bool *ready)
+{
+    uint64_t deadline = pit_uptime_ms() + (uint64_t)(timeout_ms < 0 ? 0
+                                                     : timeout_ms);
+
+    for (;;) {
+        size_t n = 0;
+        uint64_t flags = spin_lock_irq(&net_lock);
+        for (size_t i = 0; i < count; i++) {
+            ready[i] = socket_waiting(&sockets, owner, handles[i]) > 0;
+            if (ready[i]) {
+                n++;
+            }
+        }
+        if (n > 0 || timeout_ms == 0) {
+            spin_unlock_irq(&net_lock, flags);
+            return n;
+        }
+        if (timeout_ms > 0 && pit_uptime_ms() >= deadline) {
+            spin_unlock_irq(&net_lock, flags);
+            return 0;
+        }
+
+        waitq_enqueue(&socket_activity);
+        spin_unlock_irq(&net_lock, flags);
+        waitq_sleep();
+    }
+}
+
+bool net_socket_send(int owner, int handle, ipv4 to, uint16_t port,
+                     const void *data, size_t len)
+{
+    uint16_t mine;
+
+    uint64_t flags = spin_lock_irq(&net_lock);
+    bool ok = socket_port(&sockets, owner, handle, &mine);
+    spin_unlock_irq(&net_lock, flags);
+
+    if (!ok || len + UDP_HEADER_LEN + IP_HEADER_MIN > ETHER_MTU) {
+        return false;
+    }
+
+    /* built outside the lock. */
+    static uint8_t datagram[ETHER_MTU];
+    size_t n = udp_build(datagram, my_ip, to, mine, port, data, len);
+
+    return net_send_ip(to, IP_PROTO_UDP, datagram, n);
+}
+
+
+
+/*
+ * what has come back. a ring of the last few, because a reply arrives on
+ * the poll thread and whoever sent the request is somewhere else
+ * entirely, there is no way to hand it to them directly without a
+ * blocking call, and this is a great deal simpler than one
+ */
+#define PING_SEEN 8
+static struct { uint16_t seq; uint64_t when_ms; bool used; } seen[PING_SEEN];
+static size_t seen_at;
+
+/*
+ * an id for this machine's echoes, so a reply to somebody else's ping is
+ * not counted as one of ours
+ */
+#define PING_ID 0x7a7a
+
+bool net_ping_send(ipv4 to, uint16_t seq)
+{
+    uint8_t echo[ICMP_HEADER_LEN + 32];
+    /*
+     * thirty-two bytes, which is what ping has sent since 1983, and
+     * spelled without a terminator because it is a payload rather than
+     * a string. what comes back has to be these exact bytes
+     */
+    static const char payload[32] =
+        { 't','h','o','u',' ','a','r','t',' ','I','.','.','.',' ','a','n',
+          'd',' ','I',' ','a','m',' ','t','h','o','u','.','.','.','.','.' };
+
+    size_t n = icmp_build_echo(echo, ICMP_ECHO_REQUEST, PING_ID, seq,
+                               payload, sizeof payload);
+    return net_send_ip(to, IP_PROTO_ICMP, echo, n);
+}
+
+bool net_ping_seen(uint16_t seq, uint64_t *when_ms)
+{
+    uint64_t flags = spin_lock_irq(&net_lock);
+    bool found = false;
+    for (size_t i = 0; i < PING_SEEN; i++) {
+        if (seen[i].used && seen[i].seq == seq) {
+            if (when_ms != NULL) {
+                *when_ms = seen[i].when_ms;
+            }
+            found = true;
+            break;
+        }
+    }
+    spin_unlock_irq(&net_lock, flags);
+    return found;
+}
+
+
+
+static void got_arp(const uint8_t *p, size_t len)
+{
+    struct arp_packet a;
+    if (!arp_parse(p, len, &a)) {
+        stats.dropped_bad++;
+        return;
+    }
+    stats.arp_in++;
+
+    /* learn from anything that speaks, request or reply. */
+    uint64_t flags = spin_lock_irq(&net_lock);
+    arp_learn(&cache, a.sender_ip, &a.sender_mac, pit_uptime_ms());
+    spin_unlock_irq(&net_lock, flags);
+
+    if (a.op == ARP_REQUEST && up && a.target_ip == my_ip) {
+        uint8_t reply[ARP_PACKET_LEN];
+        arp_build(reply, ARP_REPLY, e1000_mac(), my_ip,
+                  &a.sender_mac, a.sender_ip);
+        stats.arp_out++;
+        send_frame(&a.sender_mac, ETHERTYPE_ARP, reply, sizeof reply);
+    }
+}
+
+static void got_icmp(const struct ip_header *ih, const uint8_t *p, size_t len)
+{
+    struct icmp_echo e;
+    if (!icmp_parse_echo(p, len, &e)) {
+        stats.dropped_bad++;
+        return;
+    }
+
+    if (e.type == ICMP_ECHO_REQUEST) {
+        /* answer it, with the payload copied straight back. */
+        uint8_t reply[ETHER_MTU];
+        if (ICMP_HEADER_LEN + e.payload_len > sizeof reply) {
+            return;
+        }
+        size_t n = icmp_build_echo(reply, ICMP_ECHO_REPLY, e.id, e.seq,
+                                   p + e.payload_at, e.payload_len);
+        net_send_ip(ih->from, IP_PROTO_ICMP, reply, n);
+        return;
+    }
+
+    /*
+     * a reply. if it is answering one of ours, write it down where
+     * whoever asked can find it
+     */
+    if (e.id != PING_ID) {
+        return;
+    }
+    uint64_t flags = spin_lock_irq(&net_lock);
+    seen[seen_at].seq = e.seq;
+    seen[seen_at].when_ms = pit_uptime_ms();
+    seen[seen_at].used = true;
+    seen_at = (seen_at + 1) % PING_SEEN;
+    spin_unlock_irq(&net_lock, flags);
+}
+
+static void got_ip(const uint8_t *p, size_t len)
+{
+    struct ip_header ih;
+    if (!ip_parse(p, len, &ih)) {
+        stats.dropped_bad++;
+        return;
+    }
+    stats.ip_in++;
+
+    /* not for this machine. */
+    if (up && ih.to != my_ip && ih.to != 0xffffffff) {
+        stats.dropped_not_mine++;
+        return;
+    }
+
+    const uint8_t *payload = p + ih.payload_at;
+    size_t payload_len = ih.payload_len;
+
+    if (ih.protocol == IP_PROTO_TCP) {
+        /*
+         * FIXME: this runs on the poll thread holding no lock, and
+         * tcp_input rewrites the connection it lands on: state, sequence
+         * numbers, and the receive buffer that an application may be
+         * reading under net_lock at that same moment. tcp_run() below is
+         * the same, ticking and sending out of the same structs. every
+         * socket and dns entry point in this file takes that lock, so the
+         * lock exists and the half of the stack sharing these connections
+         * is the half that does not hold it. one tcp_read copying down
+         * through recv_buf while take_payload copies into it is the whole
+         * failure: a stream comes back with bytes repeated or skipped.
+         */
+        stats.tcp_in++;
+        got_tcp(ih.from, ih.to, payload, payload_len);
+    } else if (ih.protocol == IP_PROTO_ICMP) {
+        stats.icmp_in++;
+        got_icmp(&ih, payload, payload_len);
+    } else if (ih.protocol == IP_PROTO_UDP) {
+        stats.udp_in++;
+        struct udp_header uh;
+        if (!udp_parse(payload, payload_len, ih.from, ih.to, &uh)) {
+            stats.dropped_bad++;
+            return;
+        }
+        /* the dhcp client is not a socket. */
+        /* an answer to a question this machine asked. */
+        if (uh.from_port == DNS_PORT) {
+            uint64_t f = spin_lock_irq(&net_lock);
+            got_dns(payload + uh.payload_at, uh.payload_len);
+            spin_unlock_irq(&net_lock, f);
+            return;
+        }
+
+        if (uh.to_port == DHCP_CLIENT_PORT) {
+            dhcp_input(&dhcp, payload + uh.payload_at, uh.payload_len,
+                       pit_uptime_ms());
+            return;
+        }
+
+        /* and now there is somewhere for it to go. */
+        uint64_t flags = spin_lock_irq(&net_lock);
+        int which = socket_deliver(&sockets, uh.to_port, ih.from,
+                                   uh.from_port, payload + uh.payload_at,
+                                   uh.payload_len);
+        if (which >= 0) {
+            socket_arrived(which);
+        }
+        spin_unlock_irq(&net_lock, flags);
+    }
+}
+
+void net_receive(const uint8_t *frame, size_t len)
+{
+    struct ether_header eh;
+    if (!ether_parse(frame, len, &eh)) {
+        stats.dropped_bad++;
+        return;
+    }
+    stats.frames_in++;
+
+    const uint8_t *payload = frame + ETHER_HEADER_LEN;
+    size_t payload_len = len - ETHER_HEADER_LEN;
+
+    if (eh.type == ETHERTYPE_ARP) {
+        got_arp(payload, payload_len);
+    } else if (eh.type == ETHERTYPE_IPV4) {
+        got_ip(payload, payload_len);
+    }
+    /*
+     * and everything else on the wire is somebody else's protocol,
+     * which is most of what arrives and is not an error
+     */
+}
+
+/* which thread drains the card, so the interrupt has somebody to wake */
+static int poll_tid = -1;
+
+/* called from the card's interrupt handler, and therefore allowed to do almost nothing. */
+static void net_wake(void)
+{
+    if (poll_tid >= 0) {
+        sched_wake_thread(poll_tid);
+    }
+}
+
+void net_service_ready(void)
+{
+    struct thread *me = sched_current();
+    poll_tid = (me != NULL) ? me->id : -1;
+    e1000_on_arrival(net_wake);
+}
+
+void net_poll(void)
+{
+    for (;;) {
+        size_t n = e1000_receive(in_frame, sizeof in_frame);
+        if (n == 0) {
+            break;
+        }
+        net_receive(in_frame, n);
+    }
+
+    /*
+     * after the frames rather than before: an offer that just arrived
+     * should be acted on now, not in half a second. this is also why
+     * the client's timeouts are in seconds and the poll's fallback is
+     * half of one, the two are an order of magnitude apart, so the
+     * backoff means what it says however the thread is woken
+     */
+    dhcp_run();
+    tcp_run();
+
+    /* and whoever is waiting on a name gets a look at the clock. */
+    if (query.waiting && !query.answered) {
+        waitq_wake_all(&dns_waiters);
+    }
+}

@@ -1,0 +1,16 @@
+# read by every session, on every console, before the first prompt.
+#
+# this file is why 0.2.18 exists. a PATH that has to be typed every time
+# is a PATH that means nothing, and there was nowhere to say "here is
+# what a session looks like" once and have it be true every time.
+
+set PATH /bin:/boot/bin
+
+# who and where, for anything that wants to ask rather than work it out
+set HOME /
+set SHELL velvet
+
+# a script may do anything a prompt may, including decide
+if test -d /notes
+    set NOTES /notes
+end

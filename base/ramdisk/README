@@ -1,0 +1,8 @@
+This is a tar file. That is the entire filesystem.
+
+Philemon loads it into memory at boot and hands the kernel a pointer.
+the kernel walks the 512-byte headers to find files -- no directories,
+no writing, no allocation. `cat` hands you a pointer straight into
+the archive.
+
+It is a filesystem in the sense that a filing cabinet is furniture.

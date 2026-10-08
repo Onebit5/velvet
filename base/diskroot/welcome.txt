@@ -1,0 +1,8 @@
+This file is on the disk, at /welcome.txt.
+
+There is one on the ramdisk too, at /boot/welcome.txt, and it says
+something else. A bare name is looked for here first, so `cat
+welcome.txt` finds this one -- and on a machine with no disk it finds
+the other, and nothing breaks.
+
+Write to this disk, reboot, and what you wrote is still here.

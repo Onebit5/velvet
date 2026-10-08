@@ -1,0 +1,11 @@
+                    THE VELVET ROOM
+
+This room exists between mind and matter, between dream and
+reality. Its master keeps the compendium of every Persona ever
+fused here, and the ledger of every contract signed.
+
+A guest may stand in this room. A guest may not read this page.
+
+If you are seeing these words, your uid is 0 -- and the kernel
+checked before it handed them over, against a mode stored in the
+tar header. Try again as `guest` and it will refuse.

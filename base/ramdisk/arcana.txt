@@ -1,0 +1,16 @@
+THE COMPUTER ARCANA
+===================
+
+  I     The Bootloader    Philemon hands over a machine in long mode
+  II    The Console       Pixels arranged into letters
+  III   The Interrupt     The cpu learns to be surprised
+  IV    The Keyboard      Someone is out there
+  V     The Allocator     Memory, counted and given
+  VI    The Wheel         Threads taking turns
+  VII   The Contract      A prompt, and a will to speak
+  VIII  The Tables        Our own map of all that exists
+  IX    The Guard         A wall against our own mistakes
+  X     The Name          A crash that says where it happened
+
+The Arcana continues to deepen. Rank 16 of the Computer Arcana
+has been established.
