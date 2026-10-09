@@ -67,6 +67,10 @@ a kernel that booted.
   compile time. there is no `-I.`, so a header left where it used to be
   fails to build rather than working.
 
+  **there is no source at the root**: `main.c` and `boot.c` are in
+  `init/`, and the linker script is the architecture's, in
+  `arch/x86_64/`.
+
   the medium this tree boots carries **no programs**. it is the accounts,
   the profile, and the files the boot test reads back, so `make boottest`
   checks what the kernel shows with nothing in ring 3: the boot, both cores,

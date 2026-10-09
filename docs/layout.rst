@@ -20,7 +20,8 @@ at a glance
     arch/              one directory per architecture, each with the same
                        five headers in include/asm/: irq, cpu, mmu,
                        context, machine
-      x86_64/          gdt, idt, isr stubs, irq dispatch, pic, apic, port io
+      x86_64/          gdt, idt, isr stubs, irq dispatch, pic, apic, port io,
+                       and linker.ld, the higher-half layout
       none/            an architecture that does nothing, for portable-check
     drivers/           serial, console, tty, ps/2 keyboard and mouse, pit,
                        rtc, pci, ahci, e1000, partitions, the font
@@ -34,9 +35,7 @@ at a glance
     sched/             threads, run queue, context switch, processes,
                        signals, auth, init, locks
     shell/             the velvet room terminal
-    main.c             kmain
-    boot.c             the loader handoff
-    linker.ld          the higher-half layout and the section symbols
+    init/              kmain, and the handoff philemon leaves behind
     sources.mk         which of the above the kernel is made of
     boot/              philemon, the bootloader
     base/ramdisk/      the files packed into the boot tar (input)

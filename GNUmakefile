@@ -120,7 +120,7 @@ CFLAGS_x86_64 := -m64 -march=x86-64 -mno-80387 -mno-mmx -mno-sse -mno-sse2 \
 
 CFLAGS += $(CFLAGS_$(ARCH))
 
-LDFLAGS_x86_64  := -z max-page-size=0x1000 -T linker.ld
+LDFLAGS_x86_64  := -z max-page-size=0x1000 -T arch/x86_64/linker.ld
 LDFLAGS := -nostdlib -static $(LDFLAGS_$(ARCH))
 
 NASMFLAGS := -f elf64 -g
@@ -194,7 +194,8 @@ $(OBJ): | $(VERSION_H)
 # and what was linked is written down beside it, in the order it went
 # in, for anything that wants to link the same kernel again with another
 # linker: velvetOS's kernelcheck hands exactly this list to its own
-$(BINDIR)/$(KERNEL): $(OBJ) $(OBJDIR)/srcstamp.o linker.ld tools/gensyms.py
+$(BINDIR)/$(KERNEL): $(OBJ) $(OBJDIR)/srcstamp.o arch/$(ARCH)/linker.ld \
+                      tools/gensyms.py
 	@mkdir -p $(@D) $(OBJDIR)
 	@python3 tools/gensyms.py --stub > $(OBJDIR)/ksyms.c
 	@$(CC) $(CFLAGS) -c $(OBJDIR)/ksyms.c -o $(OBJDIR)/ksyms.o
@@ -286,7 +287,7 @@ SOURCE ?= $(OWN_SOURCE)
 
 SOURCE_FILES := GNUmakefile sources.mk README.md CHANGELOG.md ROADMAP.md \
                 LICENSE FONT-LICENSE .gitignore \
-                CONTRIBUTING.md CODE_OF_CONDUCT.md linker.ld \
+                CONTRIBUTING.md CODE_OF_CONDUCT.md \
                 $(shell find .github $(KERNEL_PORTABLE) \
                         arch boot tests tools docs -type f | sort) \
                 $(shell find base/ramdisk base/diskroot -type f | sort)

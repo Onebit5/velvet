@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * boot.c
+ * init/boot.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
  * the first steps, before there is a console to say so on.
  */

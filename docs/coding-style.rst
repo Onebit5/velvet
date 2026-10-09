@@ -71,10 +71,13 @@ one translation unit, one header
    public interface; everything else in the ``.c`` is ``static``.
 
 the tree mirrors itself by subsystem
-   ``<subsystem>/`` at the root groups by what the code is *for*. ``mm``,
-   ``sched``, ``fs``, ``net``, ``drivers``, ``lib``, ``shell``, ``arch``.
-   a new subsystem gets a directory, not a file at the root, and its name
-   goes in ``sources.mk``, which is the one list of what the kernel is.
+   ``<subsystem>/`` at the root groups by what the code is *for*. ``init``,
+   ``mm``, ``sched``, ``fs``, ``net``, ``drivers``, ``lib``, ``shell``,
+   ``arch``. there is no source file at the root at all: ``kmain`` is in
+   ``init/``, and the linker script is the architecture's, in
+   ``arch/x86_64/``. a new subsystem gets a directory, not a file at the
+   root, and its name goes in ``sources.mk``, which is the one list of what
+   the kernel is.
 
 include guards
    the file's path with ``include/`` left out, in upper snake case:

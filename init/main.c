@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * main.c
+ * init/main.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
  * where the kernel starts: philemon's handoff, then init.
  */

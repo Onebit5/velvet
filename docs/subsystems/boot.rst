@@ -64,7 +64,7 @@ the handoff
 the handoff is one struct, ``struct ph_handoff`` in ``philemon.h``, and the
 kernel is entered the way any function is called: a pointer to it in
 ``rdi``. there is no protocol to speak of and nothing to scan for.
-``boot.c`` keeps a pointer rather than copying it, because it
+``init/boot.c`` keeps a pointer rather than copying it, because it
 sits in memory philemon marked reclaimable, which the kernel does not
 reclaim until it is finished with all of it.
 
