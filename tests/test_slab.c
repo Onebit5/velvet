@@ -27,9 +27,9 @@ void panic(const char *fmt, ...)
     exit(1);
 }
 
-#include "mm/pmm.h"
-#include "mm/slab.h"
-#include "mm/kmalloc.h"
+#include <velvet/pmm.h>
+#include <velvet/slab.h>
+#include <velvet/kmalloc.h>
 
 #define ARENA (8ull * 1024 * 1024)
 #define MiB   (1024ull * 1024)

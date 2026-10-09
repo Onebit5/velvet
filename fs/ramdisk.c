@@ -5,10 +5,10 @@
  * the ramdisk: a tar file philemon handed over.
  */
 
-#include "fs/ramdisk.h"
-#include "fs/ustar.h"
-#include "boot.h"
-#include "lib/string.h"
+#include <velvet/ramdisk.h>
+#include "ustar.h"
+#include <velvet/boot.h>
+#include <velvet/string.h>
 
 /*
  * the format itself lives in fs/ustar.h, because there are
@@ -125,7 +125,7 @@ size_t   ramdisk_count(void)
 
 #ifndef VELVETOS_HOSTED
 
-#include "lib/kprintf.h"
+#include <velvet/kprintf.h>
 
 
 

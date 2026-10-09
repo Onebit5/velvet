@@ -5,9 +5,9 @@
  * the first steps, before there is a console to say so on.
  */
 
-#include "boot.h"
-#include "lib/panic.h"
-#include "arch/cpu.h"
+#include <velvet/boot.h>
+#include <velvet/panic.h>
+#include <asm/cpu.h>
 
 static const struct ph_handoff *handoff;
 

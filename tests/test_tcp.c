@@ -10,8 +10,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "net/net.h"
-#include "net/tcp.h"
+#include <velvet/net.h>
+#include <velvet/tcp.h>
 
 static int failures = 0;
 

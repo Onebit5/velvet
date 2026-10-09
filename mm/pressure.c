@@ -5,7 +5,7 @@
  * what happens when memory runs out.
  */
 
-#include "mm/pressure.h"
+#include <velvet/pressure.h>
 
 bool pressure_allow(uint64_t free_pages, size_t want, enum pressure_who who)
 {

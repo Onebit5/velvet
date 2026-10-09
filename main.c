@@ -8,28 +8,28 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include "lib/epoch.h"
-#include "drivers/rtc.h"
-#include "boot.h"
-#include "arch/irq.h"
-#include "arch/machine.h"
-#include "drivers/console.h"
-#include "drivers/input.h"
-#include "lib/kprintf.h"
-#include "lib/panic.h"
-#include "lib/string.h"
-#include "mm/pmm.h"
-#include "mm/kmalloc.h"
-#include "fs/ramdisk.h"
-#include "fs/source.h"
-#include "fs/disk.h"
-#include "fs/install.h"
-#include "fs/vfs.h"
-#include "sched/auth.h"
-#include "sched/init.h"
-#include "sched/sched.h"
-#include "sched/thread.h"
-#include "version.h"
+#include <velvet/epoch.h>
+#include <velvet/rtc.h>
+#include <velvet/boot.h>
+#include <asm/irq.h>
+#include <asm/machine.h>
+#include <velvet/console.h>
+#include <velvet/input.h>
+#include <velvet/kprintf.h>
+#include <velvet/panic.h>
+#include <velvet/string.h>
+#include <velvet/pmm.h>
+#include <velvet/kmalloc.h>
+#include <velvet/ramdisk.h>
+#include <velvet/source.h>
+#include <velvet/disk.h>
+#include <velvet/install.h>
+#include <velvet/vfs.h>
+#include <velvet/auth.h>
+#include <velvet/init.h>
+#include <velvet/sched.h>
+#include <velvet/thread.h>
+#include <generated/version.h>
 
 
 
@@ -140,7 +140,7 @@ void kmain(const struct ph_handoff *handoff)
      */
     kprintf_to_console(false);
 
-    kprintf("velvet v%s\n", VERSION);
+    kprintf("velvet v%s\n", VELVET_VERSION);
     kprintf("framebuffer : %ux%u @ %u bpp, pitch %lu bytes, at %016lx\n",
             fb->width, fb->height, fb->bpp, fb->pitch, fb->address);
     kprintf("font        : spleen 8x16 (bsd 2-clause)\n");

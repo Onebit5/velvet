@@ -5,8 +5,8 @@
  * ext2, laid out from nothing.
  */
 
-#include "fs/mkfs.h"
-#include "lib/string.h"
+#include "mkfs.h"
+#include <velvet/string.h>
 
 /* ext2, laid out from nothing. */
 

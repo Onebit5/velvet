@@ -5,10 +5,10 @@
  * the cmos real time clock.
  */
 
-#include "drivers/rtc.h"
-#include "arch/x86_64/io.h"
-#include "arch/irq.h"
-#include "sched/spinlock.h"
+#include <velvet/rtc.h>
+#include <asm/io.h>
+#include <asm/irq.h>
+#include <velvet/spinlock.h>
 #include <stdbool.h>
 
 #define CMOS_ADDR 0x70

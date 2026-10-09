@@ -5,8 +5,8 @@
  * the idt: 256 gates, every single one pointing at its stub from isr.asm.
  */
 
-#include "arch/x86_64/idt.h"
-#include "arch/x86_64/gdt.h"
+#include <asm/idt.h>
+#include <asm/gdt.h>
 #include <stdint.h>
 
 /*

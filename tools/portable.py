@@ -42,7 +42,11 @@ CFLAGS = [
     "-ffreestanding", "-fno-stack-protector", "-fno-stack-check",
     "-fno-PIC", "-fno-omit-frame-pointer",
     "-DVELVETOS_ARCH_NONE",
-    "-I" + KERNEL, "-I" + os.path.join(ROOT, "boot"),
+    # the contract in place of an architecture, by include path the same
+    # way the real build picks x86_64, and the version the build writes
+    "-I" + os.path.join(KERNEL, "include"),
+    "-I" + os.path.join(KERNEL, "arch", "none", "include"),
+    "-I" + os.path.join(ROOT, "obj", "include"),
     # -O0 to match the real build, since that is where a `static inline`
     # is a call and the difference has bitten once already
     "-O0",
@@ -137,10 +141,11 @@ def main():
     # x86, not a port's problem so much as the boundary's remaining
     # debt, and a number worth watching go down.
     contract = set()
-    for name in sorted(os.listdir(os.path.join(KERNEL, "arch", "none"))):
+    asm = os.path.join(KERNEL, "arch", "none", "include", "asm")
+    for name in sorted(os.listdir(asm)):
         if not name.endswith(".h"):
             continue
-        text = open(os.path.join(KERNEL, "arch", "none", name)).read()
+        text = open(os.path.join(asm, name)).read()
         for decl in re.finditer(
                 r'^(?:extern\s+)?[a-z_0-9]+\s+\**([a-z_0-9]+)\s*\([^)]*\)\s*(?:__attribute__[^;]*)?;',
                 text, re.M):

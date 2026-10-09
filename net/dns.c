@@ -5,8 +5,8 @@
  * dns: turning a name into an address.
  */
 
-#include "net/dns.h"
-#include "lib/string.h"
+#include <velvet/dns.h>
+#include <velvet/string.h>
 
 /* the two top bits of a length byte. */
 #define LABEL_POINTER 0xc0

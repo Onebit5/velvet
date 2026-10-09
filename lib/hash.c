@@ -5,9 +5,9 @@
  * the three sums this machine has any use for.
  */
 
-#include "lib/hash.h"
+#include <velvet/hash.h>
 
-/* a byte copy of its own rather than memcpy from lib/string.h. */
+/* a byte copy of its own rather than memcpy from <velvet/string.h>. */
 static void copy_bytes(uint8_t *to, const uint8_t *from, size_t n)
 {
     for (size_t i = 0; i < n; i++) {

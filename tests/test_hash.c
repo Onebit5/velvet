@@ -10,7 +10,7 @@
 #include <string.h>
 #include <stdbool.h>
 
-#include "lib/hash.h"
+#include <velvet/hash.h>
 
 static int failures;
 

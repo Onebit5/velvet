@@ -5,8 +5,8 @@
  * dates, and the leap-year arithmetic behind them.
  */
 
-#include "lib/epoch.h"
-#include "drivers/pit.h"
+#include <velvet/epoch.h>
+#include <velvet/pit.h>
 
 #define SECONDS_PER_DAY 86400u
 

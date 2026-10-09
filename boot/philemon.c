@@ -5,7 +5,7 @@
  * the 64-bit half of philemon.
  */
 
-#include "philemon.h"
+#include <velvet/philemon.h>
 
 
 

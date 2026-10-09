@@ -5,14 +5,14 @@
  * the ps/2 mouse, and its decoder.
  */
 
-#include "drivers/mouse.h"
-#include "drivers/console.h"
-#include "drivers/input.h"
-#include "arch/x86_64/io.h"
-#include "arch/x86_64/pic.h"
-#include "arch/x86_64/interrupts.h"
-#include "lib/kprintf.h"
-#include "lib/string.h"
+#include <velvet/mouse.h>
+#include <velvet/console.h>
+#include <velvet/input.h>
+#include <asm/io.h>
+#include <asm/pic.h>
+#include <asm/interrupts.h>
+#include <velvet/kprintf.h>
+#include <velvet/string.h>
 
 /*
  * a packet is three bytes and the first one is where all the awkwardness

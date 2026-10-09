@@ -55,7 +55,7 @@ void kprintf(const char *fmt, ...)
  * one page is user, one is present but supervisor-only, the rest is
  * nothing at all
  */
-#include "mm/vmm.h"
+#include <velvet/vmm.h>
 static uint64_t user_page, kernel_page;
 uint64_t vmm_kernel_pml4(void)
 {
@@ -102,8 +102,8 @@ void thread_exit(int code)
  * the dispatcher asks who is calling, so there has to be somebody,
  * and that somebody has an address space of its own
  */
-#include "sched/thread.h"
-#include "mm/addrspace.h"
+#include <velvet/thread.h>
+#include <velvet/addrspace.h>
 static struct addrspace my_space = { .pml4 = CALLER_PML4 };
 static struct thread me = { .space = &my_space };
 struct thread *sched_current(void)
@@ -141,7 +141,7 @@ void console_size(size_t *cols, size_t *rows, size_t *w, size_t *h)
 
 
 /* the pipe blocks by parking on a waitq. */
-#include "fs/pipe.h"
+#include <velvet/pipe.h>
 void waitq_enqueue(struct waitq *q)
 {
     (void)q;
@@ -186,7 +186,7 @@ uint32_t smp_this_cpu(void)
  * into a stack that does not exist. what is checked below is that the
  * *pointer* handling is the same as every other call's
  */
-#include "net/netif.h"
+#include <velvet/netif.h>
 bool net_is_up(void)
 {
     return false;
@@ -263,8 +263,8 @@ void net_tcp_close_all(int owner)
     (void)owner;
 }
 
-#include "sched/process.h"
-#include "fs/ramdisk.h"
+#include <velvet/process.h>
+#include <velvet/ramdisk.h>
 
 /* a one-file ramdisk, so `open` has something to find */
 static const char motd[] = "hee-ho, from a file\n";
@@ -305,7 +305,7 @@ bool ramdisk_stat(size_t i, struct ramdisk_file *out)
  * the disk and one that is not reaches the ramdisk. so this stub
  * records what it was asked, and tests check who got asked
  */
-#include "fs/disk.h"
+#include <velvet/disk.h>
 static const char disk_text[] = "on the disk\n";
 static int disk_lookups, disk_creates;
 static bool disk_is_ready = true;
@@ -430,7 +430,7 @@ int64_t disk_write_at(size_t w, struct disk_entry *e, uint64_t offset,
 }
 
 /* the terminal, whose real version needs a scheduler to wake threads */
-#include "drivers/tty.h"
+#include <velvet/tty.h>
 static int foreground_pid = TTY_SHELL;
 int tty_foreground(void)
 {
@@ -553,7 +553,7 @@ bool user_wait(int pid, int *code)
     (void)pid; if (code) *code = wait_code; return true;
 }
 
-#include "arch/x86_64/syscall.h"
+#include <asm/syscall.h>
 extern int64_t syscall_dispatch(uint64_t nr, uint64_t a0, uint64_t a1,
                                 uint64_t a2, uint64_t a3, uint64_t a4,
                                 struct user_regs *regs);
@@ -615,7 +615,7 @@ void sched_set_stopped(int id, bool stopped)
 }
 
 /* the terminal is a mode. */
-#include "drivers/termios.h"
+#include <velvet/termios.h>
 static struct term_mode test_mode = TERM_COOKED;
 void tty_set_mode(const struct term_mode *m)
 {

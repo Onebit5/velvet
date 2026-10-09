@@ -11,10 +11,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "fs/install.h"
-#include "fs/ext4.h"
-#include "drivers/part.h"
-#include "philemon.h"
+#include <velvet/install.h>
+#include <velvet/ext4.h>
+#include <velvet/part.h>
+#include <velvet/philemon.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

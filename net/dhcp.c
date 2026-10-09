@@ -5,8 +5,8 @@
  * dhcp: asking for an address.
  */
 
-#include "net/dhcp.h"
-#include "lib/string.h"
+#include <velvet/dhcp.h>
+#include <velvet/string.h>
 
 /* the fixed part of a bootp message, by offset. */
 #define OFF_OP      0       /* 1 = a client asking, 2 = a server telling */

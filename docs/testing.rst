@@ -215,9 +215,10 @@ anything and should not be listed as a check until somebody works out why.
 ``ubsan`` works in trap mode, which needs no runtime:
 
     make HOSTFLAGS="-std=gnu11 -Wall -Wextra -Wno-stringop-truncation \
-        -Wno-stringop-overread -g -DVELVETOS_HOSTED -I. -Iboot \
-        -DVELVETOS_ARCH_X86_64 -fsanitize=undefined \
-        -fsanitize-trap=undefined -fno-sanitize-recover=all" <the suites>
+        -Wno-stringop-overread -g -DVELVETOS_HOSTED -I. -Iinclude \
+        -Iarch/x86_64/include -Iobj/include -DVELVETOS_ARCH_X86_64 \
+        -fsanitize=undefined -fsanitize-trap=undefined \
+        -fno-sanitize-recover=all" <the suites>
 
 two traps for the unwary: make will not rebuild binaries that already exist,
 so they have to be removed first or the flags never reach the compiler, and

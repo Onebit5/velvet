@@ -5,13 +5,13 @@
  * Imable interval timer.
  */
 
-#include "drivers/pit.h"
-#include "arch/x86_64/smp.h"
-#include "arch/x86_64/io.h"
-#include "arch/cpu.h"
-#include "arch/x86_64/pic.h"
-#include "arch/x86_64/interrupts.h"
-#include "sched/sched.h"
+#include <velvet/pit.h>
+#include <asm/smp.h>
+#include <asm/io.h>
+#include <asm/cpu.h>
+#include <asm/pic.h>
+#include <asm/interrupts.h>
+#include <velvet/sched.h>
 
 #define PIT_CH0  0x40
 #define PIT_CH2  0x42

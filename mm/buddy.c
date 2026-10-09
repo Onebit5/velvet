@@ -5,8 +5,8 @@
  * the buddy allocator.
  */
 
-#include "mm/buddy.h"
-#include "lib/string.h"
+#include "buddy.h"
+#include <velvet/string.h>
 
 /*
  * one bit per block per order: set means "this block is free and on the

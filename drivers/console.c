@@ -5,10 +5,10 @@
  * four consoles, one screen.
  */
 
-#include "drivers/console.h"
-#include "drivers/ansi.h"
-#include "drivers/font.h"
-#include "lib/string.h"
+#include <velvet/console.h>
+#include "ansi.h"
+#include "font.h"
+#include <velvet/string.h>
 
 /* four consoles, one screen. */
 

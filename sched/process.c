@@ -5,11 +5,11 @@
  * the process table.
  */
 
-#include "sched/process.h"
-#include "arch/irq.h"
-#include "sched/spinlock.h"
-#include "fs/pipe.h"
-#include "lib/string.h"
+#include <velvet/process.h>
+#include <asm/irq.h>
+#include <velvet/spinlock.h>
+#include <velvet/pipe.h>
+#include <velvet/string.h>
 
 /* a fixed table rather than a linked list of allocations. */
 /* the process table and every descriptor in it. */

@@ -5,8 +5,8 @@
  * sockets: a handle, and the table behind it.
  */
 
-#include "net/socket.h"
-#include "lib/string.h"
+#include <velvet/socket.h>
+#include <velvet/string.h>
 
 void socket_table_reset(struct socket_table *t)
 {

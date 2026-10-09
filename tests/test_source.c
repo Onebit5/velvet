@@ -19,10 +19,10 @@ void panic(const char *fmt, ...)
     exit(1);
 }
 
-#include "fs/source.h"
+#include <velvet/source.h>
 #include "fs/ustar.h"
-#include "philemon.h"
-#include "lib/hash.h"
+#include <velvet/philemon.h>
+#include <velvet/hash.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

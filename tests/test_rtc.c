@@ -25,7 +25,7 @@ void kprintf(const char *fmt, ...)
 
 #include <stdint.h>
 
-#include "drivers/rtc.h"
+#include <velvet/rtc.h>
 
 static int failures;
 #define CHECK(c, m) do { if (!(c)) { printf("FAIL: %s\n", m); failures++; } } while (0)

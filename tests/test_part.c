@@ -13,8 +13,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#include "drivers/part.h"
-#include "lib/hash.h"
+#include <velvet/part.h>
+#include <velvet/hash.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

@@ -26,7 +26,7 @@ void panic(const char *fmt, ...)
 
 #include <stdbool.h>
 
-#include "sched/process.h"
+#include <velvet/process.h>
 
 /* a pipe a forked child inherits gains a holder rather than being copied. */
 static int shared_pipes;

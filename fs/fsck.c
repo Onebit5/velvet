@@ -5,9 +5,9 @@
  * checking a filesystem, and mending it.
  */
 
-#include "fs/fsck.h"
-#include "fs/ext4.h"
-#include "lib/string.h"
+#include <velvet/fsck.h>
+#include <velvet/ext4.h>
+#include <velvet/string.h>
 
 #define SB_OFFSET       1024
 #define SB_MAGIC        0xef53

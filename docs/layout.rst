@@ -14,7 +14,12 @@ at a glance
 
 ::
 
-    arch/              the boundary: irq, cpu, mmu, context, machine
+    include/
+      velvet/          the headers more than one subsystem reads
+      uapi/velvet/     what ring 3 sees: syscall numbers, signals, keys, tty
+    arch/              one directory per architecture, each with the same
+                       five headers in include/asm/: irq, cpu, mmu,
+                       context, machine
       x86_64/          gdt, idt, isr stubs, irq dispatch, pic, apic, port io
       none/            an architecture that does nothing, for portable-check
     drivers/           serial, console, tty, ps/2 keyboard and mouse, pit,
@@ -30,8 +35,7 @@ at a glance
                        signals, auth, init, locks
     shell/             the velvet room terminal
     main.c             kmain
-    boot.c, boot.h     the loader handoff
-    version.h          the kernel's version
+    boot.c             the loader handoff
     linker.ld          the higher-half layout and the section symbols
     sources.mk         which of the above the kernel is made of
     boot/              philemon, the bootloader
@@ -41,7 +45,7 @@ at a glance
     tools/             the checkers and image builders: the python ones, and
                        the C ones that replace them
     docs/              this
-    GNUmakefile        the build
+    GNUmakefile        the build, and the version at the top of it
     ROADMAP.md         where it is going
     CHANGELOG.md       where it has been
 
@@ -97,6 +101,21 @@ among it, so nothing globs the root: the makefile, ``tools/checkarch.py``,
 ``tools/portable.py`` and ``tools/toolcheck.py`` all read that one list, and
 so does velvetOS's self-hosting build. a new file in an existing directory
 costs no edit anywhere; a new directory is one word in ``sources.mk``.
+
+headers
+-------
+
+where a header lives says who may read it.
+``include/velvet/`` holds every header another subsystem uses, included as
+``<velvet/vfs.h>``. ``arch/<arch>/include/asm/`` holds one architecture's,
+included as ``<asm/cpu.h>``, and the build puts exactly one of those on
+the include path. ``include/uapi/velvet/`` is the part of the kernel's
+interface that ring 3 compiles against too, the syscall numbers, signal
+numbers, keys and terminal flags, and includes nothing else of the
+kernel's. a header only its own subsystem reads stays beside its code.
+``<generated/version.h>`` is written into the object tree by the build,
+from the version at the top of the ``GNUmakefile``. the rules are in
+`code style <coding-style.rst>`_.
 
 the one rule that crosses all of them
 -------------------------------------

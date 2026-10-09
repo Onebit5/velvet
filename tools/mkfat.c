@@ -13,7 +13,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
-#include "fs/fat32.h"
+#include <velvet/fat32.h>
 
 #define SECTOR          512
 #define RESERVED        32      /* boot, fsinfo, backup, and room to spare */

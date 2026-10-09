@@ -69,11 +69,19 @@ number  name          arguments                                         returns
 the kernel side
 ---------------
 
+the numbers, ``struct user_stat`` and ``struct user_from`` are in
+``include/uapi/velvet/syscall.h``, with what the calls take beside it in
+the same directory: the signal numbers in ``signal.h``, the keys
+``getkey`` hands back in ``input.h``, and ``TTYMODE``'s flags in ``tty.h``.
+that directory is the part of the kernel a program compiles against, and
+it includes nothing else of the kernel's. the entry stub, the saved frame
+and the rest of what follows are x86's, in ``<asm/syscall.h>``.
+
 the door between ring 3 and here. numbers are the kernel's, deliberately small in number, there is no libc out there to satisfy, only the handful of things a program in this kernel could want
 
 four calls here are for a program drawing whole screens, and a shell needs none of them: it prints a prompt, reads a line and prints an answer, and the console keeps the cursor where the printing left it. an editor cannot work that way. it paints the entire screen, puts the cursor somewhere in the middle of what it painted, and waits for one keystroke rather than a line. getkey is the interesting one, because it is *also* how raw mode arrives. there is no flag anywhere saying "this terminal is raw": asking for a line gets the line discipline with its echo and its backspace handling, and asking for a key gets the key. the two questions are different, so they are different calls, and nothing has to remember which mode anything is in
 
-what a file is, for anyone who wants to know without reading it. this layout is duplicated in velvetOS's userland/syscall.h, which is what an abi is: two sides agreeing on where the fields sit, with nothing to enforce it but the fact that they were written together. the padding is explicit so that neither side's compiler gets to decide it
+what a file is, for anyone who wants to know without reading it. a program sees it under its posix name, struct stat, and velvetOS's userland/syscall.h holds that one against this one field by field at compile time, so the two cannot drift apart without the build saying so. the padding is explicit so that neither side's compiler gets to decide it
 
 three calls are the smallest set that lets a program use udp: claim a port, send to somebody, take what arrived. there is no `connect` and no `accept`, because udp has neither, a socket here hears from everybody and says who each datagram came from, which is what makes a udp server one port rather than a connection per talker. recvfrom does not block. it says "nothing yet" and the program sleeps and asks again, which is a poll rather than a wait, honest for a kernel with no way yet to park a thread on a socket, and it keeps the receive path out of the business of waking anybody
 
@@ -102,9 +110,13 @@ a function, so a program calls ``write(1, buf, len)`` rather than the
 number. the wrappers are one instruction and a return value, and the shape
 of each is the argument list above.
 
-the numbers are written down twice, here and there, and nothing but care
-keeps the two lists equal. a call added on this side is not usable until
-velvetOS has the same number on its side and has moved its ``kernel/`` pin
-to a commit that has the call, which is why a new call is a change to both
-projects and not a change to one.
+the numbers are written down once. ``userland/syscall.h`` includes the
+headers in ``include/uapi/velvet/`` from its ``kernel/`` submodule rather
+than keeping a copy, so the two sides cannot disagree about which number
+is which. ``struct stat`` keeps its posix name there, and is checked
+against ``struct user_stat`` with ``_Static_assert``\ s, size and every
+offset, so a layout that drifts fails to compile. a call added on this
+side is usable there once velvetOS moves its ``kernel/`` pin to a commit
+that has it and writes the wrapper, which is why a new call is still a
+change to both projects, in that order.
 

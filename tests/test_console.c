@@ -11,7 +11,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "drivers/console.h"
+#include <velvet/console.h>
 #include "drivers/font.h"
 
 static int failures = 0;

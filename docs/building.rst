@@ -48,6 +48,11 @@ the targets
    the C build tools, into ``bin/tests/``: ``mkext4``, ``mkfat``,
    ``mkboot``, ``gensyms``, ``bin2c``, ``checkfmt`` and ``fsck``.
 
+``make kernelrelease``
+   print the version: ``VERSION``, ``PATCHLEVEL`` and ``SUBLEVEL`` from the
+   top of the ``GNUmakefile``, which is the one place it is written. see
+   `releases <versioning.rst>`_.
+
 ``make run``
    boot ``velvet.img`` in qemu with a second drive carrying the data
    filesystem. defaults are four cpus and 2 GiB:
@@ -151,6 +156,13 @@ with this makefile, from the outside:
    assembler and linker, includes this file rather than keeping a list of
    its own.
 
+the include path and the version
+   the same build needs the kernel's include path, ``include/`` and
+   ``arch/x86_64/include/``, and a ``generated/version.h`` of its own on
+   it, defining ``VELVET_VERSION`` from the three lines at the top of the
+   ``GNUmakefile``. those lines are the first three of the file, in that
+   order, so they can be read without being make.
+
 ``$(OBJROOT)/x86_64/kernel.objects``
    every object the kernel was linked from, in link order, written beside
    the kernel at each link, so another linker can be handed exactly the same
@@ -172,6 +184,8 @@ everything generated comes back out with ``make clean``:
    one object tree per architecture. ``obj/x86_64/``, so switching
    ``ARCH`` and rebuilding does not link x86 objects into another
    machine's kernel and report a relocation error rather than what you did.
+   and ``obj/include/generated/version.h``, which the build writes from the
+   top of the ``GNUmakefile`` and rewrites only when the version changes.
 
 ``velvet.img``
    the bootable image: philemon and its second-stage loader, the kernel,

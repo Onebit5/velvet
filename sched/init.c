@@ -5,8 +5,8 @@
  * init: the first process, and the policy it applies.
  */
 
-#include "sched/init.h"
-#include "lib/string.h"
+#include <velvet/init.h>
+#include <velvet/string.h>
 
 /* everything above the #ifndef is arithmetic over a table and a clock reading. */
 
@@ -123,21 +123,21 @@ const char *init_state_name(enum service_state s)
 
 #ifndef VELVETOS_HOSTED
 
-#include "sched/sched.h"
-#include "sched/thread.h"
-#include "sched/spinlock.h"
-#include "shell/shell.h"
-#include "drivers/console.h"
-#include "drivers/pit.h"
-#include "drivers/tty.h"
-#include "arch/machine.h"
-#include "arch/cpu.h"
-#include "fs/disk.h"
-#include "net/netif.h"
-#include "drivers/e1000.h"
-#include "fs/pipe.h"
-#include "lib/kprintf.h"
-#include "mm/pmm.h"
+#include <velvet/sched.h>
+#include <velvet/thread.h>
+#include <velvet/spinlock.h>
+#include <velvet/shell.h>
+#include <velvet/console.h>
+#include <velvet/pit.h>
+#include <velvet/tty.h>
+#include <asm/machine.h>
+#include <asm/cpu.h>
+#include <velvet/disk.h>
+#include <velvet/netif.h>
+#include <velvet/e1000.h>
+#include <velvet/pipe.h>
+#include <velvet/kprintf.h>
+#include <velvet/pmm.h>
 
 /* how often init looks around. */
 #define INIT_TICK_MS   400

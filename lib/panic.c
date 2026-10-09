@@ -5,14 +5,14 @@
  * stopping the machine loudly.
  */
 
-#include "lib/panic.h"
-#include "sched/spinlock.h"
-#include "lib/kprintf.h"
-#include "lib/backtrace.h"
-#include "drivers/console.h"
-#include "arch/irq.h"
-#include "arch/cpu.h"
-#include "arch/machine.h"
+#include <velvet/panic.h>
+#include <velvet/spinlock.h>
+#include <velvet/kprintf.h>
+#include <velvet/backtrace.h>
+#include <velvet/console.h>
+#include <asm/irq.h>
+#include <asm/cpu.h>
+#include <asm/machine.h>
 #include <stdarg.h>
 #include <stdint.h>
 

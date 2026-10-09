@@ -13,9 +13,9 @@
 #include <string.h>
 #include <stdint.h>
 
-#include "net/dns.h"
-#include "net/http.h"
-#include "net/tcp.h"
+#include <velvet/dns.h>
+#include <velvet/http.h>
+#include <velvet/tcp.h>
 #include "fs/ustar.h"
 
 #define ROUNDS   200000

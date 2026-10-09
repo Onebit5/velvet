@@ -9,7 +9,7 @@
 #include <string.h>
 #include <stdbool.h>
 
-#include "sched/auth.h"
+#include <velvet/auth.h>
 
 static int failures;
 #define CHECK(c, m) do { if (!(c)) { printf("FAIL: %s\n", m); failures++; } } while (0)

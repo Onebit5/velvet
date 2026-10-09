@@ -5,10 +5,10 @@
  * pipes: a buffer with a process at each end.
  */
 
-#include "fs/pipe.h"
-#include "mm/kmalloc.h"
-#include "lib/string.h"
-#include "sched/process.h"
+#include <velvet/pipe.h>
+#include <velvet/kmalloc.h>
+#include <velvet/string.h>
+#include <velvet/process.h>
 
 /* how many are alive. only for saying so, nothing depends on it */
 static size_t live;

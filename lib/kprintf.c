@@ -5,11 +5,11 @@
  * the kernel's printf, to serial and to the screen.
  */
 
-#include "lib/kprintf.h"
-#include "drivers/serial.h"
-#include "drivers/console.h"
-#include "arch/irq.h"
-#include "sched/spinlock.h"
+#include <velvet/kprintf.h>
+#include <velvet/serial.h>
+#include <velvet/console.h>
+#include <asm/irq.h>
+#include <velvet/spinlock.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>

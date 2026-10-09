@@ -1,3 +1,8 @@
+VERSION = 0
+PATCHLEVEL = 4
+SUBLEVEL = 0
+KERNELRELEASE = $(VERSION).$(PATCHLEVEL).$(SUBLEVEL)
+
 # velvet build. needs gcc, nasm, make and python3. `make run` and
 # `make boottest` additionally need qemu.
 #
@@ -9,6 +14,7 @@
 #   make run        -> boot it in qemu (CPUS=4, MEM=2G, QEMU_EXTRA=...)
 #   make test       -> the host suites and every checker
 #   make boottest   -> boot it headless and drive the shell over serial
+#   make kernelrelease -> print the version
 #   make clean
 #
 # building from somewhere else. velvetOS builds this kernel out of its own
@@ -94,9 +100,17 @@ ARCH_SKIP := $(ARCH_SKIP_$(ARCH))
 # in the kernel (no context saving yet), and no red zone because interrupts
 # would trash it
 # what both machines want: no libc, no floating point, no surprises
+#
+# the headers are found by what they are: <velvet/...> in
+# include/, <asm/...> in the one architecture being built, and
+# <generated/...> in the object tree, since the build writes it. there
+# is no -I. on purpose. a header private to one subsystem is included as
+# "name.h" from beside it, so anything still spelled as a path from the
+# root is a header in the wrong place, and fails here rather than working
 CFLAGS := -g -Wall -Wextra -std=gnu11 \
 	-ffreestanding -fno-stack-protector -fno-stack-check -fno-lto -fno-PIC \
-	-I. -Iboot -MMD -MP -fno-omit-frame-pointer \
+	-Iinclude -Iarch/$(ARCH)/include -I$(OBJROOT)/include \
+	-MMD -MP -fno-omit-frame-pointer \
 	-DVELVETOS_ARCH_$(shell echo $(ARCH) | tr a-z A-Z)
 
 # x86: the -mno-* soup is because I cant use fpu/sse in the kernel (no
@@ -134,7 +148,7 @@ OBJ  := $(patsubst %.c,$(OBJDIR)/%.c.o,$(CSRC)) \
         $(patsubst %.S,$(OBJDIR)/%.S.o,$(SSRC)) \
         $(if $(filter x86_64,$(ARCH)),$(OBJDIR)/arch/x86_64/trampoline.c.o,)
 
-.PHONY: all kernel philemon tools run bootimg clean distclean
+.PHONY: all kernel philemon tools run bootimg kernelrelease clean distclean
 
 # the pc boots from an image philemon wrote, and the kernel on its own
 # is not something a pc can be handed
@@ -149,6 +163,28 @@ kernel: $(BINDIR)/$(KERNEL)
 
 philemon: $(BINDIR)/boot/philemon.bin $(BINDIR)/boot/philemon64.bin
 	@:
+
+kernelrelease:
+	@echo $(KERNELRELEASE)
+
+# the version, as C. VERSION, PATCHLEVEL and SUBLEVEL at the top of this
+# file are the only place it is written, and the banner, `version`,
+# `top` and `arcana` all print this one macro, so they cannot disagree.
+#
+# rewritten only when what it says changes. it is older than this
+# makefile after any edit to it, so the recipe runs every time, and if
+# it replaced the file unconditionally then touching a comment here
+# would rebuild everything that prints the version
+VERSION_H := $(OBJROOT)/include/generated/version.h
+
+$(VERSION_H): GNUmakefile
+	@mkdir -p $(@D)
+	@echo '#define VELVET_VERSION "$(KERNELRELEASE)"' > $@.tmp
+	@cmp -s $@.tmp $@ && rm -f $@.tmp || mv -f $@.tmp $@
+
+# before anything is compiled, because a fresh tree has no .d files yet
+# to say which objects read it
+$(OBJ): | $(VERSION_H)
 
 # two passes, because the symbol table describes addresses and linking
 # it in changes them. .ksyms sits after .text in the linker script, so
@@ -290,7 +326,7 @@ $(OBJDIR)/srcstamp.c: $(SOURCE) tools/srcstamp.py
 	@mkdir -p $(@D)
 	@python3 tools/srcstamp.py $(SOURCE) > $@
 
-$(OBJDIR)/srcstamp.o: $(OBJDIR)/srcstamp.c fs/source.h
+$(OBJDIR)/srcstamp.o: $(OBJDIR)/srcstamp.c include/velvet/source.h
 	@mkdir -p $(@D)
 	@$(CC) $(CFLAGS) -c $< -o $@
 
@@ -304,13 +340,13 @@ $(OBJDIR)/srcstamp.o: $(OBJDIR)/srcstamp.c fs/source.h
 BOOTCC    := gcc
 BOOTCFLAGS := -std=gnu11 -ffreestanding -fno-pic -fno-stack-protector \
               -mno-red-zone -mno-sse -mno-mmx -mno-80387 -mcmodel=small \
-              -Wall -Wextra -O2 -Iboot
+              -Wall -Wextra -O2 -Iinclude
 
 $(BINDIR)/boot/philemon.bin: boot/philemon.asm boot/philemon.inc
 	@mkdir -p $(@D)
 	$(NASM) -f bin $< -o $@
 
-$(BINDIR)/boot/philemon64.bin: boot/philemon.c boot/philemon.h boot/philemon.ld
+$(BINDIR)/boot/philemon64.bin: boot/philemon.c include/velvet/philemon.h boot/philemon.ld
 	@mkdir -p $(@D) $(OBJROOT)
 	$(BOOTCC) $(BOOTCFLAGS) -c boot/philemon.c -o $(OBJROOT)/philemon.o
 	$(LD) -T boot/philemon.ld -nostdlib -static --no-warn-rwx-segments \
@@ -319,7 +355,7 @@ $(BINDIR)/boot/philemon64.bin: boot/philemon.c boot/philemon.h boot/philemon.ld
 
 $(BOOTIMG): $(BINDIR)/boot/philemon.bin $(BINDIR)/boot/philemon64.bin \
             $(BINDIR)/$(KERNEL) $(RAMDISK) $(SOURCE) tools/mkboot.py \
-            boot/philemon.inc boot/philemon.h
+            boot/philemon.inc include/velvet/philemon.h
 	@python3 tools/mkboot.py $@ $(BINDIR)/boot/philemon.bin \
 		$(BINDIR)/boot/philemon64.bin $(BINDIR)/$(KERNEL) $(RAMDISK) $(SOURCE)
 
@@ -396,7 +432,7 @@ disk:
 # gets shot for saying cli.
 
 HOSTCC    := gcc
-HOSTFLAGS := -std=gnu11 -Wall -Wextra -Wno-stringop-truncation -Wno-stringop-overread -g -DVELVETOS_HOSTED -I. -Iboot -DVELVETOS_ARCH_X86_64
+HOSTFLAGS := -std=gnu11 -Wall -Wextra -Wno-stringop-truncation -Wno-stringop-overread -g -DVELVETOS_HOSTED -I. -Iinclude -Iarch/x86_64/include -I$(OBJROOT)/include -DVELVETOS_ARCH_X86_64
 
 TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/vmm $(T)/gdt \
@@ -637,7 +673,7 @@ $(T)/vfs:      tests/test_vfs.c      fs/vfs.c \
 # no other suite covers
 $(T)/source:   tests/test_source.c   fs/source.c \
                lib/hash.c lib/string.c
-$(T)/philemon: tests/test_philemon.c boot/philemon.c boot/philemon.h
+$(T)/philemon: tests/test_philemon.c boot/philemon.c include/velvet/philemon.h
 $(T)/gdt:      tests/test_gdt.c      arch/x86_64/gdt.c
 $(T)/gdt:      SRCS = tests/test_gdt.c
 $(T)/keyboard: tests/test_keyboard.c drivers/keyboard.c \
@@ -663,7 +699,7 @@ $(T)/shell:    tests/test_shell.c    lib/string.c \
                net/dns.c net/ip.c mm/pressure.c \
                sched/signal.c \
                net/http.c \
-               shell/shell.c version.h
+               shell/shell.c
 $(T)/shell:    SRCS = tests/test_shell.c lib/string.c \
                       fs/ramdisk.c sched/auth.c \
                       drivers/pci.c fs/vfs.c \
@@ -692,7 +728,7 @@ $(T)/shell:    SRCS = tests/test_shell.c lib/string.c \
 # suite pass anyway. rebuilding every test when any header changes costs
 # a few seconds and removes the whole class of it.
 TEST_HEADERS := $(shell find $(KERNEL_PORTABLE) arch boot tools tests -name '*.h' 2>/dev/null)
-$(TEST_BINS): $(TEST_HEADERS)
+$(TEST_BINS): $(TEST_HEADERS) $(VERSION_H)
 $(TOOL_BINS): $(TEST_HEADERS)
 	@mkdir -p $(@D)
 	$(HOSTCC) $(HOSTFLAGS) $(filter %.c,$^) -o $@
@@ -946,7 +982,7 @@ checkarch:
 #
 #   make portable-check LIST=1    and what a port would have to supply
 .PHONY: portable-check
-portable-check:
+portable-check: $(VERSION_H)
 	@python3 tools/portable.py $(if $(LIST),--list,)
 
 #
@@ -961,7 +997,7 @@ ARCH_CC    := $(CROSS)gcc
 ARCH_UPPER := $(shell echo $(ARCH) | tr a-z A-Z)
 ARCH_FLAGS := -std=gnu11 -Wall -Wextra -g -ffreestanding \
               -fno-stack-protector -fno-stack-check -fno-omit-frame-pointer \
-              -DVELVETOS_ARCH_$(ARCH_UPPER) -I. -Iboot -c
+              -DVELVETOS_ARCH_$(ARCH_UPPER) -Iinclude -Iarch/$(ARCH)/include -c
 
 .PHONY: arch-check
 arch-check:

@@ -5,9 +5,9 @@
  * acpi: walking the tables from the rsdp to the interrupt controllers.
  */
 
-#include "arch/x86_64/acpi.h"
-#include "boot.h"
-#include "lib/string.h"
+#include <asm/acpi.h>
+#include <velvet/boot.h>
+#include <velvet/string.h>
 
 /*
  * the root pointer. revision 0 means acpi 1.0 and a 32-bit rsdt;
@@ -244,8 +244,8 @@ const struct acpi_ioapic *acpi_ioapic_for_gsi(const struct acpi_info *info,
 
 #ifndef VELVETOS_HOSTED
 
-#include "mm/pmm.h"
-#include "lib/kprintf.h"
+#include <velvet/pmm.h>
+#include <velvet/kprintf.h>
 
 
 

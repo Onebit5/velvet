@@ -5,7 +5,7 @@
  * terminal modes, and what a key means.
  */
 
-#include "drivers/termios.h"
+#include <velvet/termios.h>
 
 #define CTRL_C 0x03
 #define CTRL_D 0x04

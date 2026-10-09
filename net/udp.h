@@ -10,7 +10,7 @@
 #ifndef NET_UDP_H
 #define NET_UDP_H
 
-#include "net/net.h"
+#include <velvet/net.h>
 
 #define UDP_HEADER_LEN 8
 

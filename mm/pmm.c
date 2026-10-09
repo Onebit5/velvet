@@ -5,15 +5,15 @@
  * the physical memory manager.
  */
 
-#include "mm/pmm.h"
-#include "boot.h"
-#include "mm/buddy.h"
-#include "lib/kprintf.h"
-#include "arch/irq.h"
-#include "sched/spinlock.h"
+#include <velvet/pmm.h>
+#include <velvet/boot.h>
+#include "buddy.h"
+#include <velvet/kprintf.h>
+#include <asm/irq.h>
+#include <velvet/spinlock.h>
 #include <stdbool.h>
-#include "lib/panic.h"
-#include "lib/string.h"
+#include <velvet/panic.h>
+#include <velvet/string.h>
 
 /* the buddy free lists, which every allocation walks and rewrites */
 static struct spinlock pmm_lock = SPINLOCK("pmm", LOCK_RANK_PMM);

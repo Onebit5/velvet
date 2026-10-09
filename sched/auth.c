@@ -5,9 +5,9 @@
  * reading the accounts.
  */
 
-#include "sched/auth.h"
-#include "fs/vfs.h"
-#include "lib/string.h"
+#include <velvet/auth.h>
+#include <velvet/vfs.h>
+#include <velvet/string.h>
 
 static struct account accounts[AUTH_MAX_ACCOUNTS];
 static size_t count;

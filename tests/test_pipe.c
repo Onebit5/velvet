@@ -31,8 +31,8 @@ void kfree(void *p)
     free(p);
 }
 
-#include "sched/process.h"
-#include "fs/pipe.h"
+#include <velvet/process.h>
+#include <velvet/pipe.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

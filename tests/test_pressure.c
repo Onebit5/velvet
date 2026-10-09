@@ -9,7 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "mm/pressure.h"
+#include <velvet/pressure.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

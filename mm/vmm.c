@@ -5,12 +5,12 @@
  * four levels of page tables.
  */
 
-#include "mm/vmm.h"
-#include "boot.h"
-#include "mm/pmm.h"
-#include "lib/kprintf.h"
-#include "lib/panic.h"
-#include "lib/string.h"
+#include <velvet/vmm.h>
+#include <velvet/boot.h>
+#include <velvet/pmm.h>
+#include <velvet/kprintf.h>
+#include <velvet/panic.h>
+#include <velvet/string.h>
 
 /* index into each level of the tables. */
 #define PML4_IDX(v) (((v) >> 39) & 0x1ff)
@@ -263,10 +263,10 @@ bool vmm_unmap_page(uint64_t pml4, uint64_t virt)
  */
 #ifndef VELVETOS_HOSTED
 
-#include "arch/x86_64/msr.h"
-#include "arch/mmu.h"
-#include "arch/cpu.h"
-#include "boot.h"
+#include <asm/msr.h>
+#include <asm/mmu.h>
+#include <asm/cpu.h>
+#include <velvet/boot.h>
 
 void kmain(void);   /* just for its address, to check .text is mapped */
 

@@ -5,7 +5,7 @@
  * the string functions, written for size and clarity rather than speed.
  */
 
-#include "lib/string.h"
+#include <velvet/string.h>
 
 void *memcpy(void *dst, const void *src, size_t n)
 {

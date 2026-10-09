@@ -10,7 +10,7 @@
 #include <string.h>
 #include <stdint.h>
 
-#include "lib/ksyms.h"
+#include <velvet/ksyms.h>
 
 static int failures;
 #define CHECK(c, m) do { if (!(c)) { printf("FAIL: %s\n", m); failures++; } } while (0)

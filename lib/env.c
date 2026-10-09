@@ -5,8 +5,8 @@
  * an environment, as a block of "NAME=value" strings.
  */
 
-#include "sched/process.h"
-#include "lib/string.h"
+#include <velvet/process.h>
+#include <velvet/string.h>
 
 /*
  * an environment as a block of "NAME=value" strings, each ended by a NUL

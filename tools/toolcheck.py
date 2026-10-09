@@ -203,11 +203,12 @@ def check(work):
         # number that drifts in one of them is a machine that hangs with
         # nothing on the screen, so the image must not get written
         tree = os.path.join(work, "drifted")
-        os.makedirs(os.path.join(tree, "boot"), exist_ok=True)
         import shutil as sh
-        for name in ("philemon.inc", "philemon.h", "philemon.asm"):
-            sh.copy(os.path.join(ROOT, "boot", name),
-                    os.path.join(tree, "boot", name))
+        for rel in ("boot/philemon.inc", "include/velvet/philemon.h",
+                    "boot/philemon.asm"):
+            os.makedirs(os.path.dirname(os.path.join(tree, rel)),
+                        exist_ok=True)
+            sh.copy(os.path.join(ROOT, rel), os.path.join(tree, rel))
         path = os.path.join(tree, "boot", "philemon.inc")
         text = open(path).read().replace("PT_BASE", "PT_BASE_UNUSED", 1)
         open(path, "w").write(text + "\nPT_BASE equ 0x9999\n")

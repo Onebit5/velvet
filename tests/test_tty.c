@@ -37,7 +37,7 @@ void kprintf(const char *fmt, ...)
 }
 
 /* which console the calling thread is on, and which is being looked at. */
-#include "sched/thread.h"
+#include <velvet/thread.h>
 static struct thread this_thread;
 struct thread *sched_current(void)
 {
@@ -67,7 +67,7 @@ void sched_wake_thread(int id)
 {
     woken_thread = id;
 }
-#include "sched/sched.h"
+#include <velvet/sched.h>
 enum sched_kill_result sched_kill(int id)
 {
     killed_thread = id; return SCHED_KILL_OK;
@@ -101,8 +101,8 @@ int input_getchar_blocking(void)
     return (script_at < script_len) ? script[script_at++] : '\n';
 }
 
-#include "sched/process.h"
-#include "drivers/tty.h"
+#include <velvet/process.h>
+#include <velvet/tty.h>
 
 /* a pipe a forked child inherits gains a holder rather than being copied. */
 struct pipe;
@@ -111,7 +111,7 @@ void pipe_share(struct pipe *p, bool writing)
     (void)p; (void)writing;
 }
 
-#include "drivers/input.h"
+#include <velvet/input.h>
 
 static int failures;
 #define CHECK(c, m) do { if (!(c)) { printf("FAIL: %s\n", m); failures++; } } while (0)

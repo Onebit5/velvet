@@ -5,21 +5,21 @@
  * waking the other cores.
  */
 
-#include "arch/x86_64/smp.h"
-#include "arch/x86_64/lapic.h"
-#include "mm/pmm.h"
-#include "mm/vmm.h"
-#include "drivers/pit.h"
-#include "arch/x86_64/msr.h"
-#include "arch/x86_64/tss.h"
-#include "lib/kprintf.h"
-#include "sched/spinlock.h"
-#include "lib/string.h"
-#include "arch/x86_64/gdt.h"
-#include "arch/x86_64/idt.h"
-#include "sched/sched.h"
-#include "arch/x86_64/syscall.h"
-#include "sched/thread.h"
+#include <asm/smp.h>
+#include <asm/lapic.h>
+#include <velvet/pmm.h>
+#include <velvet/vmm.h>
+#include <velvet/pit.h>
+#include <asm/msr.h>
+#include <asm/tss.h>
+#include <velvet/kprintf.h>
+#include <velvet/spinlock.h>
+#include <velvet/string.h>
+#include <asm/gdt.h>
+#include <asm/idt.h>
+#include <velvet/sched.h>
+#include <asm/syscall.h>
+#include <velvet/thread.h>
 
 /*
  * the trampoline, assembled separately and carried here as bytes. it has

@@ -5,18 +5,18 @@
  * spinlocks.
  */
 
-#include "sched/spinlock.h"
-#include "arch/irq.h"
-#include "arch/cpu.h"
-#include "lib/panic.h"
-#include "lib/kprintf.h"
+#include <velvet/spinlock.h>
+#include <asm/irq.h>
+#include <asm/cpu.h>
+#include <velvet/panic.h>
+#include <velvet/kprintf.h>
 
 /*
  * which core this is used to be answered here, twice, behind an #ifdef
  *, the apic on a real machine and a thread-local counter under the
  * host tests. that is the shape of every arch leak: a portable file
  * carrying two answers because nowhere else was willing to hold them.
- * arch/cpu.h holds them now and this file asks one question
+ * <asm/cpu.h> holds them now and this file asks one question
  */
 static uint32_t whoami(void)
 {

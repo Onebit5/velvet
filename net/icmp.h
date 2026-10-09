@@ -10,7 +10,7 @@
 #ifndef NET_ICMP_H
 #define NET_ICMP_H
 
-#include "net/net.h"
+#include <velvet/net.h>
 
 #define ICMP_HEADER_LEN 8
 

@@ -5,26 +5,26 @@
  * the scheduler: the run queue, the switch, and reaping the dead.
  */
 
-#include "sched/sched.h"
-#include "arch/cpu.h"
-#include "sched/thread.h"
-#include "drivers/pit.h"
-#include "mm/pmm.h"
-#include "mm/addrspace.h"
-#include "sched/process.h"
-#include "mm/kmalloc.h"
-#include "lib/kprintf.h"
-#include "lib/panic.h"
-#include "lib/string.h"
-#include "arch/cpu.h"
-#include "arch/irq.h"
-#include "sched/spinlock.h"
-#include "arch/context.h"
-#include "mm/pmm.h"
-#include "mm/addrspace.h"
-#include "sched/process.h"
-#include "fs/pipe.h"
-#include "net/netif.h"
+#include <velvet/sched.h>
+#include <asm/cpu.h>
+#include <velvet/thread.h>
+#include <velvet/pit.h>
+#include <velvet/pmm.h>
+#include <velvet/addrspace.h>
+#include <velvet/process.h>
+#include <velvet/kmalloc.h>
+#include <velvet/kprintf.h>
+#include <velvet/panic.h>
+#include <velvet/string.h>
+#include <asm/cpu.h>
+#include <asm/irq.h>
+#include <velvet/spinlock.h>
+#include <asm/context.h>
+#include <velvet/pmm.h>
+#include <velvet/addrspace.h>
+#include <velvet/process.h>
+#include <velvet/pipe.h>
+#include <velvet/netif.h>
 
 /* how many ticks a thread gets before the kernel takes the cpu back. */
 #define QUANTUM_TICKS 5

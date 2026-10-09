@@ -27,11 +27,11 @@ void kfree(void *p)
     free(p);
 }
 
-#include "fs/vfs.h"
-#include "fs/disk.h"
-#include "fs/ramdisk.h"
-#include "fs/source.h"
-#include "philemon.h"
+#include <velvet/vfs.h>
+#include <velvet/disk.h>
+#include <velvet/ramdisk.h>
+#include <velvet/source.h>
+#include <velvet/philemon.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

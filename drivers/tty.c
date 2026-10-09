@@ -5,15 +5,15 @@
  * the terminal: foreground process, line discipline, ctrl+c.
  */
 
-#include "drivers/tty.h"
-#include "drivers/input.h"
-#include "arch/irq.h"
-#include "sched/spinlock.h"
-#include "lib/kprintf.h"
-#include "sched/process.h"
-#include "sched/sched.h"
-#include "sched/thread.h"
-#include "drivers/console.h"
+#include <velvet/tty.h>
+#include <velvet/input.h>
+#include <asm/irq.h>
+#include <velvet/spinlock.h>
+#include <velvet/kprintf.h>
+#include <velvet/process.h>
+#include <velvet/sched.h>
+#include <velvet/thread.h>
+#include <velvet/console.h>
 
 /* which process is at the front of the terminal */
 static struct spinlock tty_lock = SPINLOCK("tty", LOCK_RANK_DEVICE);

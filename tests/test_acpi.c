@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "arch/x86_64/acpi.h"
+#include <asm/acpi.h>
 
 static int failures;
 #define CHECK(c, m) do { if (!(c)) { printf("FAIL: %s\n", m); failures++; } } while (0)

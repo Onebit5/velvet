@@ -11,8 +11,8 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
-#include "net/net.h"
-#include "net/dhcp.h"
+#include <velvet/net.h>
+#include <velvet/dhcp.h>
 
 static int failures = 0;
 

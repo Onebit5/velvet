@@ -5,8 +5,8 @@
  * enough http to pull a file down.
  */
 
-#include "net/http.h"
-#include "lib/string.h"
+#include <velvet/http.h>
+#include <velvet/string.h>
 
 
 

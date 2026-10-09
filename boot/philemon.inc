@@ -1,9 +1,9 @@
 ; where everything sits while the machine is starting.
 ;
 ; the assembly and the C cannot share a header, so this is the assembly
-; copy of what boot/philemon.h says. tools/mkboot.py refuses to build if
-; the two ever disagree, because a number that drifts in one of them is a
-; machine that hangs with no explanation at all.
+; copy of what include/velvet/philemon.h says. tools/mkboot.py refuses to
+; build if the two ever disagree, because a number that drifts in one of
+; them is a machine that hangs with no explanation at all.
 
 PH_MAGIC_LO   equ 0x4c4d4e30          ; "PHLMN0", split in half, because
 PH_MAGIC_HI   equ 0x00005048          ; real mode writes 32 bits at a time

@@ -21,9 +21,9 @@ void panic(const char *fmt, ...)
     exit(1);
 }
 
-#include "fs/ext4.h"
+#include <velvet/ext4.h>
 #include "fs/mkfs.h"
-#include "fs/fsck.h"
+#include <velvet/fsck.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

@@ -5,27 +5,27 @@
  * the velvet room terminal: the shell.
  */
 
-#include "shell/shell.h"
+#include <velvet/shell.h>
 /*
  * struct job, which used to arrive by way of one of the x86 headers
  * below, a transitive include is a dependency you find out about the
  * first time somebody stops including something else
  */
-#include "sched/usermode.h"
-#include "drivers/input.h"
-#include "drivers/console.h"
-#include "drivers/tty.h"
-#include "drivers/mouse.h"
-#include "drivers/pit.h"
-#include "lib/kprintf.h"
-#include "lib/string.h"
-#include "mm/pmm.h"
-#include "mm/pressure.h"
-#include "mm/kmalloc.h"
-#include "mm/slab.h"
-#include "mm/vmm.h"
-#include "lib/backtrace.h"
-#include "drivers/rtc.h"
+#include <velvet/usermode.h>
+#include <velvet/input.h>
+#include <velvet/console.h>
+#include <velvet/tty.h>
+#include <velvet/mouse.h>
+#include <velvet/pit.h>
+#include <velvet/kprintf.h>
+#include <velvet/string.h>
+#include <velvet/pmm.h>
+#include <velvet/pressure.h>
+#include <velvet/kmalloc.h>
+#include <velvet/slab.h>
+#include <velvet/vmm.h>
+#include <velvet/backtrace.h>
+#include <velvet/rtc.h>
 /*
  * `cpus`, `ioapic`, the syscall counters and the processor name in
  * `arcana` are not features of this shell, they are *reports on this
@@ -37,40 +37,40 @@
  * every architecture but one. so they are conditional, and this file
  * stays on checkarch's allow list where it belongs
  */
-#include "fs/ramdisk.h"
-#include "fs/source.h"
-#include "lib/hash.h"
-#include "fs/disk.h"
-#include "fs/fsck.h"
-#include "fs/install.h"
-#include "net/netif.h"
-#include "net/ether.h"
-#include "net/ip.h"
-#include "net/http.h"
-#include "sched/signal.h"
-#include "drivers/e1000.h"
-#include "fs/vfs.h"
-#include "fs/path.h"
-#include "drivers/ahci.h"
-#include "fs/pipe.h"
-#include "sched/auth.h"
-#include "sched/init.h"
+#include <velvet/ramdisk.h>
+#include <velvet/source.h>
+#include <velvet/hash.h>
+#include <velvet/disk.h>
+#include <velvet/fsck.h>
+#include <velvet/install.h>
+#include <velvet/netif.h>
+#include <velvet/ether.h>
+#include <velvet/ip.h>
+#include <velvet/http.h>
+#include <velvet/signal.h>
+#include <velvet/e1000.h>
+#include <velvet/vfs.h>
+#include <velvet/path.h>
+#include <velvet/ahci.h>
+#include <velvet/pipe.h>
+#include <velvet/auth.h>
+#include <velvet/init.h>
 
 /* and the four that only a pc has. */
 #if defined(VELVETOS_ARCH_X86_64)
-#include "arch/x86_64/cpuinfo.h"
-#include "arch/x86_64/smp.h"
-#include "arch/x86_64/syscall.h"
-#include "arch/x86_64/interrupts.h"
+#include <asm/cpuinfo.h>
+#include <asm/smp.h>
+#include <asm/syscall.h>
+#include <asm/interrupts.h>
 #endif
-#include "arch/cpu.h"
-#include "drivers/pci.h"
-#include "lib/ksyms.h"
-#include "version.h"
-#include "sched/sched.h"
-#include "sched/spinlock.h"
-#include "sched/thread.h"
-#include "sched/process.h"
+#include <asm/cpu.h>
+#include <velvet/pci.h>
+#include <velvet/ksyms.h>
+#include <generated/version.h>
+#include <velvet/sched.h>
+#include <velvet/spinlock.h>
+#include <velvet/thread.h>
+#include <velvet/process.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -1549,7 +1549,8 @@ static void cmd_top(int argc, char **argv)
         console_clear();
 
         console_set_colors(COLOR_PROMPT, 0x101018);
-        kprintf("velvet %s, press any key to stop watching\n\n", VERSION);
+        kprintf("velvet %s, press any key to stop watching\n\n",
+                VELVET_VERSION);
         console_set_colors(COLOR_TEXT, 0x101018);
 
         uint64_t ms = pit_uptime_ms();
@@ -1619,9 +1620,10 @@ static void cmd_arcana(int argc, char **argv)
     console_set_colors(COLOR_TEXT, 0x101018);
 
     kprintf("  THE COMPUTER ARCANA\n");
-    kprintf("  rank %s, the bond deepens with every commit\n\n", VERSION);
+    kprintf("  rank %s, the bond deepens with every commit\n\n",
+            VELVET_VERSION);
 
-    kprintf("  version    velvet %s\n", VERSION);
+    kprintf("  version    velvet %s\n", VELVET_VERSION);
     kprintf("  forged     %s, %s\n", __DATE__, __TIME__);
     kprintf("  by         gcc %s\n", __VERSION__);
     kprintf("  known      %lu functions by name\n", ksym_count);
@@ -1685,7 +1687,7 @@ static void cmd_persona(int argc, char **argv)
             kprintf("-------------");
             break;
         case 2:
-            kprintf("arcana    the Computer, rank %s", VERSION);
+            kprintf("arcana    the Computer, rank %s", VELVET_VERSION);
             break;
         case 3:
             kprintf("persona   %s", brand);
@@ -4719,7 +4721,7 @@ static void greet(void)
     console_clear();
 
     console_set_colors(0x45e653, 0x101018);
-    kprintf("velvet v%s\n\n", VERSION);
+    kprintf("velvet v%s\n\n", VELVET_VERSION);
 
     console_set_colors(0x7b8ce0, 0x101018);
     kprintf("Thou art I... And I am thou...\n");

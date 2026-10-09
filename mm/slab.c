@@ -5,11 +5,11 @@
  * object caches, and the lists threaded through their pages.
  */
 
-#include "mm/slab.h"
-#include "mm/pmm.h"
-#include "lib/panic.h"
-#include "arch/irq.h"
-#include "sched/spinlock.h"
+#include <velvet/slab.h>
+#include <velvet/pmm.h>
+#include <velvet/panic.h>
+#include <asm/irq.h>
+#include <velvet/spinlock.h>
 #include <stdbool.h>
 
 #define SLAB_MAGIC 0x51ab7a11ed900dull

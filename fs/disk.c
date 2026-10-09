@@ -5,19 +5,19 @@
  * the disk, mounted.
  */
 
-#include "fs/disk.h"
-#include "fs/fat32.h"
-#include "drivers/ahci.h"
-#include "lib/string.h"
-#include "arch/irq.h"
-#include "sched/spinlock.h"
-#include "drivers/rtc.h"
-#include "lib/epoch.h"
-#include "fs/bcache.h"
-#include "fs/fsck.h"
-#include "mm/kmalloc.h"
-#include "drivers/part.h"
-#include "philemon.h"
+#include <velvet/disk.h>
+#include <velvet/fat32.h>
+#include <velvet/ahci.h>
+#include <velvet/string.h>
+#include <asm/irq.h>
+#include <velvet/spinlock.h>
+#include <velvet/rtc.h>
+#include <velvet/epoch.h>
+#include <velvet/bcache.h>
+#include <velvet/fsck.h>
+#include <velvet/kmalloc.h>
+#include <velvet/part.h>
+#include <velvet/philemon.h>
 
 /*
  * the filesystem keeps one sector of scratch and every path through

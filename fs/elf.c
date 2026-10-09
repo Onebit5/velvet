@@ -5,11 +5,11 @@
  * loading an elf64 executable.
  */
 
-#include "fs/elf.h"
-#include "lib/string.h"
+#include <velvet/elf.h>
+#include <velvet/string.h>
 
 /* what a segment turns into, in page table terms. */
-#include "mm/vmm.h"
+#include <velvet/vmm.h>
 
 /* elf_load gets this from pmm.h, which needs a real machine. */
 #ifndef PAGE_SIZE
@@ -200,7 +200,7 @@ bool elf_describe(const void *image, uint64_t size,
 
 #ifndef VELVETOS_HOSTED
 
-#include "mm/pmm.h"
+#include <velvet/pmm.h>
 
 struct elf_load_result elf_load(const void *image, uint64_t size,
                                 uint64_t pml4)

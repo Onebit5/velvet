@@ -5,9 +5,9 @@
  * udp: two ports, a length, and a checksum.
  */
 
-#include "net/udp.h"
-#include "net/ip.h"
-#include "lib/string.h"
+#include "udp.h"
+#include <velvet/ip.h>
+#include <velvet/string.h>
 
 /* the pseudo-header, which is twelve bytes that are never sent. */
 static void sum_pseudo(struct net_sum *s, ipv4 from, ipv4 to, uint16_t len)

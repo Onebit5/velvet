@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "sched/init.h"
+#include <velvet/init.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

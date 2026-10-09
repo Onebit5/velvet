@@ -5,8 +5,8 @@
  * icmp, which for this machine is entirely ping.
  */
 
-#include "net/icmp.h"
-#include "lib/string.h"
+#include "icmp.h"
+#include <velvet/string.h>
 
 bool icmp_parse_echo(const uint8_t *p, size_t len, struct icmp_echo *out)
 {

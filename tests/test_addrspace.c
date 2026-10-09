@@ -146,8 +146,8 @@ void kfree(void *p)
     free(p);
 }
 
-#include "mm/vmm.h"
-#include "mm/addrspace.h"
+#include <velvet/vmm.h>
+#include <velvet/addrspace.h>
 
 static int failures;
 #define CHECK(c, m) do { if (!(c)) { printf("FAIL: %s\n", m); failures++; } } while (0)

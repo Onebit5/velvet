@@ -28,10 +28,10 @@ void panic(const char *fmt, ...)
     exit(1);
 }
 
-#include "sched/spinlock.h"
-#include "mm/pmm.h"
-#include "mm/slab.h"
-#include "mm/kmalloc.h"
+#include <velvet/spinlock.h>
+#include <velvet/pmm.h>
+#include <velvet/slab.h>
+#include <velvet/kmalloc.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

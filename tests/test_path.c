@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "fs/path.h"
+#include <velvet/path.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

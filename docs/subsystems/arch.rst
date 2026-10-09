@@ -25,21 +25,21 @@ because at least the inline assembly was honest about what it was.
 
 the five headers are:
 
-``arch/irq.h``
+``<asm/irq.h>``
    may interrupts happen right now. ``irq_install`` routes a device's
    interrupt and lets it through in one call, because every caller used to
    register and forget to unmask. ``irq_save`` / ``irq_restore`` nest.
    a blind disable/enable pair cannot, because the inner one turns them
    back on while the outer caller still needed them off.
 
-``arch/cpu.h``
+``<asm/cpu.h>``
    what this core can be told to do. ``cpu_relax`` (this is a spin, not
    work), ``cpu_idle`` (stop until something happens. interrupts must be
    on), ``cpu_stop`` (the deliberate version), and the two "where am i"
    calls a backtrace and ``vmm`` need: ``cpu_frame_pointer`` and
    ``cpu_stack_pointer``.
 
-``arch/mmu.h``
+``<asm/mmu.h>``
    the three moments where what was written down has to be *believed by a
    processor*: ``mmu_load_table`` (run on these tables),
    ``mmu_flush_page`` (one translation is stale), and
@@ -48,7 +48,7 @@ the five headers are:
    arithmetic over memory and stay above this line, even though all of it
    is four-level and x86-shaped today.
 
-``arch/machine.h``
+``<asm/machine.h>``
    the *box*, rather than the processor. two machines with the same
    instruction set stop and restart in entirely different ways, so this is
    separate on purpose. ``machine_bring_up_early`` (what has to exist
@@ -58,18 +58,20 @@ the five headers are:
    ``machine_key_pressed`` (asked with interrupts off, for the panic
    screen). these three bring-up calls are what ``kmain`` used to *be*.
 
-``arch/context.h``
+``<asm/context.h>``
    what a parked thread's state is, so the scheduler does not name a
    register file.
 
-every one picks its implementation with an ``#if
-defined(VELVETOS_ARCH_...)`` and an ``#error`` for everything else. the
-``#error`` is the point: adding a second architecture means the compiler
-lists exactly what is missing, rather than the machine booting and being
+every architecture provides all five, in ``arch/<arch>/include/asm/``,
+and the build puts exactly one of those directories on the include path:
+``-Iarch/$(ARCH)/include``. which machine ``<asm/cpu.h>`` means is decided
+there and nowhere else, so no header carries a list of architectures. a
+second architecture that is missing one of the five fails to compile, with
+the name of the header it lacks, rather than the machine booting and being
 subtly wrong.
 
-``arch/inline.h`` is the odd one out and is not a contract at all. an arch
-primitive has to *be* its instruction where it is written: the kernel builds
+``ARCH_INLINE``, in ``<velvet/compiler.h>``, is not part of the contract
+at all. an arch primitive has to *be* its instruction where it is written: the kernel builds
 at ``-O0``, where a plain ``static inline`` is a call like any other, and
 for the two that read a register a call is not merely slower; it would
 read its own frame and its own stack, and the backtrace would politely
@@ -79,13 +81,15 @@ x86_64
 ------
 
 ``arch/x86_64/`` is the only real implementation, and everything the rest
-of the kernel needs from this machine lives here:
+of the kernel needs from this machine lives here. its headers are in
+``arch/x86_64/include/asm/``, which is what ``<asm/...>`` means when the
+kernel is built for it:
 
-- ``gdt.c`` / ``gdt.h``. the descriptor tables, including the task state
+- ``gdt.c`` / ``asm/gdt.h``. the descriptor tables, including the task state
   segment slot that has been reserved since the first exception handler.
-- ``idt.c`` / ``idt.h``, ``interrupts.c``, ``isr.asm``. the exception and
+- ``idt.c`` / ``asm/idt.h``, ``interrupts.c``, ``isr.asm``. the exception and
   interrupt vectors, and the stubs that save a frame before the C handler.
-- ``irq.h``, ``pic.c`` (the 8259), ``ioapic.c``, ``lapic.c``, ``acpi.c``.
+- ``asm/irq.h``, ``pic.c`` (the 8259), ``ioapic.c``, ``lapic.c``, ``acpi.c``.
   interrupt routing, from the legacy pair up to the modern hardware.
 - ``smp.c``, ``trampoline.asm``. waking the other cores in real mode and
   bringing them into long mode.
@@ -96,7 +100,7 @@ of the kernel needs from this machine lives here:
   ring 3.
 - ``switch.asm``. the context switch, six callee-saved registers and a
   return address.
-- ``cpuinfo.c``, ``machine.c``, ``msr.h``, ``io.h``, ``uart.c``. the
+- ``cpuinfo.c``, ``machine.c``, ``asm/msr.h``, ``asm/io.h``, ``uart.c``. the
   processor, the box, and the port i/o that makes a file visibly x86.
 - ``none/``. the architecture that does nothing; below.
 
@@ -106,12 +110,14 @@ none: an instrument, not a port
 ``arch/none/`` will never run. it is an **instrument**, and it measures one
 thing: whether the boundary is real or is decoration.
 
-``tools/checkarch.py`` greps; it can see an ``#include`` of an x86 header
-and a line of inline assembly, and it cannot see a portable file that
+``tools/checkarch.py`` greps; it can see an ``#include`` of an
+``<asm/...>`` header that ``arch/none`` does not provide, which is what an
+x86 header is, and a line of inline assembly, and it cannot see a portable file that
 quietly *depends* on something only x86 provides. so ``make
 portable-check`` compiles the whole portable kernel. ``mm/``, ``sched/``,
-``fs/``, ``lib/``, most of ``drivers/``, against these headers, which
-supply the five contracts and nothing else. every function is empty, every
+``fs/``, ``lib/``, most of ``drivers/``, against
+``arch/none/include/asm/``, which supplies the five contracts and nothing
+else. every function is empty, every
 constant a plausible-looking lie.
 
 if it compiles, nothing above the line needs a machine. if it does not, the
@@ -147,8 +153,8 @@ instructions went to ``arch/x86_64/uart.c``. the rest are still here because the
 removed before it could say anything about them.
 
 what is done in the meantime is making the leak *legible and counted*: port
-i/o lives in ``arch/x86_64/io.h``, so a file that does it visibly includes
-an x86 header; ``tools/checkarch.py`` prints the list on every build; and
+i/o lives in ``<asm/io.h>``, which only x86 has, so a file that does it
+visibly includes an x86 header; ``tools/checkarch.py`` prints the list on every build; and
 ``tools/portable.py`` catches the kind that has no include to grep for.
 
 the contract each header states
@@ -160,7 +166,7 @@ in the implementations are for. it lived in the headers until it was
 clear that a header is read by people compiling against it, not only
 by people porting it.
 
-``arch/cpu.h``::
+``<asm/cpu.h>``::
 
     void cpu_relax(void)
     void cpu_idle(void)
@@ -168,7 +174,7 @@ by people porting it.
     uint64_t cpu_frame_pointer(void)
     uint64_t cpu_stack_pointer(void)
 
-``arch/irq.h``::
+``<asm/irq.h>``::
 
     void irq_install(uint8_t line, void (*handler)(void))
     uint64_t irq_save(void)
@@ -176,7 +182,7 @@ by people porting it.
     void irq_enable(void)
     void irq_disable(void)
 
-``arch/machine.h``::
+``<asm/machine.h>``::
 
     void machine_bring_up_early(void)
     void machine_bring_up_late(void)
@@ -185,13 +191,13 @@ by people porting it.
     bool machine_poweroff(void)
     bool machine_key_pressed(void)
 
-``arch/mmu.h``::
+``<asm/mmu.h>``::
 
     void mmu_load_table(uint64_t phys_root)
     void mmu_flush_page(uint64_t virt)
     void mmu_enforce_write_protect(void)
 
-``arch/context.h``::
+``<asm/context.h>``::
 
     uint64_t context_make_stack(uint64_t stack_top, void (*entry)(void))
     void switch_context(uint64_t *save_sp, uint64_t *load_sp)

@@ -10,7 +10,7 @@
 #include <string.h>
 #include <stdbool.h>
 
-#include "lib/deflate.h"
+#include <velvet/deflate.h>
 
 static int failures;
 

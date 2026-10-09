@@ -5,8 +5,8 @@
  * inflate: undoing deflate.
  */
 
-#include "lib/deflate.h"
-#include "lib/hash.h"
+#include <velvet/deflate.h>
+#include <velvet/hash.h>
 
 #include <stdbool.h>
 

@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include "drivers/termios.h"
+#include <velvet/termios.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

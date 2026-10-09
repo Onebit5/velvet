@@ -5,9 +5,9 @@
  * partition tables: mbr and gpt.
  */
 
-#include "drivers/part.h"
-#include "lib/string.h"
-#include "lib/hash.h"
+#include <velvet/part.h>
+#include <velvet/string.h>
+#include <velvet/hash.h>
 
 
 static uint32_t rd32(const uint8_t *p)

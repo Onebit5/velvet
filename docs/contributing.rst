@@ -39,7 +39,7 @@ there are three, and the first two are worth as much as the third.
 **report a bug.** open an issue. a bug report is a contribution on its own,
 and for a project this size it is often the most useful one. say:
 
-- the version, from the boot banner or ``version.h``;
+- the version, from the boot banner or ``make kernelrelease``;
 - what you did, what you expected, what happened;
 - the serial log, if the machine got far enough to write one (``make
   boottest`` leaves one in ``bin/*-boottest.log``);

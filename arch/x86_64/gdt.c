@@ -5,7 +5,7 @@
  * the gdt, and one tss descriptor per core.
  */
 
-#include "arch/x86_64/gdt.h"
+#include <asm/gdt.h>
 #include <stdint.h>
 #include <stddef.h>
 

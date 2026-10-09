@@ -10,8 +10,13 @@ kernel goes on building and booting perfectly.
 so this is the thing that notices. it fails the build on:
 
   * inline assembly outside arch/
-  * an #include of arch/x86_64/... from outside arch/, unless
-    the file is on the list below
+  * an #include of an <asm/...> header that is not part of the
+    contract, from outside arch/, unless the file is on the list
+    below. the contract is what arch/none provides: a header every
+    architecture has is portable to include, and one only x86 has is
+    the machine by another name
+  * an #include that names a directory under arch/ at all, which
+    is reaching past the include path to one architecture
 
 and it prints the list every time, because the list is the interesting
 output. it is a record of what has not been done yet, and it is meant to
@@ -58,7 +63,15 @@ ALLOWED = {
 }
 
 ASM = re.compile(r'\basm\s+volatile\b|\b__asm__\b|\basm\s*\(')
-INCLUDE_ARCH = re.compile(r'^\s*#\s*include\s*"(arch/[^"]+)"', re.M)
+INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', re.M)
+
+
+def contract():
+    """the headers every architecture provides, as the one that does
+    nothing provides them. read from the tree, so a header added to the
+    contract is portable the moment arch/none has it, and not before."""
+    asm = os.path.join(ARCH, "none", "include", "asm")
+    return {"asm/" + n for n in os.listdir(asm) if n.endswith(".h")}
 
 
 def kernel_paths():
@@ -93,6 +106,7 @@ def sources():
 def main():
     problems = []
     naming = {}
+    portable = contract()
 
     for full, rel in sources():
         with open(full, encoding="utf-8", errors="replace") as f:
@@ -107,11 +121,13 @@ def main():
                 problems.append(
                     "%s:%d: inline assembly outside arch/\n"
                     "    %s\n"
-                    "    -> it belongs behind arch/cpu.h, arch/irq.h, "
-                    "arch/mmu.h or arch/machine.h" % (rel, n, line.strip()))
+                    "    -> it belongs behind %s" % (
+                        rel, n, line.strip(), ", ".join(
+                            "<%s>" % h for h in sorted(portable))))
 
-        named = sorted({h for h in INCLUDE_ARCH.findall(text)
-                        if h.startswith("arch/x86_64/")})
+        named = sorted({h for h in INCLUDE.findall(text)
+                        if (h.startswith("asm/") and h not in portable)
+                        or h.startswith("arch/")})
         if named:
             naming[rel] = named
 
@@ -119,7 +135,7 @@ def main():
         if rel not in ALLOWED:
             problems.append(
                 "%s: includes %s from outside arch/\n"
-                "    -> use the portable header, or add it to ALLOWED in "
+                "    -> use a header the contract has, or add it to ALLOWED in "
                 "tools/checkarch.py with a reason" % (rel, ", ".join(headers)))
 
     stale = sorted(set(ALLOWED) - set(naming))

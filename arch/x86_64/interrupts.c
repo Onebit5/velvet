@@ -5,21 +5,21 @@
  * the interrupt stubs' entry into c, and the frame they leave.
  */
 
-#include "arch/x86_64/interrupts.h"
-#include "arch/x86_64/pic.h"
-#include "arch/x86_64/acpi.h"
-#include "arch/x86_64/lapic.h"
-#include "arch/x86_64/smp.h"
-#include "arch/x86_64/ioapic.h"
-#include "arch/x86_64/idt.h"
-#include "drivers/pit.h"
-#include "lib/kprintf.h"
-#include "lib/panic.h"
-#include "lib/backtrace.h"
-#include "mm/pmm.h"
-#include "mm/addrspace.h"
-#include "drivers/console.h"
-#include "sched/sched.h"
+#include <asm/interrupts.h>
+#include <asm/pic.h>
+#include <asm/acpi.h>
+#include <asm/lapic.h>
+#include <asm/smp.h>
+#include <asm/ioapic.h>
+#include <asm/idt.h>
+#include <velvet/pit.h>
+#include <velvet/kprintf.h>
+#include <velvet/panic.h>
+#include <velvet/backtrace.h>
+#include <velvet/pmm.h>
+#include <velvet/addrspace.h>
+#include <velvet/console.h>
+#include <velvet/sched.h>
 #include <stddef.h>
 
 /*

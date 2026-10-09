@@ -5,22 +5,22 @@
  * the interface: the one place that knows both card and stack.
  */
 
-#include "net/netif.h"
-#include "net/ether.h"
-#include "net/ip.h"
-#include "net/icmp.h"
-#include "net/udp.h"
-#include "net/socket.h"
-#include "net/dhcp.h"
-#include "net/tcp.h"
-#include "net/dns.h"
-#include "drivers/e1000.h"
-#include "drivers/pit.h"
-#include "lib/string.h"
-#include "lib/kprintf.h"
-#include "sched/spinlock.h"
-#include "sched/sched.h"
-#include "sched/thread.h"
+#include <velvet/netif.h>
+#include <velvet/ether.h>
+#include <velvet/ip.h>
+#include "icmp.h"
+#include "udp.h"
+#include <velvet/socket.h>
+#include <velvet/dhcp.h>
+#include <velvet/tcp.h>
+#include <velvet/dns.h>
+#include <velvet/e1000.h>
+#include <velvet/pit.h>
+#include <velvet/string.h>
+#include <velvet/kprintf.h>
+#include <velvet/spinlock.h>
+#include <velvet/sched.h>
+#include <velvet/thread.h>
 
 /* NOTE: everything this file *calls* is checked against packets built from the rfcs. */
 

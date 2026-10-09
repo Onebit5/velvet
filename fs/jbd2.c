@@ -5,9 +5,9 @@
  * the ext4 journal: writing it, and replaying it.
  */
 
-#include "fs/jbd2.h"
-#include "fs/ext4.h"
-#include "lib/string.h"
+#include <velvet/jbd2.h>
+#include <velvet/ext4.h>
+#include <velvet/string.h>
 
 /* everything else on this disk is little endian and the journal is not. */
 

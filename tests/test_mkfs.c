@@ -12,7 +12,7 @@
 #include <stdbool.h>
 
 #include "fs/mkfs.h"
-#include "fs/ext4.h"
+#include <velvet/ext4.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

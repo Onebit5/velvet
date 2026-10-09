@@ -12,7 +12,8 @@ how a release happens
 
 #. the work for a roadmap entry is merged, with its tests, and CI is green
    on ``master``.
-#. ``version.h`` is bumped to the new number.
+#. ``VERSION``, ``PATCHLEVEL`` and ``SUBLEVEL`` at the top of the
+   ``GNUmakefile`` are bumped to the new number.
 #. the ``CHANGELOG.md`` entry is added, in the roadmap's words, with the
    parts that turned out to matter written in.
 #. the release is published on github, tagged ``vX.Y.Z``, with that changelog
@@ -72,11 +73,14 @@ where a version lives
    why, not how, which is what the commit log is for. the release notes are
    this entry, copied.
 
-``version.h``
-   the one place the version string is written down, so the boot banner,
-   ``top``, ``arcana`` and ``persona`` can never disagree about which
-   kernel they are running. it is the kernel's number and nobody else's: the system has
-   its own, in velvetOS's ``etc/os-release``.
+the top of the ``GNUmakefile``
+   the one place the version is written down, as ``VERSION``,
+   ``PATCHLEVEL`` and ``SUBLEVEL``. the build turns them into
+   ``<generated/version.h>``, and the boot banner,
+   ``top``, ``arcana`` and ``persona`` all print that one macro, so they
+   can never disagree about which kernel they are running. ``make
+   kernelrelease`` prints it. it is the kernel's number and nobody else's:
+   the system has its own, in velvetOS's ``etc/os-release``.
 
 all three have to agree at the moment a release is cut. a version in one and
 not the others is the kind of inconsistency that looks fine until a machine

@@ -5,9 +5,9 @@
  * tcp: the first thing here that has to remember what it said.
  */
 
-#include "net/tcp.h"
-#include "net/ip.h"
-#include "lib/string.h"
+#include <velvet/tcp.h>
+#include <velvet/ip.h>
+#include <velvet/string.h>
 
 /* the same pseudo-header udp uses, with tcp's protocol number and the whole segment's length. */
 static void sum_pseudo(struct net_sum *s, ipv4 from, ipv4 to, uint16_t len)

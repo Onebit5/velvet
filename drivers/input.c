@@ -5,12 +5,12 @@
  * where every source of typing meets.
  */
 
-#include "drivers/input.h"
-#include "arch/irq.h"
-#include "sched/spinlock.h"
-#include "sched/sched.h"
-#include "drivers/tty.h"
-#include "drivers/console.h"
+#include <velvet/input.h>
+#include <asm/irq.h>
+#include <velvet/spinlock.h>
+#include <velvet/sched.h>
+#include <velvet/tty.h>
+#include <velvet/console.h>
 
 /*
  * one ring per console, and that is not tidiness, it is the only

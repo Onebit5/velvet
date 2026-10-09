@@ -5,8 +5,8 @@
  * enumerating the pci bus.
  */
 
-#include "drivers/pci.h"
-#include "lib/string.h"
+#include <velvet/pci.h>
+#include <velvet/string.h>
 
 /* offsets into configuration space. */
 #define PCI_VENDOR      0x00
@@ -260,9 +260,9 @@ const char *pci_device_name(uint16_t vendor, uint16_t device)
 
 #ifndef VELVETOS_HOSTED
 
-#include "arch/x86_64/io.h"
-#include "arch/irq.h"
-#include "sched/spinlock.h"
+#include <asm/io.h>
+#include <asm/irq.h>
+#include <velvet/spinlock.h>
 
 /*
  * the original way in, and still the one every machine supports: an

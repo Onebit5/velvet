@@ -5,35 +5,36 @@
  * the syscall dispatcher.
  */
 
-#include "arch/x86_64/syscall.h"
-#include "lib/epoch.h"
-#include "arch/x86_64/smp.h"
-#include "arch/x86_64/msr.h"
+#include <asm/syscall.h>
+#include <velvet/epoch.h>
+#include <asm/smp.h>
+#include <asm/msr.h>
 #include <stdbool.h>
-#include "arch/x86_64/gdt.h"
-#include "drivers/input.h"
-#include "drivers/pit.h"
-#include "lib/kprintf.h"
-#include "mm/vmm.h"
-#include "mm/pmm.h"
-#include "sched/sched.h"
-#include "sched/thread.h"
-#include "sched/process.h"
-#include "net/netif.h"
-#include "net/socket.h"
-#include "sched/usermode.h"
-#include "mm/addrspace.h"
-#include "fs/vfs.h"
-#include "fs/path.h"
-#include "drivers/tty.h"
-#include "drivers/console.h"
-#include "drivers/input.h"
-#include "fs/pipe.h"
-#include "mm/kmalloc.h"
-#include "mm/addrspace.h"
-#include "mm/vmm.h"
-#include "sched/auth.h"
-#include "lib/string.h"
+#include <asm/gdt.h>
+#include <velvet/input.h>
+#include <velvet/pit.h>
+#include <velvet/kprintf.h>
+#include <velvet/vmm.h>
+#include <velvet/pmm.h>
+#include <velvet/sched.h>
+#include <velvet/thread.h>
+#include <velvet/process.h>
+#include <velvet/netif.h>
+#include <velvet/socket.h>
+#include <velvet/usermode.h>
+#include <velvet/addrspace.h>
+#include <velvet/vfs.h>
+#include <velvet/path.h>
+#include <velvet/tty.h>
+#include <velvet/console.h>
+#include <velvet/input.h>
+#include <velvet/pipe.h>
+#include <velvet/kmalloc.h>
+#include <velvet/addrspace.h>
+#include <velvet/vmm.h>
+#include <velvet/auth.h>
+#include <velvet/string.h>
+#include <uapi/velvet/tty.h>
 
 #define MSR_STAR   0xc0000081
 #define MSR_LSTAR  0xc0000082
@@ -1688,13 +1689,13 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
          * syscall and a race between them
          */
         struct term_mode was = tty_get_mode();
-        int64_t previous = (was.raw ? 1 : 0) | (was.echo ? 2 : 0)
-                         | (was.signals ? 4 : 0);
+        int64_t previous = (was.raw ? TTY_RAW : 0) | (was.echo ? TTY_ECHO : 0)
+                         | (was.signals ? TTY_SIGNALS : 0);
         if (a0 != 0) {
             struct term_mode m = {
-                .raw     = (a1 & 1) != 0,
-                .echo    = (a1 & 2) != 0,
-                .signals = (a1 & 4) != 0,
+                .raw     = (a1 & TTY_RAW) != 0,
+                .echo    = (a1 & TTY_ECHO) != 0,
+                .signals = (a1 & TTY_SIGNALS) != 0,
             };
             tty_set_mode(&m);
         }

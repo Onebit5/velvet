@@ -5,11 +5,11 @@
  * installing the machine onto a disk.
  */
 
-#include "fs/install.h"
-#include "fs/mkfs.h"
-#include "drivers/part.h"
-#include "lib/string.h"
-#include "philemon.h"
+#include <velvet/install.h>
+#include "mkfs.h"
+#include <velvet/part.h>
+#include <velvet/string.h>
+#include <velvet/philemon.h>
 
 /* how much room to leave between the end of the system area and the start of the partition. */
 #define ALIGN_SECTORS 2048
@@ -209,9 +209,9 @@ bool install_system(const struct install_io *io, uint32_t now, bool split,
 
 #ifndef VELVETOS_HOSTED
 
-#include "fs/vfs.h"
-#include "fs/path.h"
-#include "lib/kprintf.h"
+#include <velvet/vfs.h>
+#include <velvet/path.h>
+#include <velvet/kprintf.h>
 
 /* one buffer, reused down the recursion. */
 static uint8_t copy_buf[4096];

@@ -10,7 +10,7 @@
 #include <string.h>
 #include <stdint.h>
 
-#include "../boot/philemon.h"
+#include <velvet/philemon.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

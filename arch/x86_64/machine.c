@@ -5,26 +5,26 @@
  * the machine: reboot, halt, and the firmware's handoff.
  */
 
-#include "arch/x86_64/machine.h"
-#include "arch/x86_64/io.h"
-#include "arch/x86_64/gdt.h"
-#include "arch/x86_64/idt.h"
-#include "arch/x86_64/pic.h"
-#include "arch/x86_64/interrupts.h"
-#include "arch/x86_64/smp.h"
-#include "arch/x86_64/tss.h"
-#include "arch/x86_64/syscall.h"
-#include "drivers/serial.h"
-#include "drivers/keyboard.h"
-#include "drivers/mouse.h"
-#include "drivers/pit.h"
-#include "drivers/pci.h"
-#include "drivers/e1000.h"
-#include "net/net.h"
-#include "lib/kprintf.h"
-#include "mm/vmm.h"
-#include "arch/x86_64/irq.h"
-#include "arch/x86_64/cpu.h"
+#include <asm/machine.h>
+#include <asm/io.h>
+#include <asm/gdt.h>
+#include <asm/idt.h>
+#include <asm/pic.h>
+#include <asm/interrupts.h>
+#include <asm/smp.h>
+#include <asm/tss.h>
+#include <asm/syscall.h>
+#include <velvet/serial.h>
+#include <velvet/keyboard.h>
+#include <velvet/mouse.h>
+#include <velvet/pit.h>
+#include <velvet/pci.h>
+#include <velvet/e1000.h>
+#include <velvet/net.h>
+#include <velvet/kprintf.h>
+#include <velvet/vmm.h>
+#include <asm/irq.h>
+#include <asm/cpu.h>
 #include <stdint.h>
 
 /*

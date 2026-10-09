@@ -5,12 +5,12 @@
  * the virtual filesystem: names, descriptors, and two disks.
  */
 
-#include "fs/vfs.h"
-#include "fs/ramdisk.h"
-#include "fs/source.h"
-#include "fs/disk.h"
-#include "mm/kmalloc.h"
-#include "lib/string.h"
+#include <velvet/vfs.h>
+#include <velvet/ramdisk.h>
+#include <velvet/source.h>
+#include <velvet/disk.h>
+#include <velvet/kmalloc.h>
+#include <velvet/string.h>
 
 /* what a file on the disk is allowed to be. */
 #define DISK_MODE 0644

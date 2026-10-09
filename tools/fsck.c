@@ -11,7 +11,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "fs/fsck.h"
+#include <velvet/fsck.h>
 
 static FILE *image;
 

@@ -33,8 +33,8 @@ make run
 
 ## the machine
 
-- version: the banner prints `velvet v...`, and the number lives in
-  `version.h`
+- version: the banner prints `velvet v...`, and `make kernelrelease`
+  prints the one a checkout would build
 - commit: `git rev-parse --short HEAD`, or, if you saw it in velvetOS, the
   commit velvetOS has pinned (`git submodule status` there)
 - host: `uname -a`, and the versions of gcc and nasm

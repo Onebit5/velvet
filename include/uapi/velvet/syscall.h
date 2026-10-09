@@ -1,0 +1,150 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * include/uapi/velvet/syscall.h
+ * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
+ * the numbers ring 3 calls the kernel by, and what the calls hand back.
+ */
+
+#ifndef UAPI_VELVET_SYSCALL_H
+#define UAPI_VELVET_SYSCALL_H
+
+#include <stdint.h>
+
+/*
+ * the door between ring 3 and here. numbers are the kernel's, deliberately
+ * small in number, there is no libc out there to satisfy, only the
+ * handful of things a program in this kernel could want
+ */
+
+#define SYS_EXIT   0
+#define SYS_WRITE  1
+#define SYS_READ   2
+#define SYS_UPTIME 3
+#define SYS_YIELD  4
+#define SYS_SLEEP  5
+#define SYS_OPEN   6
+#define SYS_CLOSE  7
+#define SYS_GETPID 8
+#define SYS_SPAWN  9
+#define SYS_WAIT   10
+#define SYS_READDIR 11
+#define SYS_GETUID 12
+#define SYS_CREATE 13
+#define SYS_CHDIR  14
+#define SYS_GETCWD 15
+#define SYS_MKDIR  16
+#define SYS_RMDIR  17
+#define SYS_UNLINK 18
+#define SYS_RENAME 19
+#define SYS_STAT   20
+
+/*
+ * a shell needs none of these: it prints a prompt, reads a line and
+ * prints an answer, and the console keeps the cursor where the printing
+ * left it. an editor cannot work that way. it paints the entire screen,
+ * puts the cursor somewhere in the middle of what it painted, and waits
+ * for one keystroke rather than a line.
+ *
+ * getkey is the interesting one, because it is *also* how raw mode
+ * arrives. there is no flag anywhere saying "this terminal is raw":
+ * asking for a line gets the line discipline with its echo and its
+ * backspace handling, and asking for a key gets the key. the two
+ * questions are different, so they are different calls, and nothing has
+ * to remember which mode anything is in
+ */
+#define SYS_GETKEY 21
+#define SYS_SCREEN 22
+#define SYS_CURSOR 23
+#define SYS_CLEAR  24
+
+/*
+ * what a file is, for anyone who wants to know without reading it.
+ *
+ * a program sees it under its posix name, struct stat, and velvetOS's
+ * userland/syscall.h holds that one against this one field by field
+ * at compile time, so the two cannot drift apart without the build
+ * saying so. the padding is explicit so that neither side's compiler
+ * gets to decide it
+ */
+struct user_stat {
+    uint64_t size;
+    uint32_t mode;
+    uint32_t is_dir;
+    uint32_t uid, gid;
+    uint32_t is_symlink;
+    uint16_t year;
+    uint8_t  month, day, hour, minute, second;
+    uint8_t  pad;
+};
+
+#define SYS_FORK   25
+#define SYS_MMAP   26
+#define SYS_MUNMAP 27
+#define SYS_CHMOD  28
+#define SYS_CHOWN  29
+#define SYS_SYMLINK 30
+#define SYS_READLINK 31
+#define SYS_GETENV 32
+#define SYS_SETENV 33
+
+/*
+ * three calls, which is the smallest set that lets a program use udp:
+ * claim a port, send to somebody, take what arrived.
+ *
+ * there is no `connect` and no `accept`, because udp has neither, a
+ * socket here hears from everybody and says who each datagram came
+ * from, which is what makes a udp server one port rather than a
+ * connection per talker.
+ *
+ * recvfrom does not block. it says "nothing yet" and the program sleeps
+ * and asks again, which is a poll rather than a wait, honest for a
+ * kernel with no way yet to park a thread on a socket, and it keeps the
+ * receive path out of the business of waking anybody
+ */
+#define SYS_SOCKET   34
+#define SYS_SENDTO   35
+#define SYS_RECVFROM 36
+
+/*
+ * waiting, rather than asking again in a loop. every one of
+ * these takes a timeout in milliseconds, 0 to look and move on, which
+ * is exactly what recvfrom did before, and negative to wait as long as
+ * it takes
+ */
+#define SYS_RECVWAIT 37
+#define SYS_SELECT   38
+#define SYS_CONNECT  39
+#define SYS_LISTEN   40
+#define SYS_ACCEPT   41
+#define SYS_SEND     42
+#define SYS_RECV     43
+#define SYS_SHUTDOWN 44
+
+/* signals */
+#define SYS_SIGNAL    45
+#define SYS_SIGSEND   46
+#define SYS_SIGRETURN 47
+#define SYS_SIGMASK   48
+
+/* the terminal */
+#define SYS_TTYMODE   49
+#define SYS_WINSIZE   50
+
+/* a clock that means something outside this boot */
+#define SYS_NOW       51
+#define SYS_ALARM     52
+
+#define SYSCALL_COUNT 53
+
+/*
+ * who a datagram came from, filled in by recvfrom. a struct rather than
+ * two more registers because the syscall abi has six and recvfrom would
+ * otherwise want seven
+ */
+struct user_from {
+    uint32_t address;
+    uint16_t port;
+    uint16_t reserved;
+};
+
+#endif

@@ -26,7 +26,7 @@ void panic(const char *fmt, ...)
 #include <stdbool.h>
 
 /* the mouse constants the stubs below hand back */
-#include "drivers/mouse.h"
+#include <velvet/mouse.h>
 
 
 static char out[4096];
@@ -137,7 +137,7 @@ uint64_t pit_ticks(void)
 }
 /* init, as far as the shell is concerned. */
 #include <setjmp.h>
-#include "sched/init.h"
+#include <velvet/init.h>
 static jmp_buf stopped_here;
 static int stops;
 static enum init_stop stopped_how;
@@ -240,14 +240,14 @@ struct slab_cache *slab_first_cache(void)
 }
 
 /* the disk, which the shell only ever asks about */
-#include "fs/disk.h"
+#include <velvet/disk.h>
 bool disk_ready(size_t w)
 {
     return w == DISK_ROOT;
 }
 
 /* the installer, which the shell drives and this test does not. */
-#include "fs/install.h"
+#include <velvet/install.h>
 size_t disk_drive_count(void)
 {
     return 1;
@@ -311,8 +311,8 @@ const char source_stamp[41] = "0000000000000000000000000000000000000000";
 const uint64_t source_stamp_bytes = 0;
 
 /* the wire, as far as the shell is concerned. */
-#include "net/netif.h"
-#include "drivers/e1000.h"
+#include <velvet/netif.h>
+#include <velvet/e1000.h>
 
 /* the card, as the shell sees it. */
 static bool card_there, card_up, card_interrupts;
@@ -718,7 +718,7 @@ uint64_t ahci_sectors(void)
 }
 
 /* the processors, which the shell only ever asks about */
-#include "arch/x86_64/smp.h"
+#include <asm/smp.h>
 static struct cpu fake_cpus[2] = {
     { .index = 0, .apic_id = 0, .reported_id = 0, .online = true,
       .bootstrap = true, .scheduling = true },
@@ -775,7 +775,7 @@ void klog_dump(void)
 }
 static bool run_ok = true;
 static const char *ran_path;
-#include "sched/usermode.h"
+#include <velvet/usermode.h>
 
 /* a pipe a forked child inherits gains a holder rather than being copied. */
 struct pipe;
@@ -784,7 +784,7 @@ void pipe_share(struct pipe *p, bool writing)
     (void)p; (void)writing;
 }
 
-#include "sched/auth.h"
+#include <velvet/auth.h>
 const char *const USER_RUN_NO_SUCH_FILE = "no such file in the ramdisk";
 
 /* the accounts the shell reads at boot */
@@ -917,7 +917,7 @@ uint64_t vmm_translate(uint64_t pml4, uint64_t v)
 {
     (void)pml4; (void)v; return v;
 }
-#include "drivers/rtc.h"
+#include <velvet/rtc.h>
 void rtc_read(struct rtc_time *t)
 {
     t->second = 5; t->minute = 4; t->hour = 3;
@@ -937,9 +937,9 @@ void console_size(size_t *c, size_t *r, size_t *w, size_t *h)
 const unsigned long ksym_count = 442;
 
 /* the real ramdisk parser, mounted on the real archive the build produces. */
-#include "fs/ramdisk.h"
+#include <velvet/ramdisk.h>
 
-#include "sched/sched.h"
+#include <velvet/sched.h>
 size_t sched_thread_count(void)
 {
     return 4;
@@ -971,7 +971,7 @@ void sleep_ms(uint64_t ms)
  * cmd_summon reads t->id off whatever the test hands back, so hand back
  * something real rather than a poked-in pointer value
  */
-#include "sched/thread.h"
+#include <velvet/thread.h>
 static struct thread spawned = { .id = 42 };
 static int created;
 static const char *created_name;
@@ -2675,7 +2675,7 @@ int main(void)
 
 
     run("arcana");
-    CHECK(strstr(out, "COMPUTER ARCANA") && strstr(out, VERSION),
+    CHECK(strstr(out, "COMPUTER ARCANA") && strstr(out, VELVET_VERSION),
           "arcana names the arcana and the version");
     CHECK(strstr(out, "442") != NULL, "and how many symbols it carries");
 

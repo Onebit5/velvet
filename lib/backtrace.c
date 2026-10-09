@@ -5,11 +5,11 @@
  * walking the saved frame pointers.
  */
 
-#include "lib/backtrace.h"
-#include "lib/ksyms.h"
-#include "lib/kprintf.h"
-#include "mm/vmm.h"
-#include "arch/cpu.h"
+#include <velvet/backtrace.h>
+#include <velvet/ksyms.h>
+#include <velvet/kprintf.h>
+#include <velvet/vmm.h>
+#include <asm/cpu.h>
 
 #define MAX_FRAMES 24
 

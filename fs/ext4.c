@@ -5,9 +5,9 @@
  * ext4, read and written by hand.
  */
 
-#include "fs/ext4.h"
-#include "fs/jbd2.h"
-#include "lib/string.h"
+#include <velvet/ext4.h>
+#include <velvet/jbd2.h>
+#include <velvet/string.h>
 
 /*
  * by hand rather than as structs, for the same reason fat32 does it:

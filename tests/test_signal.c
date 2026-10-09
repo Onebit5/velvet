@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "sched/signal.h"
+#include <velvet/signal.h>
 
 static int failures = 0;
 

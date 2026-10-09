@@ -5,7 +5,7 @@
  * ipv4, and the checksum that covers its header.
  */
 
-#include "net/ip.h"
+#include <velvet/ip.h>
 
 bool ip_parse(const uint8_t *p, size_t len, struct ip_header *out)
 {

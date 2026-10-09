@@ -5,14 +5,14 @@
  * the intel 82540em network card.
  */
 
-#include "drivers/e1000.h"
-#include "arch/irq.h"
-#include "drivers/pci.h"
-#include "mm/pmm.h"
-#include "mm/vmm.h"
-#include "lib/kprintf.h"
-#include "lib/string.h"
-#include "sched/spinlock.h"
+#include <velvet/e1000.h>
+#include <asm/irq.h>
+#include <velvet/pci.h>
+#include <velvet/pmm.h>
+#include <velvet/vmm.h>
+#include <velvet/kprintf.h>
+#include <velvet/string.h>
+#include <velvet/spinlock.h>
 
 /* NOTE: this file has never been run. */
 

@@ -5,7 +5,7 @@
  * the kernel's own symbol table, and the lookup by address.
  */
 
-#include "lib/ksyms.h"
+#include <velvet/ksyms.h>
 
 /*
  * the table is sorted by address, so this is a binary search for the

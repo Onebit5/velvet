@@ -11,7 +11,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "fs/bcache.h"
+#include <velvet/bcache.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

@@ -5,11 +5,11 @@
  * the local apic, and the registers it answers to.
  */
 
-#include "arch/x86_64/lapic.h"
-#include "arch/x86_64/msr.h"
-#include "mm/vmm.h"
-#include "mm/pmm.h"
-#include "lib/kprintf.h"
+#include <asm/lapic.h>
+#include <asm/msr.h>
+#include <velvet/vmm.h>
+#include <velvet/pmm.h>
+#include <velvet/kprintf.h>
 
 #define MSR_APIC_BASE       0x1b
 #define APIC_BASE_ENABLE    (1ull << 11)

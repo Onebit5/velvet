@@ -5,8 +5,8 @@
  * the wire: framing, addresses, and byte order.
  */
 
-#include "net/net.h"
-#include "lib/string.h"
+#include <velvet/net.h>
+#include <velvet/string.h>
 
 const struct mac MAC_BROADCAST = { { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff } };
 const struct mac MAC_ZERO      = { { 0, 0, 0, 0, 0, 0 } };

@@ -10,13 +10,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "net/net.h"
-#include "net/ether.h"
-#include "net/arp.h"
-#include "net/ip.h"
+#include <velvet/net.h>
+#include <velvet/ether.h>
+#include <velvet/arp.h>
+#include <velvet/ip.h>
 #include "net/icmp.h"
 #include "net/udp.h"
-#include "net/socket.h"
+#include <velvet/socket.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

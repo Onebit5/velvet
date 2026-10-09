@@ -65,9 +65,10 @@ files and layout
 ----------------
 
 one translation unit, one header
-   every ``foo.c`` that has anything to export has a ``foo.h`` next to it.
-   the header is the unit's public interface; everything else in the ``.c``
-   is ``static``.
+   every ``foo.c`` that has anything to export has a ``foo.h``: in
+   ``include/velvet/`` once another subsystem uses it, next to it while
+   only its own does (see *includes* below). the header is the unit's
+   public interface; everything else in the ``.c`` is ``static``.
 
 the tree mirrors itself by subsystem
    ``<subsystem>/`` at the root groups by what the code is *for*. ``mm``,
@@ -76,13 +77,31 @@ the tree mirrors itself by subsystem
    goes in ``sources.mk``, which is the one list of what the kernel is.
 
 include guards
-   ``SUBSYSTEM_FILE_H`` in upper snake case, e.g. ``SCHED_PROCESS_H``. no
-   ``#pragma once``.
+   the file's path with ``include/`` left out, in upper snake case:
+   ``include/velvet/process.h`` is ``VELVET_PROCESS_H`` and ``fs/mkfs.h``
+   is ``FS_MKFS_H``. no ``#pragma once``.
 
 includes
    standard headers first, then project headers, each block alphabetical.
-   project headers are quoted and rooted at the include path. ``#include
-   "mm/pmm.h"``, never ``"../mm/pmm.h"``.
+   where a header lives says who may read it:
+
+   - used outside its own subsystem: ``include/velvet/``, included as
+     ``<velvet/process.h>``.
+   - one architecture's: ``arch/<arch>/include/asm/``, included as
+     ``<asm/cpu.h>``. the build puts exactly one architecture's directory
+     on the include path, so the same line means x86_64 or ``none``.
+   - what ring 3 sees, the syscall numbers and the structs and flags the
+     calls take: ``include/uapi/velvet/``, included as
+     ``<uapi/velvet/syscall.h>``. a uapi header includes nothing of the
+     kernel's, since a program compiles against it too.
+   - read only by its own subsystem: beside the code, included as
+     ``"mkfs.h"``.
+
+   there is no ``-I.``. ``"mm/pmm.h"`` and ``"../mm/pmm.h"`` both fail to
+   build, so a header in the wrong place is an error rather than a habit.
+   the host suites and the tools may reach a private header as
+   ``"fs/mkfs.h"``; they are not the kernel, and testing internals is
+   their job.
 
 file headers
    every C source and header opens with the license tag on the first line,
@@ -503,11 +522,12 @@ not exist. ``make portable-check`` is part of ``make test`` and therefore
 part of CI. see `building`_ and `the architecture boundary
 <subsystems/arch.rst>`_ for what the headers are.
 
-the headers under ``arch/`` are named for what the *rest of the kernel
-wants*, not for what x86 provides: ``irq.h`` (may interrupts happen),
-``cpu.h`` (what this core is), ``mmu.h`` (what the hardware must be told
-about a page table), ``machine.h`` (the box: reset, power, a key). keep it
-that way. ``write_cr3()`` behind a portable-looking name is worse than the
+the headers every architecture provides are named for what the *rest of
+the kernel wants*, not for what x86 provides: ``<asm/irq.h>`` (may
+interrupts happen), ``<asm/cpu.h>`` (what this core is), ``<asm/mmu.h>``
+(what the hardware must be told about a page table), ``<asm/machine.h>``
+(the box: reset, power, a key), ``<asm/context.h>`` (a parked thread).
+keep it that way. ``write_cr3()`` behind a portable-looking name is worse than the
 inline asm it replaced, because the inline asm was honest.
 
 testability

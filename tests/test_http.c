@@ -10,9 +10,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "net/net.h"
-#include "net/http.h"
-#include "fixtures/http_captured.h"
+#include <velvet/net.h>
+#include <velvet/http.h>
+#include "tests/fixtures/http_captured.h"
 
 static int failures = 0;
 

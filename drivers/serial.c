@@ -5,9 +5,9 @@
  * the 16550 serial console.
  */
 
-#include "serial.h"
-#include "drivers/input.h"
-#include "drivers/console.h"
+#include <velvet/serial.h>
+#include <velvet/input.h>
+#include <velvet/console.h>
 
 /* the terminal, which is not a chip. */
 

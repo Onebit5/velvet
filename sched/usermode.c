@@ -5,24 +5,24 @@
  * what a user thread needs to know before it stops being a kernel one.
  */
 
-#include "sched/usermode.h"
-#include "sched/sched.h"
-#include "sched/thread.h"
-#include "arch/context.h"
-#include "drivers/input.h"
-#include "drivers/tty.h"
-#include "fs/elf.h"
-#include "fs/vfs.h"
-#include "lib/kprintf.h"
-#include "lib/string.h"
-#include "mm/addrspace.h"
-#include "mm/kmalloc.h"
-#include "mm/pmm.h"
-#include "mm/vmm.h"
-#include "sched/process.h"
-#include "drivers/pit.h"
-#include "fs/pipe.h"
-#include "net/netif.h"
+#include <velvet/usermode.h>
+#include <velvet/sched.h>
+#include <velvet/thread.h>
+#include <asm/context.h>
+#include <velvet/input.h>
+#include <velvet/tty.h>
+#include <velvet/elf.h>
+#include <velvet/vfs.h>
+#include <velvet/kprintf.h>
+#include <velvet/string.h>
+#include <velvet/addrspace.h>
+#include <velvet/kmalloc.h>
+#include <velvet/pmm.h>
+#include <velvet/vmm.h>
+#include <velvet/process.h>
+#include <velvet/pit.h>
+#include <velvet/pipe.h>
+#include <velvet/netif.h>
 
 const char *const USER_RUN_NO_SUCH_FILE = "no such file";
 

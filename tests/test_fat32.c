@@ -21,7 +21,7 @@ void panic(const char *fmt, ...)
     exit(1);
 }
 
-#include "fs/fat32.h"
+#include <velvet/fat32.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

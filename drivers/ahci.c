@@ -5,12 +5,12 @@
  * the sata controller: commands, waits, and the block device.
  */
 
-#include "drivers/ahci.h"
-#include "drivers/pci.h"
-#include "mm/pmm.h"
-#include "mm/vmm.h"
-#include "lib/kprintf.h"
-#include "lib/string.h"
+#include <velvet/ahci.h>
+#include <velvet/pci.h>
+#include <velvet/pmm.h>
+#include <velvet/vmm.h>
+#include <velvet/kprintf.h>
+#include <velvet/string.h>
 
 
 

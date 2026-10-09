@@ -11,8 +11,8 @@
 #include <string.h>
 #include <stdint.h>
 
-#include "fs/elf.h"
-#include "mm/vmm.h"    /* for the PTE flags a segment turns into */
+#include <velvet/elf.h>
+#include <velvet/vmm.h>    /* for the PTE flags a segment turns into */
 
 /*
  * whether this cpu can honour the no-execute bit is a question about

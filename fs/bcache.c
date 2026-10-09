@@ -5,8 +5,8 @@
  * the block cache.
  */
 
-#include "fs/bcache.h"
-#include "lib/string.h"
+#include <velvet/bcache.h>
+#include <velvet/string.h>
 
 /* no lock in here, and that is deliberate rather than forgotten. */
 

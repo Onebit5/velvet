@@ -39,7 +39,7 @@ void console_putchar(char c)
     (void)c;
 }
 
-#include "lib/kprintf.h"
+#include <velvet/kprintf.h>
 
 static int failures = 0;
 

@@ -5,7 +5,7 @@
  * the escape-sequence parser.
  */
 
-#include "drivers/ansi.h"
+#include "ansi.h"
 
 /* how long a sequence may get before it is abandoned. */
 #define ANSI_MAX 24

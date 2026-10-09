@@ -5,11 +5,11 @@
  * the task state segment, and the per-core stacks it points at.
  */
 
-#include "arch/x86_64/tss.h"
-#include "arch/x86_64/gdt.h"
-#include "mm/pmm.h"
-#include "lib/panic.h"
-#include "lib/string.h"
+#include <asm/tss.h>
+#include <asm/gdt.h>
+#include <velvet/pmm.h>
+#include <velvet/panic.h>
+#include <velvet/string.h>
 
 #define IST_STACK_PAGES 4       /* 16k, plenty for a handler that only reports */
 

@@ -5,11 +5,11 @@
  * the source tree, still on the medium it booted from.
  */
 
-#include "fs/source.h"
-#include "fs/ustar.h"
-#include "lib/hash.h"
-#include "lib/string.h"
-#include "philemon.h"
+#include <velvet/source.h>
+#include "ustar.h"
+#include <velvet/hash.h>
+#include <velvet/string.h>
+#include <velvet/philemon.h>
 
 #define SECTOR 512
 
@@ -368,8 +368,8 @@ bool source_digest(uint8_t out[20])
 
 #ifndef VELVETOS_HOSTED
 
-#include "fs/disk.h"
-#include "lib/kprintf.h"
+#include <velvet/disk.h>
+#include <velvet/kprintf.h>
 
 /*
  * take whichever drive philemon booted from, which is the one his table

@@ -5,8 +5,8 @@
  * signals: disposition, delivery, and what cannot be caught.
  */
 
-#include "sched/signal.h"
-#include "lib/string.h"
+#include <velvet/signal.h>
+#include <velvet/string.h>
 
 /* the two that cannot be argued with. */
 #define UNBLOCKABLE ((1u << SIGKILL) | (1u << SIGSTOP))

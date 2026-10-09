@@ -5,9 +5,9 @@
  * arp: asking who owns an address.
  */
 
-#include "net/arp.h"
-#include "net/ether.h"
-#include "lib/string.h"
+#include <velvet/arp.h>
+#include <velvet/ether.h>
+#include <velvet/string.h>
 
 /*
  * the fixed preamble every arp packet on ethernet-and-ipv4 begins with:

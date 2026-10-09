@@ -5,7 +5,7 @@
  * resolving a name into a path.
  */
 
-#include "fs/path.h"
+#include <velvet/path.h>
 
 /* the components of a path, as offsets into the answer being built. */
 #define MAX_PARTS 32

@@ -191,7 +191,7 @@ compares numbers: ``make`` decides what to rebuild by comparing two of them,
 a filesystem stores one per file, and the clock is a number that only ever
 goes up.
 
-``lib/epoch.h``
+``<velvet/epoch.h>``
 
 ``uint64_t epoch_from_date(const struct rtc_time *t)``
     the seconds between 1970-01-01T00:00:00Z and a date read off the cmos

@@ -60,8 +60,8 @@ void waitq_wake_all(struct waitq *q)
  */
 
 
-#include "drivers/keyboard.h"
-#include "drivers/input.h"
+#include <velvet/keyboard.h>
+#include <velvet/input.h>
 
 /* which console the reader belongs to, and which is being looked at. */
 static unsigned my_console_n, shown_console_n;

@@ -7,11 +7,11 @@
  * is escape, which will draw as a weird glyph if you print it.
  */
 
-#include "drivers/keyboard.h"
-#include "drivers/input.h"
-#include "arch/x86_64/io.h"
-#include "arch/x86_64/pic.h"
-#include "arch/x86_64/interrupts.h"
+#include <velvet/keyboard.h>
+#include <velvet/input.h>
+#include <asm/io.h>
+#include <asm/pic.h>
+#include <asm/interrupts.h>
 #include <stdbool.h>
 
 #define KBD_DATA   0x60

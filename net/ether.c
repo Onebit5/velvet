@@ -5,8 +5,8 @@
  * ethernet: fourteen bytes and one idea.
  */
 
-#include "net/ether.h"
-#include "lib/string.h"
+#include <velvet/ether.h>
+#include <velvet/string.h>
 
 bool ether_parse(const uint8_t *frame, size_t len, struct ether_header *out)
 {

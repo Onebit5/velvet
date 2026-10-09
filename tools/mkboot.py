@@ -35,7 +35,8 @@ LOADER_MAX_SECTORS = 32     # lba 0 through 31, then the table
 BOOT_TABLE_LBA = 32
 MAGIC = 0x50484c4d4e30       # "PHLMN0"
 
-# the boot table, as boot/handoff.h declares it: nine 64-bit fields
+# the boot table, as struct ph_table in include/velvet/philemon.h declares
+# it: twelve 64-bit fields
 TABLE_FIELDS = [
     'magic',
     'handoff_lba', 'handoff_sectors',
@@ -54,7 +55,7 @@ def check_agreement(root):
     cannot include each other. a number that drifts in one of them is a
     machine that hangs, so this refuses to build rather than let it."""
     inc = open(os.path.join(root, 'boot/philemon.inc')).read()
-    hdr = open(os.path.join(root, 'boot/philemon.h')).read()
+    hdr = open(os.path.join(root, 'include/velvet/philemon.h')).read()
     asm = open(os.path.join(root, 'boot/philemon.asm')).read()
 
     def from_inc(name):

@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "drivers/mouse.h"
+#include <velvet/mouse.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

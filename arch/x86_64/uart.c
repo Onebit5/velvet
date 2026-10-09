@@ -5,11 +5,11 @@
  * com1, a 16550 uart (or whatever qemu pretends is one).
  */
 
-#include "drivers/serial.h"
-#include "drivers/input.h"
-#include "arch/x86_64/io.h"
-#include "arch/x86_64/pic.h"
-#include "arch/x86_64/interrupts.h"
+#include <velvet/serial.h>
+#include <velvet/input.h>
+#include <asm/io.h>
+#include <asm/pic.h>
+#include <asm/interrupts.h>
 
 /*
  * com1, a 16550 uart (or whatever qemu pretends is one).

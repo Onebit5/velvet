@@ -5,8 +5,8 @@
  * fat32, read and written by hand.
  */
 
-#include "fs/fat32.h"
-#include "lib/string.h"
+#include <velvet/fat32.h>
+#include <velvet/string.h>
 
 #define BAD_CLUSTER  0x0ffffff7u
 #define EOC          0x0ffffff8u     /* anything at or above ends a chain */

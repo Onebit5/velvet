@@ -81,7 +81,7 @@ static char *read_text(const char *root, const char *rest)
 static void check_agreement(const char *root)
 {
     char *inc = read_text(root, "boot/philemon.inc");
-    char *hdr = read_text(root, "boot/philemon.h");
+    char *hdr = read_text(root, "include/velvet/philemon.h");
     char *asmtext = read_text(root, "boot/philemon.asm");
 
     static const char *pairs[][2] = {
@@ -157,7 +157,7 @@ int main(int argc, char **argv)
                 "[source.tar]]\n");
         return 2;
     }
-    /* where boot/philemon.inc and boot/philemon.h are. */
+    /* where boot/philemon.inc and include/velvet/philemon.h are. */
     const char *root = getenv("MKBOOT_ROOT");
     check_agreement(root != NULL ? root : ".");
 

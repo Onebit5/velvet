@@ -5,12 +5,12 @@
  * the heap, which is now mostly not a heap.
  */
 
-#include "mm/kmalloc.h"
-#include "mm/slab.h"
-#include "mm/pmm.h"
-#include "lib/panic.h"
-#include "arch/irq.h"
-#include "sched/spinlock.h"
+#include <velvet/kmalloc.h>
+#include <velvet/slab.h>
+#include <velvet/pmm.h>
+#include <velvet/panic.h>
+#include <asm/irq.h>
+#include <velvet/spinlock.h>
 
 /*
  * requests sorted by size rather than one free list walked from the

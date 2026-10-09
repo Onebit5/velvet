@@ -5,8 +5,8 @@
  * cpuid: the vendor, the brand, and the feature bits.
  */
 
-#include "arch/x86_64/cpuinfo.h"
-#include "arch/x86_64/msr.h"
+#include <asm/cpuinfo.h>
+#include <asm/msr.h>
 
 void cpu_vendor(char *buf)
 {

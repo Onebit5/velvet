@@ -5,23 +5,23 @@
  * threads: creation, stacks, and exit.
  */
 
-#include "sched/thread.h"
-#include "sched/sched.h"
-#include "mm/pmm.h"
-#include "mm/vmm.h"
-#include "mm/addrspace.h"
-#include "mm/kmalloc.h"
-#include "mm/slab.h"
-#include "arch/mmu.h"
-#include "arch/context.h"
-#include "lib/kprintf.h"
-#include "lib/string.h"
-#include "arch/irq.h"
-#include "sched/spinlock.h"
-#include "sched/process.h"
-#include "fs/pipe.h"
-#include "net/netif.h"
-#include "drivers/pit.h"
+#include <velvet/thread.h>
+#include <velvet/sched.h>
+#include <velvet/pmm.h>
+#include <velvet/vmm.h>
+#include <velvet/addrspace.h>
+#include <velvet/kmalloc.h>
+#include <velvet/slab.h>
+#include <asm/mmu.h>
+#include <asm/context.h>
+#include <velvet/kprintf.h>
+#include <velvet/string.h>
+#include <asm/irq.h>
+#include <velvet/spinlock.h>
+#include <velvet/process.h>
+#include <velvet/pipe.h>
+#include <velvet/netif.h>
+#include <velvet/pit.h>
 
 static int next_id = 1;     /* 0 belongs to the boot thread */
 

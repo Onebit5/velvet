@@ -43,7 +43,7 @@ void panic(const char *fmt, ...)
     exit(1);
 }
 
-#include "mm/vmm.h"
+#include <velvet/vmm.h>
 
 static int failures;
 #define CHECK(c, m) do { if (!(c)) { printf("FAIL: %s\n", m); failures++; } } while (0)

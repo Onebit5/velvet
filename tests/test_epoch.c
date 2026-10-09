@@ -12,7 +12,7 @@
 #include <stdbool.h>
 #include <time.h>
 
-#include "lib/epoch.h"
+#include <velvet/epoch.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

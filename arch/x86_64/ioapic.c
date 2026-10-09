@@ -5,10 +5,10 @@
  * the io apic: where external interrupts arrive.
  */
 
-#include "arch/x86_64/ioapic.h"
-#include "mm/vmm.h"
-#include "mm/pmm.h"
-#include "lib/kprintf.h"
+#include <asm/ioapic.h>
+#include <velvet/vmm.h>
+#include <velvet/pmm.h>
+#include <velvet/kprintf.h>
 
 /*
  * the registers are behind a window rather than mapped directly: write

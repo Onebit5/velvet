@@ -5,16 +5,16 @@
  * user address spaces: create, fork, destroy, switch.
  */
 
-#include "mm/addrspace.h"
-#include "mm/pmm.h"
-#include "mm/pressure.h"
-#include "mm/vmm.h"
-#include "mm/kmalloc.h"
-#include "mm/slab.h"
-#include "arch/x86_64/smp.h"
-#include "arch/cpu.h"
-#include "arch/mmu.h"
-#include "lib/string.h"
+#include <velvet/addrspace.h>
+#include <velvet/pmm.h>
+#include <velvet/pressure.h>
+#include <velvet/vmm.h>
+#include <velvet/kmalloc.h>
+#include <velvet/slab.h>
+#include <asm/smp.h>
+#include <asm/cpu.h>
+#include <asm/mmu.h>
+#include <velvet/string.h>
 
 /* the lower half is per-process, the upper half is everyone's. */
 #define USER_PML4_ENTRIES   256
