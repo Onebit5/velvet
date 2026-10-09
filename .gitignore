@@ -1,6 +1,7 @@
 # build junk
 bin/
 obj/
+__pycache__/
 iso_root/
 *.iso
 
