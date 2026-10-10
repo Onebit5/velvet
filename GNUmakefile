@@ -64,7 +64,8 @@ NASM := nasm
 # x86_64 is the only one, and the mechanism for there being more than
 # one is kept deliberately.
 #
-# an aarch64 port was written and removed again -- see ROADMAP.md. what
+# an aarch64 port was written and removed again: 0.2.20 in velvetOS's
+# CHANGELOG.md is where it is told. what
 # it found while it existed is still here and is most of why 0.2.20's
 # boundary is worth anything: a portable file building an x86 stack
 # frame, kmain naming a machine, and a serial driver that turned out to

@@ -78,6 +78,14 @@ a kernel that booted.
   the console does not act on shows the vga's symbol for it now rather
   than nothing.
 
+  the roadmap is the kernel's own: its numbers run on from 0.4.1 without
+  gaps, the entries that were already done are in velvetOS's changelog,
+  where they happened, and it plans the kernel's work and nothing else.
+  accounts, passwords, logins, shells and installers went to velvetOS's
+  roadmap, and an entry here names the velvetOS entry it is the mechanism
+  for. 0.6.x is where velvet learns to answer the way linux does, so that
+  a program built for linux runs here unmodified.
+
   the medium this tree boots carries **no programs**. it is the accounts,
   the profile, and the files the boot test reads back, so `make boottest`
   checks what the kernel shows with nothing in ring 3: the boot, both cores,
