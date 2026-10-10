@@ -193,7 +193,7 @@ class Check:
         if fs.fstype.rstrip() != 'FAT32':
             self.bad(f'the boot sector calls this "{fs.fstype.strip()}"')
         if fs.root_entries != 0:
-            self.bad(f"{fs.root_entries} root entries, and fat32 has none --"
+            self.bad(f"{fs.root_entries} root entries, and fat32 has none:"
                      " its root is a chain like any other")
         if fs.fat16_sectors != 0:
             self.bad("the fat16 table size is set, which no fat32 reader"

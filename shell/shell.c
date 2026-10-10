@@ -756,7 +756,7 @@ static void cmd_resize(int argc, char **argv)
         if (r.blocks_in_way > 0 || r.inodes_in_way > 0) {
             kprintf("%lu block(s) and %lu inode(s) are out past where the "
                     "new end would\nbe. nothing is moved here, so this "
-                    "refuses rather than losing them --\nempty the tail "
+                    "refuses rather than losing them.\nempty the tail "
                     "and ask again\n",
                     r.blocks_in_way, r.inodes_in_way);
         } else if (want > ceiling) {
@@ -3877,7 +3877,7 @@ static void run_pipeline(int argc, char **argv, bool background)
         const struct command *b = builtin_named(name);
         if (b != NULL) {
             kprintf("'%s' is a builtin, and builtins cannot go in a "
-                    "pipeline --\n", name);
+                    "pipeline:\n", name);
             kprintf("the shell is a kernel thread and prints straight at the "
                     "screen, so it\n");
             kprintf("has no output to hand anybody. only programs can be "

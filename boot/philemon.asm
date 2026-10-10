@@ -1,4 +1,4 @@
-; philemon -- the bootloader, all of it.
+; philemon: the bootloader, all of it.
 ;
 ; named for the one who grants the power and then steps back. he does not
 ; fight anything and he is not there for the rest of it. that is the whole
@@ -6,7 +6,7 @@
 ;
 ; this is one program, in one file, at one address. the only reason there
 ; is a line drawn across the middle of it is that the bios reads exactly
-; one sector -- 512 bytes, ending in 0x55 0xaa -- drops it at 0x7c00 and
+; one sector (512 bytes, ending in 0x55 0xaa) drops it at 0x7c00 and
 ; jumps to it. that is the entire contract, and it is not negotiable. so
 ; the first 512 bytes here do nothing but pull in the rest of this same
 ; file, to the address immediately after themselves, and carry on. after
@@ -218,7 +218,7 @@ the_rest_of_me:
 
     ; the video call reloaded segment registers with real-mode rules, so
     ; the wide limits are gone. get them back before anything else uses
-    ; a 32-bit offset -- this is the single easiest way to break all of
+    ; a 32-bit offset: this is the single easiest way to break all of
     ; this, and it breaks it silently
     call go_unreal
 
@@ -346,7 +346,7 @@ get_memory_map:
 ; 32-bit offsets keep working.
 ;
 ; it goes in fs, not es. coming back to real mode leaves a segment
-; register alone -- but *writing* to one reloads it with real-mode rules,
+; register alone, but *writing* to one reloads it with real-mode rules,
 ; and every bios call is entitled to write to es. fs is the one nothing
 ; else touches.
 
@@ -459,7 +459,7 @@ read_sectors:
 ;
 ; the bios hands over a drive number in dl and it is usually the right
 ; one. usually is not something a bootloader can afford, and this
-; machine has two disks -- and on the other one, sector 32 is the first
+; machine has two disks, and on the other one, sector 32 is the first
 ; sector of a file allocation table, which is a perfectly good sector
 ; full of something that is not mine.
 ;
@@ -616,7 +616,7 @@ load_everything:
 
 ;
 ; vbe is the only way to get a framebuffer without writing a driver for
-; whatever card this is. a machine without it still boots -- it just has
+; whatever card this is. a machine without it still boots; it just has
 ; nothing but the serial port to say so on.
 
 set_video_mode:
@@ -633,7 +633,7 @@ set_video_mode:
 
     ; the mode list is a far pointer. turn it into a linear address and
     ; read it through fs, which is flat by now and is the one register
-    ; the bios leaves alone -- no copying, and no second segment
+    ; the bios leaves alone: no copying, and no second segment
     movzx eax, word [es:di + 16]
     shl eax, 4
     movzx ebx, word [es:di + 14]
@@ -852,7 +852,7 @@ build_page_tables:
     a32 mov [fs:edi + 511 * 8], eax
 
     ; four directories, one per gigabyte, shared between the identity
-    ; window and the direct map -- they describe the same memory, so
+    ; window and the direct map: they describe the same memory, so
     ; there is no reason to build it twice
     mov edi, PT_PDPT_LOW
     mov esi, PT_PDPT_HHDM

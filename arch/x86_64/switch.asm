@@ -6,7 +6,7 @@
 ;   rsi = where to read the incoming thread's rsp from
 ;
 ; I only touch the callee-saved registers, because the sysv abi already
-; says a function call may clobber the rest -- whoever called me has
+; says a function call may clobber the rest: whoever called me has
 ; either saved rax/rcx/etc or doesnt care about them. that makes the
 ; parked state of a thread just: six registers and a return address,
 ; sitting on its own stack.

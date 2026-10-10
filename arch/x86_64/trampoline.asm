@@ -5,7 +5,7 @@
 ; every x86 has started since 1978: in real mode, sixteen bits wide,
 ; with no page tables, no stack, and no idea that any of the last forty
 ; years happened. the vector in the startup message is a *page* number,
-; so it wakes up at the top of one page below a megabyte -- and this is
+; so it wakes up at the top of one page below a megabyte, and this is
 ; what has to be sitting there.
 ;
 ; its whole job is to climb back out into the present and jump into C.
@@ -22,7 +22,7 @@ TRAMP_BASE  equ 0x8000
 
 ; the bootstrap processor writes these in before waking anybody. they
 ; are past the code and never overwritten by the copy, and cpu/smp.c has
-; the same numbers -- keep them together
+; the same numbers: keep them together
 ARG_CR3     equ TRAMP_BASE + 0x0f00     ; page tables with a low identity map
 ARG_STACK   equ TRAMP_BASE + 0x0f08     ; this core's own stack, already mapped
 ARG_ENTRY   equ TRAMP_BASE + 0x0f10     ; the C function to land in
@@ -67,7 +67,7 @@ start:
     call putc
 
     ; the page tables the bootstrap processor prepared. they are a copy
-    ; of the kernel's, plus an identity map of the first two megabytes --
+    ; of the kernel's, plus an identity map of the first two megabytes,
     ; without which the instruction after paging comes on is unreachable,
     ; since this code is running down here and the kernel maps none of it
     mov eax, [ARG_CR3]
@@ -81,7 +81,7 @@ start:
     ; no-execute, so the kernel's page tables have bit 63 set on every
     ; page that is not code. on a core where no-execute is *off* that bit
     ; is reserved, and a reserved bit in a page table entry faults on
-    ; every access to it -- so this core would climb all the way into
+    ; every access to it, so this core would climb all the way into
     ; long mode and then die on the first push to its own stack
     mov ecx, 0xc0000080
     rdmsr
@@ -160,7 +160,7 @@ long_mode:
 .quiet_f:
 
     ; and into C, which switches to the kernel's own page tables as its
-    ; first act -- it cannot be done here, because the moment the
+    ; first act: it cannot be done here, because the moment the
     ; identity map goes the next instruction fetch would fault
     mov rdi, [ARG_CPU]
     mov rax, [ARG_ENTRY]

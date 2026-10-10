@@ -59,8 +59,8 @@ int main(void)
           "and a control character is a key like any other");
 
     CHECK(term_input(&raw, 0x03, 0) == TERM_KEEP,
-          "ctrl+c arrives as a byte, because TERM_RAW turns signals off "
-          "-- an editor binding it to `cancel this command` is not "
+          "ctrl+c arrives as a byte, because TERM_RAW turns signals off: "
+          "an editor binding it to `cancel this command` is not "
           "asking to be killed by it");
 
     /*

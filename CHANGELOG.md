@@ -41,7 +41,7 @@ a kernel that booted.
   a tree that also holds `boot/`, `tests/` and `tools/` a glob would have
   compiled a suite's inline asm into a machine. so `sources.mk` lists the
   portable half once, and the makefile, `checkarch`, `portable-check`,
-  `toolcheck` and velvetOS's self-hosting build all read it -- the last of
+  `toolcheck` and velvetOS's self-hosting build all read it, the last of
   those because the comparison it ends in is byte for byte, and the order
   objects are linked in decides where every function lands. and **who the
   build is for**: `BINDIR`, `OBJROOT` and `SOURCE` let another tree build

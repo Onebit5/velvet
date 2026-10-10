@@ -25,13 +25,13 @@ KERNELRELEASE = $(VERSION).$(PATCHLEVEL).$(SUBLEVEL)
 #
 # BINDIR and OBJROOT are where the outputs go. SOURCE is the archive whose
 # hash is stamped into the kernel, which is the whole tree shipped beside
-# it -- for velvetOS that is velvetOS, this directory included, and not
+# it, for velvetOS that is velvetOS, this directory included, and not
 # only this directory. left alone, it is this tree's own archive.
 
 KERNEL := velvet
 
 # the bootable image, and the default target. defined up here with the
-# other names because a prerequisite is expanded where it is written --
+# other names because a prerequisite is expanded where it is written,
 # further down, `all: $(BOOTIMG)` quietly meant `all:` with nothing to do
 BOOTIMG := velvet.img
 
@@ -52,7 +52,7 @@ T := $(BINDIR)/tests
 
 # knobs for `make run`. they have to be make variables rather than extra
 # words on the command line, because `make run -smp 4` hands -s -m -p to
-# *make* -- and -p means "print the entire database", which is a
+# *make*, and -p means "print the entire database", which is a
 # surprising amount of ukrainian
 CPUS ?= 4
 MEM  ?= 2G
@@ -129,10 +129,10 @@ NASMFLAGS := -f elf64 -g
 # the portable half, plus exactly one architecture.
 #
 # this used to be a plain `find kernel`, which was correct while
-# there was one architecture and wrong the instant there were three --
+# there was one architecture and wrong the instant there were three:
 # a build that globs everything is a build that assumes there is only
 # one of everything, which stopped being true the moment arch/none
-# existed -- it was quietly compiled into the x86 kernel. the portable
+# existed, and it was quietly compiled into the x86 kernel. the portable
 # half is sources.mk's list now, for the same reason one level up.
 CSRC := $(filter-out $(ARCH_SKIP), \
           $(shell find $(KERNEL_PORTABLE) -name '*.c')) \
@@ -141,7 +141,7 @@ ASRC := $(filter-out arch/$(ARCH)/trampoline.asm, \
           $(shell find $(KERNEL_PORTABLE) -name '*.asm') \
           $(shell find arch/$(ARCH) -name '*.asm' 2>/dev/null))
 
-# gnu-as sources. none today -- x86 uses nasm -- and the rule stays
+# gnu-as sources. none today (x86 uses nasm), and the rule stays
 # because an architecture that wants them should not have to add it back
 SSRC := $(shell find arch/$(ARCH) -name '*.S' 2>/dev/null)
 OBJ  := $(patsubst %.c,$(OBJDIR)/%.c.o,$(CSRC)) \
@@ -189,7 +189,7 @@ $(OBJ): | $(VERSION_H)
 
 # two passes, because the symbol table describes addresses and linking
 # it in changes them. .ksyms sits after .text in the linker script, so
-# folding it in shifts .data but cannot move a single function -- and
+# folding it in shifts .data but cannot move a single function, and
 # gensyms --check proves that held instead of me just hoping.
 #
 # and what was linked is written down beside it, in the order it went
@@ -243,8 +243,8 @@ $(OBJDIR)/arch/x86_64/trampoline.c.o: $(OBJDIR)/arch/x86_64/trampoline.c
 # byte-identical between builds so the image doesnt churn.
 #
 # this one carries no programs. it is the smallest medium the kernel
-# can be booted and checked on -- the accounts, the profile the shell
-# reads at login, and the files the boot test reads back -- and a system
+# can be booted and checked on (the accounts, the profile the shell
+# reads at login, and the files the boot test reads back), and a system
 # built on this kernel packs its own
 RAMDISK := $(BINDIR)/ramdisk.tar
 RAMDISK_FILES := $(shell find base/ramdisk -type f 2>/dev/null)
@@ -267,7 +267,7 @@ $(RAMDISK): $(RAMDISK_FILES)
 # it is another ustar, for the plainest of reasons: the kernel already
 # reads one, and a second container format would be a second parser to
 # get wrong. it is *not* compressed, which is a decision rather than an
-# oversight -- the one moment anybody wants this archive is the moment
+# oversight: the one moment anybody wants this archive is the moment
 # something has gone badly wrong, and a recovery path that needs a
 # decompressor between you and the source is a recovery path with one
 # more thing in it to be broken.
@@ -276,7 +276,7 @@ $(RAMDISK): $(RAMDISK_FILES)
 # list than "everything the compiler reads". the tests are the reason
 # any of this is trustworthy and the prose is where the reasoning
 # lives, so both ship. what stays out is anything the build *produces*
-# -- bin/, obj/, the images -- because a source tree carrying its own
+# (bin/, obj/, the images), because a source tree carrying its own
 # output is a source tree that disagrees with itself the moment you
 # build it.
 #
@@ -301,7 +301,7 @@ SOURCE_FILES := GNUmakefile sources.mk README.md CHANGELOG.md ROADMAP.md \
 # --mode is there for a subtler version of the same thing. git records
 # one bit of a mode, the ramdisk rule above sets others by hand, and the
 # result is that base/ramdisk/velvet-room.txt is 0600 after a build and
-# 0644 in a fresh checkout -- so the archive, and therefore the stamp,
+# 0644 in a fresh checkout, so the archive, and therefore the stamp,
 # would depend on whether anybody had built anything yet. it states what
 # it wants instead: everyone may read, only the owner may write, and
 # whatever was executable stays executable
@@ -316,12 +316,12 @@ $(OWN_SOURCE): $(SOURCE_FILES)
 # without this the machine can say "there is a source tree here" and
 # nothing more, which is the weaker half of what is wanted. a disk that
 # survives its author has to be able to answer "is this the source this
-# kernel was built from?" -- and the only way to answer it is to have
+# kernel was built from?", and the only way to answer it is to have
 # written the answer down at the one moment both halves were in the
 # same room, which is now.
 #
-# the cost is that editing anything at all -- a line of the roadmap
-# included -- relinks the kernel. that is not overhead so much as the
+# the cost is that editing anything at all, a line of the roadmap
+# included, relinks the kernel. that is not overhead so much as the
 # claim being true: a kernel whose stamp survived an edit to its source
 # would be a kernel telling a lie.
 $(OBJDIR)/srcstamp.c: $(SOURCE) tools/srcstamp.py
@@ -335,7 +335,7 @@ $(OBJDIR)/srcstamp.o: $(OBJDIR)/srcstamp.c include/velvet/source.h
 #
 # there was a borrowed one here until 0.1.12. writing a bootloader and
 # then booting with somebody else's is not much of a bootloader, so it
-# is gone -- along with the iso, the uefi path and the protocol that
+# is gone, along with the iso, the uefi path and the protocol that
 # came with it. the kernel is handed one struct now, in rdi, and knows
 # nothing about anybody's boot protocol including mine.
 
@@ -364,7 +364,7 @@ $(BOOTIMG): $(BINDIR)/boot/philemon.bin $(BINDIR)/boot/philemon64.bin \
 bootimg: $(BOOTIMG)
 
 # two drives: the one philemon is on, and the one with the files. the
-# boot image goes first and is named as the boot device twice over --
+# boot image goes first and is named as the boot device twice over:
 # `order=c` so the bios does not go looking for a floppy it has not got,
 # and a bootindex on each so the order is not left to chance.
 #
@@ -380,7 +380,7 @@ bootimg: $(BOOTIMG)
 # and none of a server.
 #
 # and the forward is the *only* way in. qemu's user-mode networking is a
-# userspace nat, so 10.0.2.15 is not an address the host can route to --
+# userspace nat, so 10.0.2.15 is not an address the host can route to:
 # `nc -u 10.0.2.15 5556` from outside goes nowhere at all, silently,
 # which looks exactly like a guest that is ignoring its own port. it is
 # `nc -u localhost 5556` that arrives
@@ -397,7 +397,7 @@ run: $(BOOTIMG) $(DISK)
 
 # the disk, which is a real filesystem rather than an archive: built out
 # of whatever is in base/diskroot/, and attached to qemu as a second
-# drive. it is deliberately NOT rebuilt by `make run` once it exists --
+# drive. it is deliberately NOT rebuilt by `make run` once it exists:
 # the whole point is that what you write to it stays written, and
 # regenerating it every boot would quietly undo that. `make disk` starts
 # over when you want a clean one.
@@ -525,23 +525,23 @@ $(T)/mkfs:     tests/test_mkfs.c     fs/mkfs.c \
                lib/string.c
 # almost all of a network stack is arithmetic over a byte buffer, so
 # almost all of it can be checked with no card and nothing on the wire.
-# the fixtures that matter are real captured packets -- a header I
+# the fixtures that matter are real captured packets: a header I
 # invent and a parser I invent agree with each other and with nothing
 # else on earth
 # a response arrives as whatever pieces tcp felt like delivering, so the
 # central test is not "does this parse" but "does the split point
-# matter" -- every fixture is driven through split at every byte offset
+# matter": every fixture is driven through split at every byte offset
 $(T)/http:     tests/test_http.c     net/http.c \
                tests/fixtures/http_captured.h \
                net/net.c lib/string.c
 # the first protocol here whose other end is somebody else's software,
-# so most of the suite is malformed replies -- and nearly all of that is
+# so most of the suite is malformed replies, and nearly all of that is
 # name compression, where a pointer may point backwards, forwards, or at
 # itself, and nothing in the format forbids a cycle
 $(T)/dns:      tests/test_dns.c      net/dns.c \
                net/net.c lib/string.c
 # the largest state machine in the kernel, and the one whose bugs are
-# least visible from outside -- a stack that gets the close sequence
+# least visible from outside: a stack that gets the close sequence
 # wrong works perfectly for every connection anybody watches
 $(T)/tcp:      tests/test_tcp.c      net/tcp.c \
                net/net.c lib/string.c
@@ -573,7 +573,7 @@ $(T)/hash:     tests/test_hash.c     lib/hash.c \
 $(T)/inflate:  tests/test_inflate.c  lib/inflate.c \
                lib/deflate.c lib/hash.c \
                lib/string.c
-# the six python build tools, rewritten in C. not suites -- they are
+# the six python build tools, rewritten in C. not suites: they are
 # programs, and nothing they produce can judge itself, so they build
 # outside TEST_BINS and tools/toolcheck.py is what runs them.
 #
@@ -614,7 +614,7 @@ $(T)/fsck:     tools/fsck.c          fs/fsck.c \
                lib/string.c
 # pulling the plug at every write there is. the driver, the formatter
 # and the checker all at once, because what is under test is not any one
-# of them -- it is whether the *order* they write in leaves damage that
+# of them: it is whether the *order* they write in leaves damage that
 # has an answer
 $(T)/crash:    tests/test_crash.c    fs/ext4.c \
                fs/jbd2.c \
@@ -635,7 +635,7 @@ $(T)/resize:   tests/test_resize.c   fs/ext4.c \
 $(T)/console:  tests/test_console.c  drivers/console.c \
                drivers/ansi.c \
                drivers/font.c lib/string.c
-# only the decoder, which is the half with no hardware in it -- and the
+# only the decoder, which is the half with no hardware in it, and the
 # half where losing sync looks like a hardware fault and is not
 $(T)/mouse:    tests/test_mouse.c    drivers/mouse.c \
                lib/string.c
@@ -644,7 +644,7 @@ $(T)/mouse:    tests/test_mouse.c    drivers/mouse.c \
 # with a machine in it, and is #ifdef'd out here
 $(T)/init:     tests/test_init.c     sched/init.c \
                lib/string.c
-# delivery needs a machine and the rules do not -- and the rules are
+# delivery needs a machine and the rules do not, and the rules are
 # where signals go wrong: one that can be caught when it must not be, a
 # handler re-entering itself, a pending set surviving a fork
 $(T)/signal:   tests/test_signal.c   sched/signal.c \
@@ -686,7 +686,7 @@ $(T)/serial:   tests/test_serial.c   drivers/serial.c \
                sched/spinlock.c
 # the real process table, because the environment lives in it and the
 # rules about what "already set" means are worth running rather than
-# restating in a stub -- and the real init policy for the same reason,
+# restating in a stub, and the real init policy for the same reason,
 # so that what `init` prints is what init would actually have decided
 $(T)/shell:    tests/test_shell.c    lib/string.c \
                fs/ramdisk.c sched/auth.c \
@@ -722,7 +722,7 @@ $(T)/shell:    SRCS = tests/test_shell.c lib/string.c \
 # they are compiled one at a time with -MMD and the .d files are
 # included; the tests are compiled straight to a binary in one step and
 # had no header prerequisites at all. so editing a header and running
-# `make test` ran the *previous* binaries and reported them passing --
+# `make test` ran the *previous* binaries and reported them passing,
 # which is the worst possible failure for a test suite, since it is
 # indistinguishable from the change being harmless.
 #
@@ -736,7 +736,7 @@ $(TOOL_BINS): $(TEST_HEADERS)
 	$(HOSTCC) $(HOSTFLAGS) $(filter %.c,$^) -o $@
 
 # SRCS overrides what gets compiled, for tests that #include a kernel
-# .c file directly -- that file still belongs in the prerequisites so
+# .c file directly: that file still belongs in the prerequisites so
 # make rebuilds when it changes, but compiling it twice would give me
 # duplicate symbols
 $(filter-out $(T)/switch,$(TEST_BINS)):
@@ -760,7 +760,7 @@ toolcheck: $(TOOL_BINS) $(BINDIR)/$(KERNEL) $(BINDIR)/boot/philemon.bin \
 	@python3 tools/toolcheck.py
 
 # deflate against python's zlib, both ways round, at every compression
-# level -- the level decides which of the three block types comes out,
+# level: the level decides which of the three block types comes out,
 # so a decompressor checked only against our own compressor has seen one
 # third of the format. plus the loose objects of a real git repository
 .PHONY: zlibcheck
@@ -769,7 +769,7 @@ zlibcheck: $(T)/inflate
 
 # the three sums against python, zlib and git. a published vector only
 # ever tests one buffer hashed in one go, which is the case that cannot
-# fail -- so this feeds three hundred lengths through in pieces of 1, 7,
+# fail, so this feeds three hundred lengths through in pieces of 1, 7,
 # 63, 64 and 65 bytes as well
 .PHONY: hashcheck
 hashcheck: $(T)/hash
@@ -783,7 +783,7 @@ hashcheck: $(T)/hash
 # than no suite at all
 #
 # and when the suite has finished writing to it, tools/readfat.py reads
-# it back -- the `fatfsck` step below. that is not the same check as
+# it back, the `fatfsck` step below. that is not the same check as
 # toolcheck's: toolcheck judges what the *formatter* wrote, this judges
 # what the *driver* wrote, which since 0.3.21 includes long names it
 # mints itself. a long name written wrong reads back perfectly here,
@@ -796,7 +796,7 @@ fat32-image:
 	@python3 tools/mkfat.py $(T)/fat32.img base/diskroot 64 >/dev/null
 
 # two partitioned disks for the partition suite: one of each scheme,
-# built by tools/mkdisk.py -- which was written from the specification
+# built by tools/mkdisk.py, which was written from the specification
 # separately from the parser that reads them back
 .PHONY: part-images
 part-images: ext4-image
@@ -811,7 +811,7 @@ part-images: ext4-image
 # the ext4 suite gets a throwaway image too, and one with more in it
 # than base/diskroot has: a file past twelve blocks so the indirect block is
 # exercised, one past twelve plus two hundred and fifty six so the
-# double indirect one is, and symlinks of both kinds -- short enough to
+# double indirect one is, and symlinks of both kinds, short enough to
 # live in the inode, and not
 .PHONY: ext4-image
 ext4-image: $(T)/mkext4
@@ -830,7 +830,7 @@ ext4-image: $(T)/mkext4
 # feature set and mkext4 populates it through fs/ext4.c, so the image
 # the suite runs against is one whose files are mapped by extent trees
 # the driver built itself. the python formatter still writes ext2, and
-# still matters -- toolcheck holds the two against each other, which is
+# still matters: toolcheck holds the two against each other, which is
 # what keeps the driver honest about reading both
 	@$(T)/mkext4 $(T)/ext4.img $(T)/ext4root 16 >/dev/null
 
@@ -858,7 +858,7 @@ $(T)/shell.tar: $(RAMDISK)
 		--mtime=@0 -cf $@ -C $(T)/shellroot .
 
 # the kernel itself is a prerequisite, and that is not decoration. twice
-# now every host suite has passed while the kernel did not link -- disk.c
+# now every host suite has passed while the kernel did not link: disk.c
 # and shell.c are compiled into no host test, so nothing but building
 # the real thing catches a missing function there
 # and the boot image, because since 0.3.26 there is a check that starts
@@ -971,13 +971,13 @@ lint:
 
 # the arch boundary, which is worth exactly as much as whatever checks
 # it. a line drawn in 0.2.20 and not checked would decay the first time
-# somebody needed a `hlt` in a hurry -- silently, because the kernel goes
+# somebody needed a `hlt` in a hurry, silently, because the kernel goes
 # on building and booting perfectly either way
 .PHONY: checkarch
 checkarch:
 	@python3 tools/checkarch.py
 
-# and the half checkarch cannot see. it greps -- it catches an #include
+# and the half checkarch cannot see. it greps: it catches an #include
 # and a line of inline asm, and it cannot catch a portable file that
 # quietly *depends* on something only x86 supplies. this compiles the
 # portable kernel against an architecture that does nothing, which can.
@@ -991,7 +991,7 @@ portable-check: $(VERSION_H)
 # compiles arch/$(ARCH)/ and nothing else, which is the only thing that
 # can honestly be said about an architecture with no boot code yet.
 # selftest.c calls every contract exactly once, because the headers are
-# almost all `static inline` -- and an inline nobody calls is one the
+# almost all `static inline`, and an inline nobody calls is one the
 # assembler never reads, so a header full of mistyped system registers
 # would compile clean and say nothing at all.
 ARCH_DIR   := arch/$(ARCH)
@@ -1014,7 +1014,7 @@ arch-check:
 	   printf '  CC          %s\n' "$$f"; \
 	   $(ARCH_CC) $(ARCH_FLAGS) "$$f" -o $(OBJROOT)/archcheck/`basename $$f`.o || exit 1; \
 	 done
-	@echo "  arch-check  ok -- $(ARCH) compiles. whether it is correct still needs a machine"
+	@echo "  arch-check  ok: $(ARCH) compiles. whether it is correct still needs a machine"
 
 # boot the image and drive the shell over serial. needs qemu
 .PHONY: boottest

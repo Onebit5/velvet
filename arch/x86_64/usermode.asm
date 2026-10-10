@@ -1,6 +1,6 @@
 ; the one-way trip into ring 3.
 ;
-; there is no instruction for "start running in user mode" -- you fake a
+; there is no instruction for "start running in user mode": you fake a
 ; return from an interrupt that never happened. push the five things
 ; iretq expects to pop, with user selectors and the user's flags, and
 ; let it deliver me somewhere I can never simply walk back from.
@@ -17,7 +17,7 @@ enter_usermode:
     ; still hold kernel selectors in ring 3.
     ;
     ; gs is deliberately not among them. in 64-bit mode its base does not
-    ; come from the descriptor table at all -- it comes from an msr, and
+    ; come from the descriptor table at all: it comes from an msr, and
     ; loading any real selector into it overwrites that base with the
     ; descriptor's, which is zero. this kernel keeps the per-core pointer
     ; there, so one `mov gs, ax` on the way into ring 3 quietly unnames
@@ -25,7 +25,7 @@ enter_usermode:
     ; base of zero and faults inside the kernel.
     ;
     ; leaving it alone costs nothing: nothing in ring 3 reads gs, and
-    ; iretq nulls the selector on its own when dropping privilege -- a
+    ; iretq nulls the selector on its own when dropping privilege, a
     ; null selector being the one load that leaves the msr base intact
     mov ax, cx
     mov ds, ax

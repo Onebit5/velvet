@@ -333,7 +333,7 @@ static void supervise(void)
             /* the message matters as much as the rule, and where it is printed matters as much as the message. */
             unsigned was = speak_on(console);
             kprintf("\ninit: %s has died %u times in under %u seconds. "
-                    "leaving it down --\n"
+                    "leaving it down.\n"
                     "      `init start %s` from another console to try "
                     "again\n",
                     name, tries, INIT_RESPAWN_WINDOW_MS / 1000, name);
