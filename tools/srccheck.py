@@ -23,7 +23,14 @@ the same image are two files that happen to be adjacent; the stamp is
 what makes them a claim about each other, and a stamp nothing checks is
 a claim nobody has tested.
 
-usage: srccheck.py [image]
+usage: srccheck.py [--with NAME=DIR]... [image]
+
+  --with NAME=DIR   a checkout git here does not know about, whose tracked
+                    files are part of the tree all the same: what the
+                    archive holds under NAME/ is DIR on disk. velvetOS
+                    fetches this kernel into obj/velvet/ and ships it as
+                    kernel/, so it passes --with kernel=obj/velvet. a bare
+                    --with DIR means DIR=DIR
 """
 
 import hashlib
@@ -55,7 +62,15 @@ def read_table(image):
     }
 
 
-def main(path):
+def on_disk(name, nested):
+    """where a file the archive names is in the working tree."""
+    for prefix, d in nested:
+        if name.startswith(prefix + '/'):
+            return d.rstrip('/') + name[len(prefix):]
+    return name
+
+
+def main(path, nested):
     image = open(path, 'rb').read()
     t = read_table(image)
     problems = []
@@ -95,10 +110,11 @@ def main(path):
 
     # every byte of every file, against the tree this was built from
     for m in members:
-        if not os.path.exists(m.name):
+        where = on_disk(m.name, nested)
+        if not os.path.exists(where):
             problems.append('%s is in the archive and not in the tree' % m.name)
             continue
-        want = open(m.name, 'rb').read()
+        want = open(where, 'rb').read()
         got = tar.extractfile(m).read()
         if got != want:
             problems.append('%s differs from the working tree (%d bytes in '
@@ -116,9 +132,11 @@ def main(path):
     # you find out at the end. git is the second opinion about what the
     # project consists of, the makefile builds the list with `find`,
     # and a checker running the same `find` would agree with itself.
-    # --recurse-submodules because a tree that carries this kernel as a
-    # submodule ships the kernel's files too, and without it git names
-    # the submodule as one entry and none of what is in it
+    # --recurse-submodules because a tree that carries a checkout as a
+    # submodule ships its files too, and without it git names the
+    # submodule as one entry and none of what is in it. a checkout the
+    # tree fetched for itself is not a submodule, and git here does not
+    # see it at all, so each one named with --with is asked on its own
     try:
         tracked = subprocess.run(['git', 'ls-files', '--recurse-submodules'],
                                  capture_output=True,
@@ -127,6 +145,13 @@ def main(path):
         tracked = None
         print('  (no git here, so what the project consists of is taken '
               'on trust)')
+    for prefix, d in nested:
+        r = subprocess.run(['git', '-C', d, 'ls-files'],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            sys.exit('srccheck: --with %s, and that is not a checkout' % d)
+        tracked = (tracked or []) + [prefix + '/' + f
+                                     for f in r.stdout.split()]
 
     if tracked:
         have = set(names)
@@ -157,4 +182,9 @@ def main(path):
 
 
 if __name__ == '__main__':
-    main(sys.argv[1] if len(sys.argv) > 1 else 'velvet.img')
+    args, nested = sys.argv[1:], []
+    while len(args) >= 2 and args[0] == '--with':
+        name, _, d = args[1].partition('=')
+        nested.append((name.rstrip('/'), d or name))
+        args = args[2:]
+    main(args[0] if args else 'velvet.img', nested)
