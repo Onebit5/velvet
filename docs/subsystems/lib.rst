@@ -51,10 +51,11 @@ are all here, and they *have* to exist, because gcc can emit calls to
 copies, and so on).
 
 this is the **only** copy of these functions: velvetOS's libc compiles this
-same file hosted, out of its ``kernel/`` submodule, rather than keeping a
-second one, which is the mistake this project already made once with two
-libcs and does not need twice. so a change here is a change to that libc
-too, the day velvetOS moves its pin past it.
+same file hosted, out of the release it clones into ``obj/velvet/``,
+rather than keeping a second one, which is the mistake this project
+already made once with two libcs and does not need twice. so a change
+here is a change to that libc too, the day velvetOS moves to a release
+that has it.
 ``strcasecmp`` is here because dns needs it. a name is case-insensitive
 and a server echoes the question back with whatever case it chose, some
 varying it deliberately to make a reply harder to forge.

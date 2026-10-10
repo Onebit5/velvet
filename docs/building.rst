@@ -129,12 +129,12 @@ why ``arch/`` is worth anything. see `the architecture boundary
 building it from another tree
 -----------------------------
 
-velvetOS carries this repository as its ``kernel/`` submodule and builds it
-with this makefile, from the outside:
+velvetOS builds a release of this repository, which its build clones into
+``obj/velvet/``, with this makefile, from the outside:
 
 .. code-block:: sh
 
-   make -C kernel BINDIR=$PWD/bin/kernel OBJROOT=$PWD/obj/kernel \
+   make -C obj/velvet BINDIR=$PWD/bin/kernel OBJROOT=$PWD/obj/kernel \
         SOURCE=$PWD/bin/source.tar kernel philemon tools
 
 ``BINDIR`` and ``OBJROOT``

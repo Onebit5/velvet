@@ -7,8 +7,8 @@ is the way it is, and how to work on it.
 
 it is the kernel of velvetOS, and until 0.4.0 the two were one tree. the
 system built on top of it, the libc, the programs, the assembler, linker and
-make that build this kernel, and git, is velvetOS, which carries this
-repository as its ``kernel/`` submodule.
+make that build this kernel, and git, is velvetOS, which builds on a
+release of this repository, cloned into its ``obj/velvet/``.
 
 the documentation is split in two. the pages here at the root are *about the
 project*: how to build it, how to test it, how to write and send a change.

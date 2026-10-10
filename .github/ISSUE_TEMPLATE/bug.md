@@ -36,7 +36,7 @@ make run
 - version: the banner prints `velvet v...`, and `make kernelrelease`
   prints the one a checkout would build
 - commit: `git rev-parse --short HEAD`, or, if you saw it in velvetOS, the
-  commit velvetOS has pinned (`git submodule status` there)
+  release it builds (`KERNEL_VERSION` in its `kernel-release.mk`)
 - host: `uname -a`, and the versions of gcc and nasm
 - seen on this repository's own image (`make run` here), or on velvetOS?
 - qemu settings, if they are not the defaults. `make run` uses `CPUS=4 MEM=2G`

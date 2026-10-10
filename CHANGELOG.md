@@ -22,15 +22,16 @@ a kernel that booted.
   because the version is the kernel's number now and the system carries its
   own. it is written once, at the top of the `GNUmakefile`, and the
   build turns it into `<generated/version.h>`;
-  `make kernelrelease` prints it. velvetOS keeps this
-  repository as its `kernel/` submodule, pinned to a commit, and builds its
-  machine on top of whatever that commit is. **the kernel's directories
+  `make kernelrelease` prints it. velvetOS builds its machine on a release
+  of this repository: it names the release by its version in its
+  `kernel-release.mk`, and its build clones that release's tag into its
+  `obj/velvet/`. **the kernel's directories
   are the root of the tree**, the way other kernels are laid out, so every
-  source file velvetOS named, `kernel/lib/hash.c` and the rest, is still
-  where it was. philemon came with it, because the struct the kernel is handed is
-  philemon's and six files include it; so did the host suites that compile
-  kernel sources, and every tool that builds the kernel, writes its images
-  or checks what it reads. the programs, the libc, the assembler, linker,
+  source file keeps the path it had under velvetOS's `kernel/`: `lib/hash.c`
+  and the rest are where they were. philemon came with it, because the
+  struct the kernel is handed is philemon's and six files include it; so
+  did the host suites that compile kernel sources, and every tool that
+  builds the kernel, writes its images or checks what it reads. the programs, the libc, the assembler, linker,
   make and `ar`, git, and the checkers for those stayed in velvetOS with
   them.
 

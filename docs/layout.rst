@@ -6,8 +6,9 @@ the tree, and what each part of it is for.
 the root *is* the kernel: the subsystem directories sit at the top, the way
 they do in other kernels, and beside them are the bootloader, the host
 suites, the tools and the medium the kernel is booted and tested on. a tree
-that carries this one as a submodule, which is how velvetOS has it under
-``kernel/``, sees every path here with that one directory in front.
+that builds on this one clones a release of it into a directory of its
+own (velvetOS uses ``obj/velvet/``) and sees every path here with that
+directory in front.
 
 at a glance
 -----------

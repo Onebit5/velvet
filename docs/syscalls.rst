@@ -111,12 +111,13 @@ number. the wrappers are one instruction and a return value, and the shape
 of each is the argument list above.
 
 the numbers are written down once. ``userland/syscall.h`` includes the
-headers in ``include/uapi/velvet/`` from its ``kernel/`` submodule rather
-than keeping a copy, so the two sides cannot disagree about which number
-is which. ``struct stat`` keeps its posix name there, and is checked
-against ``struct user_stat`` with ``_Static_assert``\ s, size and every
-offset, so a layout that drifts fails to compile. a call added on this
-side is usable there once velvetOS moves its ``kernel/`` pin to a commit
-that has it and writes the wrapper, which is why a new call is still a
-change to both projects, in that order.
+headers in ``include/uapi/velvet/`` from the release it clones into
+``obj/velvet/`` rather than keeping a copy, so the two sides cannot
+disagree about which number is which. ``struct stat`` keeps its posix
+name there, and is checked against ``struct user_stat`` with
+``_Static_assert``\ s, size and every offset, so a layout that drifts
+fails to compile. a call added on this side is usable there once a
+release has it, velvetOS's ``kernel-release.mk`` names that release, and
+``syscall.h`` has its wrapper, which is why a new call is still a change
+to both projects, in that order.
 

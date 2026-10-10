@@ -27,9 +27,10 @@ outside it. the programs, the libc, the assembler, linker, make and ``ar``,
 git, and what goes on the medium.
 
 a change that needs both, a new syscall being the usual one, lands here
-first, because velvetOS can only use it once it moves its ``kernel/`` pin to
-a commit that has it. say in the pull request what the other half will be,
-and open that one in velvetOS when this one is merged.
+first, because velvetOS can only use it once a release has it and
+velvetOS's ``kernel-release.mk`` names that release. say in the pull
+request what the other half will be, and open that one in velvetOS when
+this one is merged.
 
 ways to contribute
 ------------------

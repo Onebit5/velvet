@@ -22,10 +22,15 @@ how a release happens
 the tag and the release are the version. no commit in the history names it.
 
 and then the kernel is shipped, which is a step in another repository.
-velvetOS carries this one as its ``kernel/`` submodule, pinned to a commit,
-and a release here reaches a system only when velvetOS moves the pin to the
-tag and its own CI boots the result. until then the release exists and
-nothing runs it.
+velvetOS builds on a release of this one, named by its version in
+velvetOS's ``kernel-release.mk``, and a release here reaches a system
+only when velvetOS moves that file to the new version (``make
+kernel-update`` there does it) and its own CI boots the result. until
+then the release exists and nothing runs it. so **a tag here is never
+moved once it is pushed**: velvetOS names a release by its version alone
+and clones whatever the tag is, so a tag that moved would hand every
+build after it a different kernel under the same name. a fix to a
+release is the next release.
 
 the two numbers are not the same number. until 0.4.0 the kernel and the
 system were one tree with one version; from 0.4.0 each is released on its

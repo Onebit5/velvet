@@ -21,7 +21,7 @@ KERNELRELEASE = $(VERSION).$(PATCHLEVEL).$(SUBLEVEL)
 # tree, and says where things go rather than letting them land in this
 # checkout:
 #
-#   make -C kernel BINDIR=... OBJROOT=... SOURCE=... kernel philemon tools
+#   make -C obj/velvet BINDIR=... OBJROOT=... SOURCE=... kernel philemon tools
 #
 # BINDIR and OBJROOT are where the outputs go. SOURCE is the archive whose
 # hash is stamped into the kernel, which is the whole tree shipped beside
