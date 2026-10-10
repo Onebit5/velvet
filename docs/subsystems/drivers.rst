@@ -29,9 +29,15 @@ something that looks up the current thread, and from an interrupt, where
 there is no current thread; everything goes to whichever is on the screen,
 which is the only answer that could be right.
 
-the font is [spleen 8x16](https://github.com/fcambus/spleen) by frederic
-cambus, converted to a C array by ``tools/font2c.py``. it is under the bsd
-2-clause, see ``FONT-LICENSE``.
+the font is the vga 8x16 that linux's console starts with,
+``lib/fonts/font_8x16.c`` in linux, converted to a C array by
+``tools/font2c.py``. it is GPL-2.0, as this kernel is, so it carries no
+license of its own. its 256 glyphs are code page 437, the order the vga's
+rom keeps them in: ascii in the lower half, box drawing, accented letters
+and a little greek above it, and the vga's symbols in the control range,
+which the console draws like any other glyph when it is sent a control
+byte it does not act on. the file it was converted from is blob
+``523e95c75569eee09d133adf1e52c6b08a18fab3`` in linux's history.
 
 the serial port
 ---------------

@@ -143,7 +143,7 @@ void kmain(const struct ph_handoff *handoff)
     kprintf("velvet v%s\n", VELVET_VERSION);
     kprintf("framebuffer : %ux%u @ %u bpp, pitch %lu bytes, at %016lx\n",
             fb->width, fb->height, fb->bpp, fb->pitch, fb->address);
-    kprintf("font        : spleen 8x16 (bsd 2-clause)\n");
+    kprintf("font        : the vga 8x16, from linux\n");
     kprintf("kernel      : loaded at %p\n", (void *)kmain);
 
     pmm_init();

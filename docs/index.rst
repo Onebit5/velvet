@@ -74,6 +74,6 @@ other files
 - `README.md <../README.md>`_. what the kernel is, in one screen.
 - `ROADMAP.md <../ROADMAP.md>`_. what it will be, version by version.
 - `CHANGELOG.md <../CHANGELOG.md>`_. what it has been.
-- `LICENSE <../LICENSE>`_ and `FONT-LICENSE <../FONT-LICENSE>`_.
+- `LICENSE <../LICENSE>`_.
 - `sources.mk <../sources.mk>`_. what the kernel is made of, for any build.
 - `.github/workflows/ci.yml <../.github/workflows/ci.yml>`_. what CI runs.

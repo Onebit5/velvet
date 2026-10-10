@@ -286,7 +286,7 @@ OWN_SOURCE := $(BINDIR)/source.tar
 SOURCE ?= $(OWN_SOURCE)
 
 SOURCE_FILES := GNUmakefile sources.mk README.md CHANGELOG.md ROADMAP.md \
-                LICENSE FONT-LICENSE .gitignore \
+                LICENSE .gitignore \
                 CONTRIBUTING.md CODE_OF_CONDUCT.md \
                 $(shell find .github $(KERNEL_PORTABLE) \
                         arch boot tests tools docs -type f | sort) \

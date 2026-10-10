@@ -356,9 +356,8 @@ license and the DCO
 
 velvet is GPL-2.0-only. see `LICENSE <../LICENSE>`_. by contributing you
 agree your work is licensed under the same terms, and the ``Signed-off-by``
-trailer is that agreement in the log. the console font is the one exception:
-it is spleen, under the bsd 2-clause, in `FONT-LICENSE <../FONT-LICENSE>`_,
-and changes to it follow that license instead.
+trailer is that agreement in the log. there is no exception: the console
+font is linux's, which is GPL-2.0 as well.
 
 that license is copyleft, which means a contribution stays under it: the
 copyright stays yours, but the grant does not come back out of the tree. if

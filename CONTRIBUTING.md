@@ -28,8 +28,8 @@ email to the maintainer of the subsystem it touches, after reading
 `make test` and `make boottest` pass on your own machine before ci ever sees them.
 
 velvet is GPL-2.0-only, and a contribution is accepted under the same terms:
-the `Signed-off-by` trailer is that agreement in the log. the console font is
-the one file that is not, since it is spleen under the bsd 2-clause.
+the `Signed-off-by` trailer is that agreement in the log, and there is no
+exception: even the console font, which is linux's, is GPL-2.0.
 
 a patch may also arrive as mail, which is how kernel projects have always taken
 them. it is not the recommended route: with no mailing list there is no public

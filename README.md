@@ -82,4 +82,4 @@ flavour rather than a rule, and it is expected to fade after 1.0.0.
 
 ## license
 
-GPL-2.0-only, see [LICENSE](LICENSE). Copyright (c) 2026 Jose A. Perez de Azpillaga. the console font is [spleen 8x16](https://github.com/fcambus/spleen) by frederic cambus, bsd 2-clause, see [FONT-LICENSE](FONT-LICENSE).
+GPL-2.0-only, see [LICENSE](LICENSE). Copyright (c) 2026 Jose A. Perez de Azpillaga. the console font is the vga 8x16 from linux's `lib/fonts/`, GPL-2.0 like the rest.

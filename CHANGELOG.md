@@ -69,7 +69,13 @@ a kernel that booted.
 
   **there is no source at the root**: `main.c` and `boot.c` are in
   `init/`, and the linker script is the architecture's, in
-  `arch/x86_64/`.
+  `arch/x86_64/`. and
+  **the console font is linux's**: the vga 8x16 from linux's
+  `lib/fonts/font_8x16.c`, GPL-2.0 like everything else here, in place of
+  spleen and the second license it brought with it. its upper half is code
+  page 437, the vga's own order, rather than latin-1, and a control byte
+  the console does not act on shows the vga's symbol for it now rather
+  than nothing.
 
   the medium this tree boots carries **no programs**. it is the accounts,
   the profile, and the files the boot test reads back, so `make boottest`
