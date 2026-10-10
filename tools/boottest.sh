@@ -164,7 +164,10 @@ check 'lspci works'      'host bridge'
 check 'blocks merge'     'blocks merge'
 check 'free block shape' 'free blocks, by size'
 check 'slab caches'      'kmalloc-'
-check 'thread cache'     'addrspace'
+# the cache's row in the slabs table, by the padding after its name:
+# the bare word turns up in the source listing too, and a check that a
+# file name can satisfy is not a check of the cache
+check 'thread cache'     'thread      '
 check 'disk at the root' 'ext4 "velvetos" mounted at /'
 # the disk the machine boots has a log on it, and mounting it is
 # supposed to replay that log and then write through it. a machine that

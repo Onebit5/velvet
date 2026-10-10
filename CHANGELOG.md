@@ -87,7 +87,7 @@ a kernel that booted.
   medium with empty files named after what velvetOS ships, since resolving
   a name opens a file and nothing reads it.
 
-  and moving it found three things that had been quietly wrong. **toolcheck
+  and moving it found four things that had been quietly wrong. **toolcheck
   had been checking less than it said**: the trampoline, which its own
   comment calls the only input that matters, and the `checkfmt` comparison
   over the kernel both looked in `kernel/src/`, a directory that has not
@@ -98,4 +98,7 @@ a kernel that booted.
   and `make run` named the disk as a prerequisite before the line that
   defined it, so on a fresh checkout it asked for nothing and handed qemu a
   drive that did not exist, which is the exact trap the comment on
-  `BOOTIMG` two lines above it describes.
+  `BOOTIMG` two lines above it describes. and the boot test's cache check,
+  carried over from velvetOS, looked for a cache that only exists once a
+  program has run, and passed anyway on a file name in the source listing;
+  it looks for the thread cache's row in the slabs table now.
