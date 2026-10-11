@@ -25,7 +25,8 @@ in short: open an issue for a bug. for a feature, open an issue or send an
 email to the maintainer of the subsystem it touches, after reading
 [ROADMAP.md](ROADMAP.md) and the non-goals it lists. branch from the latest
 `master`, keep one subsystem per commit, sign off with `git commit -s`, and make
-`make test` and `make boottest` pass on your own machine before ci ever sees them.
+`make test`, `make boottest` and `make kselftest` pass on your own machine before ci
+ever sees them.
 
 velvet is GPL-2.0-only, and a contribution is accepted under the same terms:
 the `Signed-off-by` trailer is that agreement in the log, and there is no

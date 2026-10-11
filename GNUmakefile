@@ -242,14 +242,67 @@ $(OBJDIR)/arch/x86_64/trampoline.c.o: $(OBJDIR)/arch/x86_64/trampoline.c
 # kernel knows how to read, and the flags after it keep the archive
 # byte-identical between builds so the image doesnt churn.
 #
-# this one carries no programs. it is the smallest medium the kernel
-# can be booted and checked on (the accounts, the profile the shell
-# reads at login, and the files the boot test reads back), and a system
-# built on this kernel packs its own
+# this one carries no programs but the kernel's own selftests, below. it
+# is the smallest medium the kernel can be booted and checked on (the
+# accounts, the profile the shell reads at login, the files the boot test
+# reads back, and selftests/), and a system built on this kernel packs
+# its own
 RAMDISK := $(BINDIR)/ramdisk.tar
 RAMDISK_FILES := $(shell find base/ramdisk -type f 2>/dev/null)
 
-$(RAMDISK): $(RAMDISK_FILES)
+#
+# the selftests: programs, in tools/testing/selftests/, that check from
+# ring 3 what the kernel promises ring 3. a directory is a subsystem and
+# a .c file is a test, so tools/testing/selftests/sched/wait.c is
+# selftests/sched/wait on the medium.
+#
+# a test is compiled with -nostdinc against the uapi headers and the
+# compiler's freestanding ones and nothing else, the headers a program
+# gets. so it cannot lean on how the kernel is built inside, only on what
+# it promises, and a test that starts failing is a promise broken
+SELFTEST_DIR  := tools/testing/selftests
+SELFTESTS     := $(sort $(patsubst $(SELFTEST_DIR)/%.c,%, \
+                   $(shell find $(SELFTEST_DIR) -mindepth 2 -name '*.c' \
+                           2>/dev/null)))
+SELFTEST_BINS := $(addprefix $(BINDIR)/selftests/,$(SELFTESTS))
+
+# what goes on the medium: those tests and the directories they are in,
+# named one by one rather than the whole of bin/selftests/, so a binary
+# left behind by a test that has since gone does not ship
+SELFTEST_TAR := $(sort ./selftests \
+                  $(patsubst $(BINDIR)/%/,./%,$(dir $(SELFTEST_BINS))) \
+                  $(patsubst $(BINDIR)/%,./%,$(SELFTEST_BINS)))
+
+# and that list written down, rewritten only when it changes. make sees
+# a prerequisite that got newer and never one that is gone, so without
+# this a test removed from the tree would stay in a ramdisk nothing
+# rebuilds
+SELFTEST_LIST := $(OBJROOT)/selftests.list
+
+$(SELFTEST_LIST): FORCE
+	@mkdir -p $(@D)
+	@echo '$(SELFTEST_TAR)' > $@.tmp
+	@cmp -s $@.tmp $@ && rm -f $@.tmp || mv -f $@.tmp $@
+
+.PHONY: FORCE
+FORCE:
+
+SELFTEST_CFLAGS := -std=gnu11 -Wall -Wextra -O1 -g -ffreestanding \
+                   -fno-stack-protector -fno-stack-check -fno-pic -fno-pie \
+                   -fno-omit-frame-pointer -m64 -mno-80387 -mno-mmx \
+                   -mno-sse -mno-sse2 -mno-red-zone -nostdinc \
+                   -isystem $(shell $(CC) -print-file-name=include) \
+                   -Iinclude/uapi
+SELFTEST_LDFLAGS := -nostdlib -static -no-pie -Wl,--build-id=none \
+                    -T $(SELFTEST_DIR)/selftest.ld
+
+$(BINDIR)/selftests/%: $(SELFTEST_DIR)/%.c $(SELFTEST_DIR)/kselftest.h \
+                       $(SELFTEST_DIR)/selftest.ld \
+                       $(wildcard include/uapi/velvet/*.h)
+	@mkdir -p $(@D)
+	$(CC) $(SELFTEST_CFLAGS) $(SELFTEST_LDFLAGS) $< -o $@
+
+$(RAMDISK): $(RAMDISK_FILES) $(SELFTEST_BINS) $(SELFTEST_LIST)
 	@mkdir -p $(@D)
 	@# git only tracks the execute bit, so the modes that matter are set
 	@# here rather than trusted to the checkout. velvet-room.txt is the
@@ -257,7 +310,8 @@ $(RAMDISK): $(RAMDISK_FILES)
 	@chmod 644 base/ramdisk/passwd base/ramdisk/*.txt 2>/dev/null || true
 	@chmod 600 base/ramdisk/velvet-room.txt
 	tar --format=ustar --sort=name --owner=0 --group=0 --numeric-owner \
-		--mtime=@0 -cf $@ -C base/ramdisk .
+		--mtime=@0 -cf $@ -C base/ramdisk . \
+		-C $(abspath $(BINDIR)) --no-recursion $(SELFTEST_TAR)
 
 #
 # 0.3.26. everything above builds a machine; this puts the thing it was
@@ -1020,6 +1074,19 @@ arch-check:
 .PHONY: boottest
 boottest: $(BOOTIMG) $(T)/mkext4
 	./tools/boottest.sh $(BOOTIMG)
+
+# the selftests, run where a program is run: the image booted headless,
+# logged in as guest, one `run` each, and every result read back as TAP.
+# needs qemu.
+#
+#   make kselftest                  every test
+#   make kselftest TARGETS=sched    the tests of one subsystem
+TARGETS ?= $(sort $(patsubst %/,%,$(dir $(SELFTESTS))))
+
+.PHONY: kselftest
+kselftest: $(BOOTIMG)
+	@python3 $(SELFTEST_DIR)/run_kselftest.py $(BOOTIMG) \
+		$(filter $(addsuffix /%,$(TARGETS)),$(SELFTESTS))
 
 clean:
 	rm -rf $(BINDIR) $(OBJROOT)

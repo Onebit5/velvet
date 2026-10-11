@@ -160,8 +160,51 @@ scheduler, the login and a guest, every builtin it types, both disks
 mounted, the journal started, a ``resize`` that grows the work filesystem
 into its partition, ``fsck`` finding nothing twice running, and the source
 on the medium verified against the stamp and unpacked onto the disk. ring
-3 is the other half of the machine, and velvetOS's boot test checks it, on
-top of whatever kernel velvetOS has pinned.
+3 is the other half of the machine: the selftests below check what the
+kernel promises it, and velvetOS's boot test checks the programs it ships,
+on top of whatever kernel velvetOS has pinned.
+
+``kselftest``
+-------------
+
+the kernel's selftests: programs in ``tools/testing/selftests/``, one
+directory per subsystem and one ``.c`` file per test, that check from ring
+3 what the kernel promises ring 3.
+
+.. code-block:: sh
+
+   make kselftest                  # every test
+   make kselftest TARGETS=sched    # the tests of one subsystem
+
+a test is compiled with ``-nostdinc`` against the uapi headers in
+``include/uapi/`` and the compiler's freestanding ones, which are the
+headers a program gets, so it can depend on what the kernel promises and
+never on how the kernel is built inside. ``kselftest.h`` beside the tests
+is all a test is written with: the syscalls under the names a program
+knows them by, ``_start``, and the functions that print TAP
+(``ksft_print_header``, ``ksft_set_plan``,
+``ksft_test_result``, ``ksft_print_msg``, ``ksft_finished``).
+
+the tests go on the medium under ``selftests/``, the one thing on it a
+program could run. ``make kselftest`` boots the image headless, logs in as
+guest, runs each test with ``run selftests/<subsystem>/<test>``, and prints
+the results as one TAP stream, each test's own lines under it as ``#``
+comments. a test that does not come back
+within 30 seconds is reported as a timeout, and one that takes the kernel
+down ends the run, because there is no kernel left to run the rest on. the
+serial log is kept in ``bin/*-kselftest.log``.
+
+**a selftest is a promise to programs**, and a failing one is handled by
+one rule: the kernel does not break userspace. a change that
+turns a selftest from ``ok`` to ``not ok`` is the change that is wrong,
+even when the old behaviour looks like an accident, because some program
+already depends on it. a selftest changes only when the promise does,
+which is a decision about the abi, made on purpose and said in the commit
+that makes it.
+
+a bug a program can see gets a selftest that fails on the tree before the
+fix and passes after it. it lands with the fix or after it, never before,
+so that no commit in the history fails its own selftests.
 
 running one suite
 -----------------
@@ -180,7 +223,8 @@ suite passing on its own does not mean the tree is clean.
 what CI does with all of this
 -----------------------------
 
-the workflow runs, in order: ``make test``, ``make``, ``make boottest``.
+the workflow runs, in order: ``make test``, ``make``, ``make boottest``,
+``make kselftest``.
 see `ci is the gate <contributing.rst>`_ for what happens when one of them
 fails, which is: the pull request does not merge.
 

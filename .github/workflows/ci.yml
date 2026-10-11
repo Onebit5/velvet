@@ -46,10 +46,16 @@ jobs:
         run: make
 
       # philemon writes a disk image and that is what boots. the medium in
-      # it has no programs, so this is the kernel on its own: ring 3 is
-      # checked by velvetOS's CI, on every kernel it pins
+      # it has no programs, so this is the kernel on its own
       - name: boot test
         run: make boottest
+
+      # and ring 3, from where a program stands: the selftests, built
+      # against the uapi headers alone and run as guest. one that fails
+      # is a program broken somewhere, and the kernel does not break
+      # userspace
+      - name: selftests
+        run: make kselftest
 
       - name: keep the boot image and the serial log
         if: always()
@@ -59,4 +65,5 @@ jobs:
           path: |
             velvet.img
             bin/*-boottest.log
+            bin/*-kselftest.log
           if-no-files-found: warn

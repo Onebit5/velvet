@@ -75,6 +75,7 @@ sees it:
    make            # the boot image, velvet.img
    make test       # the host suites; no qemu, about a second
    make boottest   # boot in qemu and drive the shell over serial
+   make kselftest  # run the selftests in ring 3, as guest
 
 `building`_ has the toolchain and every target. if ``make test`` does not
 pass on your machine before your change, fix that first; you cannot tell your
@@ -100,8 +101,8 @@ the workflow
 
 #. **write the commit messages** as described below.
 
-#. **run the checks locally**: ``make test``, ``make``, ``make boottest``.
-   the same commands CI runs.
+#. **run the checks locally**: ``make test``, ``make``, ``make boottest``,
+   ``make kselftest``. the same commands CI runs.
 
 #. **push and open the pull request** against ``master``. in the description,
    say what the change is, why it is needed, which subsystem it touches, and
@@ -225,7 +226,7 @@ the rules that come with it:
   top.
 - **a patch is a patch.** arriving by mail does not lower the standard it is
   held to: `code style <coding-style.rst>`_ applies, and so do ``make lint``,
-  ``make test`` and ``make boottest``.
+  ``make test``, ``make boottest`` and ``make kselftest``.
 
 if enough people want it, this becomes a real mailing list. `patchwork`_ would
 track the patches, and `public-inbox`_ would keep an archive that is
@@ -314,11 +315,16 @@ the second job, ``build-and-test``, installs the toolchain and then, in order:
    boot the image headless in qemu, and type commands at the shell over the
    serial port, checking the answers.
 
-what this CI cannot see is ring 3 and the kernel built by velvetOS's own
-tools, because the programs and the tools are velvetOS's. velvetOS's CI runs
-both on every kernel it pins, so a change here that breaks a program is
-found the moment velvetOS moves its pin, and is a bug here even though the
-failure is reported there.
+``make kselftest``
+   boot it again and run the selftests in ring 3, logged in as guest. a
+   selftest that fails is a promise to programs broken, and the change that
+   broke it is what gets fixed: the kernel does not break userspace.
+
+what this CI cannot see is the programs velvetOS ships and the kernel built
+by velvetOS's own tools, because both are velvetOS's. velvetOS's CI runs
+them on every kernel it pins, so a change here that breaks a program the
+selftests do not cover is found the moment velvetOS moves its pin, and is a
+bug here even though the failure is reported there.
 
 `testing`_ is the reference for all of these, including how to run a single
 suite and what a failure looks like.

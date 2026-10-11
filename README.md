@@ -41,7 +41,7 @@ arch/x86_64/           the one architecture: its headers in include/asm/
                        (<asm/cpu.h>), and linker.ld
 arch/none/             an architecture that does nothing, for portable-check
 boot/                  philemon, the bootloader
-tests/ tools/          the host suites, the checkers and the image builders
+tests/ tools/          the host suites, the selftests, the checkers and the image builders
 base/                  what the boot medium and the data disk are made of
 ```
 
@@ -64,14 +64,15 @@ make                 # the bootable disk image, velvet.img
 make run             # boot it in qemu (CPUS=4, MEM=2G)
 make test            # the host test suites and the checkers (no qemu needed)
 make boottest        # boot it and drive the shell over serial
+make kselftest       # run the selftests in ring 3, as guest (TARGETS=sched for one subsystem)
 make kernelrelease   # print the version
 ```
 
 `make run` gives you a qemu window *and* a serial console in your terminal, and since com1 is wired into the input queue, you can type at either one. the shell cannot tell the difference.
 
-the image this tree builds carries no programs, so what you get is the kernel and its
-shell: the builtins all work, and `ls` answers that it is not something you can type.
-for the machine with programs on it, build velvetOS.
+the image this tree builds carries no programs but its selftests, so what you get is the
+kernel and its shell: the builtins all work, and `ls` answers that it is not something you
+can type. for the machine with programs on it, build velvetOS.
 
 another tree builds the kernel with `make -C path/to/velvet BINDIR=... OBJROOT=...
 SOURCE=... kernel philemon tools`; [docs/building.rst](docs/building.rst) says what each

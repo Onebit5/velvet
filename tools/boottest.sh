@@ -9,8 +9,9 @@
 # carries has no programs on it, so every command below is one the
 # kernel answers itself: the boot, the memory, the scheduler, the
 # login, the disks, the journal, a resize, fsck, and the source on the
-# medium. ring 3 is checked by whatever system ships this kernel with
-# programs on it, velvetOS's boot test being the first of those.
+# medium. ring 3 is checked by the selftests, `make kselftest`, and by
+# whatever system ships this kernel with programs on it, velvetOS's boot
+# test being the first of those.
 #
 #   usage: tools/boottest.sh [velvet.img]
 

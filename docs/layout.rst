@@ -44,6 +44,8 @@ at a glance
     tests/             the host suites, run by `make test`
     tools/             the checkers and image builders: the python ones, and
                        the C ones that replace them
+      testing/selftests/  the selftests: programs that check from ring 3
+                       what the kernel promises ring 3
     docs/              this
     GNUmakefile        the build, and the version at the top of it
     ROADMAP.md         where it is going
@@ -131,10 +133,11 @@ inputs and outputs
 
 ``base/ramdisk/`` and ``base/diskroot/`` are *inputs*: the first is packed
 into the boot tar the loader hands the kernel, the second is copied onto the
-data disk by ``make run``. the ramdisk here carries no programs. it is the
-smallest medium the kernel can be booted and tested on: the accounts, the
-profile the shell reads at login, and the files the boot test reads back. a
-system built on the kernel packs its own.
+data disk by ``make run``. the ramdisk here carries no programs but the
+selftests, under ``selftests/``. it is the smallest medium the kernel can be
+booted and tested on: the accounts, the profile the shell reads at login,
+the files the boot test reads back, and the selftests. a system built on the
+kernel packs its own.
 
 everything under ``bin/`` and ``obj/`` is generated and comes back out with
 ``make clean``. the boot image, ``velvet.img``, is written by
