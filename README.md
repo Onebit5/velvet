@@ -95,6 +95,7 @@ about the project and pages about the code:
 - [**contributing**](docs/contributing.rst): which repository a change goes to, the workflow, commit messages, sign-off, review, patches by email, and the rule that **ci is the gate**
 - [**building**](docs/building.rst): the toolchain, every make target, running it, and building it from another tree
 - [**testing**](docs/testing.rst): the host suites, the checks against other implementations, and the boot test
+- [**selftests**](docs/dev-tools/kselftest.rst): running them, writing one, and what a failing one means
 - [**layout**](docs/layout.rst): the source tree, the headers, and the subsystem map
 - [**releases**](docs/versioning.rst): how versions are cut, and how a release reaches velvetOS
 - [**the system calls**](docs/syscalls.rst): the abi between ring 3 and the kernel

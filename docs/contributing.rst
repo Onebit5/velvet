@@ -318,7 +318,8 @@ the second job, ``build-and-test``, installs the toolchain and then, in order:
 ``make kselftest``
    boot it again and run the selftests in ring 3, logged in as guest. a
    selftest that fails is a promise to programs broken, and the change that
-   broke it is what gets fixed: the kernel does not break userspace.
+   broke it is what gets fixed: the kernel does not break userspace. `kernel
+   selftests <dev-tools/kselftest.rst>`_ has the rest.
 
 what this CI cannot see is the programs velvetOS ships and the kernel built
 by velvetOS's own tools, because both are velvetOS's. velvetOS's CI runs

@@ -25,7 +25,8 @@ start here
 if you are building it for the first time: `building <building.rst>`_.
 
 if you are changing it: `code style <coding-style.rst>`_, then `testing
-<testing.rst>`_, then `contributing <contributing.rst>`_.
+<testing.rst>`_ and `the selftests <dev-tools/kselftest.rst>`_, then
+`contributing <contributing.rst>`_.
 
 if you are reading it: `layout <layout.rst>`_ for the map, then the
 subsystem page you care about.
@@ -44,6 +45,13 @@ about the project
 - `layout <layout.rst>`_: the source tree and the subsystem map.
 - `releases <versioning.rst>`_: how versions are cut, and why they are not
   in the log.
+
+developer tools
+---------------
+
+- `kernel selftests <dev-tools/kselftest.rst>`_: programs that check, from
+  ring 3, what the kernel promises ring 3. running them, writing one, and
+  what a failing one means.
 
 the subsystems
 --------------
