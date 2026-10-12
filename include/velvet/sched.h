@@ -67,6 +67,18 @@ void waitq_wake_all(struct waitq *q);
 
 void sched_dump(void);
 
+/*
+ * the threads, and any pipe still open: what `ps` prints, and what
+ * /proc/threads is
+ */
+void sched_show_threads(void);
+
+/*
+ * /proc/threads, and /proc/stack, root's: the kernel's call trace of
+ * whoever reads it
+ */
+void sched_proc_init(void);
+
 size_t sched_thread_count(void);
 
 bool sched_thread_alive(int id);

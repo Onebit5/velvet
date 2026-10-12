@@ -216,6 +216,7 @@ void kmain(const struct ph_handoff *handoff)
 
     proc_init();
     mm_proc_init();
+    sched_proc_init();
 
     /*
      * and the source it was all built from, which is on the medium

@@ -999,18 +999,7 @@ static void cmd_slabs(int argc, char **argv)
 static void cmd_ps(int argc, char **argv)
 {
     (void)argc; (void)argv;
-    sched_dump();
-
-    /*
-     * a pipe outlives neither end and is freed the moment both let go,
-     * so this number should be zero at a prompt. anything else and
-     * something died without releasing what it held, which is the one
-     * failure mode of the whole arrangement that hides
-     */
-    size_t pipes = pipe_count();
-    if (pipes > 0) {
-        kprintf("%lu pipe%s still open\n", pipes, pipes == 1 ? "" : "s");
-    }
+    sched_show_threads();
 }
 
 static void cmd_summon(int argc, char **argv)

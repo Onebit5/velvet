@@ -634,6 +634,17 @@ ready, goes to sleep, or stops existing.
 ``void sched_dump(void);``
     walk the run queue (for the `ps` command in m6)
 
+``void sched_show_threads(void);``
+    the run queue and any pipe still open: what ``ps`` prints, and what
+    ``/proc/threads`` is, so a program reading the file and a person at
+    the shell see the same table
+
+``void sched_proc_init(void);``
+    registers ``/proc/threads``, for anyone, and ``/proc/stack``, for
+    root: the kernel's call trace of whoever reads it, which is the
+    walker a panic uses with nothing on fire, and which names functions
+    by where the kernel keeps them
+
 ``size_t sched_thread_count(void);``
     how many threads are in the ring, dead ones included
 

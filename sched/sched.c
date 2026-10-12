@@ -25,6 +25,8 @@
 #include <velvet/process.h>
 #include <velvet/pipe.h>
 #include <velvet/netif.h>
+#include <velvet/backtrace.h>
+#include <velvet/proc.h>
 
 /* how many ticks a thread gets before the kernel takes the cpu back. */
 #define QUANTUM_TICKS 5
@@ -530,6 +532,37 @@ void sched_dump(void)
     }
 
     spin_unlock_irq(&sched_lock, flags);
+}
+
+void sched_show_threads(void)
+{
+    sched_dump();
+
+    /*
+     * a pipe outlives neither end and is freed the moment both let go,
+     * so this number should be zero at a prompt. anything else and
+     * something died without releasing what it held, which is the one
+     * failure mode of the whole arrangement that hides
+     */
+    size_t sz_pipes = pipe_count();
+    if (sz_pipes > 0) {
+        kprintf("%lu pipe%s still open\n", sz_pipes, sz_pipes == 1 ? "" : "s");
+    }
+}
+
+/*
+ * the kernel's own calls that led to this read, which are the reader's:
+ * the same walker a panic uses, with nothing on fire
+ */
+static void sched_show_stack(void)
+{
+    kbacktrace(0, 0);
+}
+
+void sched_proc_init(void)
+{
+    proc_register("threads", PROC_PUBLIC, sched_show_threads);
+    proc_register("stack", PROC_PRIVATE, sched_show_stack);
 }
 
 size_t sched_thread_count(void)

@@ -205,6 +205,11 @@ void sched_dump(void)
 {
     kprintf("<PS>");
 }
+
+void sched_show_threads(void)
+{
+    sched_dump();
+}
 size_t process_count(void)
 {
     return 0;
