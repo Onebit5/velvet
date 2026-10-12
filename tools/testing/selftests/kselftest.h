@@ -171,6 +171,44 @@ static inline int64_t readdir(const char *str_path, size_t sz_index,
 }
 
 /*
+ * the whole of a file, up to `sz_size` bytes, into `str_buf`: its length,
+ * or -1 when it would not open
+ */
+static inline int64_t ksft_read_file(const char *str_path, char *str_buf,
+                                     size_t sz_size)
+{
+    int i_fd = open(str_path);
+    size_t sz_len = 0;
+
+    if (i_fd < 0) {
+        return -1;
+    }
+    while (sz_len < sz_size) {
+        int64_t i_got = read(i_fd, str_buf + sz_len, sz_size - sz_len);
+        if (i_got <= 0) {
+            break;
+        }
+        sz_len += (size_t)i_got;
+    }
+    close(i_fd);
+    return (int64_t)sz_len;
+}
+
+/* whether `str_needle` is somewhere in the first `i_len` bytes of `str_text` */
+static inline bool ksft_contains(const char *str_text, int64_t i_len,
+                                 const char *str_needle)
+{
+    size_t sz_need = ksft_strlen(str_needle);
+
+    for (int64_t i_at = 0; i_at + (int64_t)sz_need <= i_len; i_at++) {
+        if (ksft_memeq(str_text + i_at, str_needle, sz_need)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
  * enough of printf for a test to say what it saw: %s, %d, %u and %x, an
  * l in front for the 64-bit ones, and %%
  */

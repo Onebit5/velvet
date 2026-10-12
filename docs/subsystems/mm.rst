@@ -210,6 +210,12 @@ free memory, not just how much of it there is. a machine with plenty free
 and none of it contiguous is a machine about to fail a large allocation.
 ``pressure_available()`` is the honest answer to "how much is left" for a
 program, which is not the same number as the free count.
+
+the same words are ``/proc/meminfo``, and ``slabs``, every object cache
+with what it holds against what it uses, is ``/proc/slabinfo``.
+``mm/meminfo.c`` writes both, so a person at the shell and a program
+reading the file are told the same thing.
+
 the addrspace interface
 -----------------------
 

@@ -195,6 +195,11 @@ size)``, which puts the name of a directory's entry ``index`` in ``buf``,
 a directory's with a ``/`` after it, and returns -1 past the last.
 ``ksft_memeq(a, b, len)`` and ``ksft_streq(a, b)`` compare bytes and
 strings, which a test without a libc would otherwise write each time.
+``ksft_read_file(path, buf, size)`` reads a whole file, up to ``size``
+bytes, and returns its length, or -1 when it would not open, and
+``ksft_contains(text, len, needle)`` says whether ``needle`` is somewhere
+in the first ``len`` bytes of ``text``: between them, a check of what a
+file in ``/proc`` says.
 
 ``wait`` puts how the child ended in ``status``: what it passed to
 ``exit``, or 128 plus the signal that ended it. any other call is made
