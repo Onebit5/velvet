@@ -39,6 +39,10 @@ PREFIX = {'bool': 'b_', 'int': 'i_', 'int32_t': 'i_', 'int64_t': 'i_',
           'std::string': 'str_'}
 DECL = re.compile(r'\b(' + '|'.join(re.escape(t) for t in TYPES)
                   + r')\s+(\w+)\s*[=;,)]')
+# what a variable's scope says goes in front of what its type says:
+# g_ for a global, s_ for a static, m_ for a member, so s_sz_count is a
+# static size_t and is named right
+SCOPE = ('g_', 's_', 'm_')
 DASH = re.compile(r'(?<![-\s]) -- (?![-\s])|[—–]')
 PERSONA = re.compile(r'\bthou\b|\bhath\b|velvet|arcana|persona|\bigor\b|'
                      r'\bmargaret\b|\btheodore\b|\blavenza\b|'
@@ -228,7 +232,8 @@ def check_file(path, strict):
             for m in DECL.finditer(mask(line, scan(line))):
                 t, name = m.group(1), m.group(2)
                 want = PREFIX[t]
-                if not name.startswith(want):
+                bare = name[2:] if name[:2] in SCOPE else name
+                if not bare.startswith(want):
                     msg = "naming: '%s' (%s) should start with '%s'"
                     problems.append((i, msg % (name, t, want), 'warn'))
 
