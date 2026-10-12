@@ -26,13 +26,15 @@
  */
 struct proc_file {
     char arr_name[PROC_NAME_MAX];
+    uint32_t u_mode;
     void (*p_show)(void);
 };
 
 static struct proc_file s_arr_files[PROC_FILES_MAX];
 static size_t s_sz_count;
 
-bool proc_register(const char *str_name, void (*p_show)(void))
+bool proc_register(const char *str_name, uint32_t u_mode,
+                   void (*p_show)(void))
 {
     size_t sz_index;
 
@@ -41,6 +43,7 @@ bool proc_register(const char *str_name, void (*p_show)(void))
         return false;
     }
     strcpy(s_arr_files[s_sz_count].arr_name, str_name);
+    s_arr_files[s_sz_count].u_mode = u_mode;
     s_arr_files[s_sz_count].p_show = p_show;
     s_sz_count++;
     return true;
@@ -60,6 +63,11 @@ bool proc_find(const char *str_name, size_t *p_index)
 const char *proc_name(size_t sz_index)
 {
     return (sz_index < s_sz_count) ? s_arr_files[sz_index].arr_name : NULL;
+}
+
+uint32_t proc_mode(size_t sz_index)
+{
+    return (sz_index < s_sz_count) ? s_arr_files[sz_index].u_mode : 0;
 }
 
 int64_t proc_render(size_t sz_index, char *str_buf, size_t sz_size)
@@ -111,6 +119,6 @@ static void show_uptime(void)
 
 void proc_init(void)
 {
-    proc_register("version", show_version);
-    proc_register("uptime", show_uptime);
+    proc_register("version", PROC_PUBLIC, show_version);
+    proc_register("uptime", PROC_PUBLIC, show_uptime);
 }

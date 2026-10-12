@@ -53,15 +53,18 @@ program in the same words, by registering one name:
 
 .. code-block:: c
 
-   proc_register("version", show_version);
+   proc_register("version", PROC_PUBLIC, show_version);
 
 nothing is kept between reads. every read writes the file again, which is
 why a file here says it is 0 bytes long and is read to its end like any
 other, and why two reads a second apart may disagree: they are two answers
 to the same question. a descriptor on one remembers only which file and how
 far along, so a reader taking it in pieces sees one file as long as nothing
-in it changed in between, and a fork or a close has nothing to free. anyone
-may read any of them.
+in it changed in between, and a fork or a close has nothing to free. a
+file is registered as ``PROC_PUBLIC``, for anyone to read, or
+``PROC_PRIVATE``, for root alone, which is what a file that says where the
+kernel keeps things is: an address of the kernel's is no business of a
+guest's.
 
 ``/proc`` has ``version``, which kernel this is, and ``uptime``, seconds
 since boot to the hundredth. the rest are each subsystem's own.

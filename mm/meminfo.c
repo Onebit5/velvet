@@ -80,6 +80,6 @@ void mm_show_slabinfo(void)
 
 void mm_proc_init(void)
 {
-    proc_register("meminfo", mm_show_meminfo);
-    proc_register("slabinfo", mm_show_slabinfo);
+    proc_register("meminfo", PROC_PUBLIC, mm_show_meminfo);
+    proc_register("slabinfo", PROC_PUBLIC, mm_show_slabinfo);
 }

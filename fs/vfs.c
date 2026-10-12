@@ -257,11 +257,12 @@ bool vfs_open(const char *path, struct vfs_file *out)
             return false;
         }
         /*
-         * anyone may read one, and none has a size until it is read, so
-         * it says 0 and a reader reads to the end like any other file
+         * none has a size until it is read, so it says 0 and a reader
+         * reads to the end like any other file. who may read it is the
+         * file's own say
          */
         copy_name(out->name, rest);
-        out->mode = 0444;
+        out->mode = proc_mode(out->sz_proc);
         return true;
     }
     if (under_src(path, &rest)) {
@@ -426,7 +427,7 @@ bool vfs_readdir(const char *path, size_t index, struct vfs_file *out)
         memset(out, 0, sizeof *out);
         out->kind = VFS_PROC;
         out->sz_proc = index;
-        out->mode = 0444;
+        out->mode = proc_mode(index);
         copy_name(out->name, name);
         return true;
     }

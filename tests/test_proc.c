@@ -89,16 +89,22 @@ int main(void)
           "version is the first file /proc has");
     CHECK(proc_find("uptime", &sz_index) && sz_index == 1,
           "and uptime the second");
-    CHECK(proc_register("greeting", show_greeting), "a file registers");
-    CHECK(!proc_register("greeting", show_nothing),
+    CHECK(proc_register("greeting", PROC_PUBLIC, show_greeting),
+          "a file registers");
+    CHECK(!proc_register("greeting", PROC_PUBLIC, show_nothing),
           "but not twice under one name");
     CHECK(!proc_register("a name far too long for any proc file",
-                         show_nothing), "nor under a name that does not fit");
-    CHECK(proc_register("empty", show_nothing), "an empty one is fine");
+                         PROC_PUBLIC, show_nothing),
+          "nor under a name that does not fit");
+    CHECK(proc_register("empty", PROC_PRIVATE, show_nothing),
+          "an empty one is fine, and so is root's own");
     CHECK(!proc_find("nothing", &sz_index), "a name nobody registered");
 
     CHECK(strcmp(proc_name(2), "greeting") == 0, "listed by its name");
     CHECK(proc_name(4) == NULL, "and the listing ends");
+    CHECK(proc_mode(2) == 0444 && proc_mode(3) == 0400,
+          "each keeps the mode it was registered with");
+    CHECK(proc_mode(9) == 0, "and one that does not exist has none");
 
     int64_t i_len = proc_render(2, arr_text, sizeof arr_text);
     CHECK(i_len == 31 && memcmp(arr_text, "hello from the kernel, 1 lines\n",

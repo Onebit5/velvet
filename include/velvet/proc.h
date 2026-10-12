@@ -19,11 +19,21 @@
 /* the most text one file may hold. the kernel's log is the largest */
 #define PROC_TEXT_MAX  (40 * 1024)
 
+/* who may read one: everybody, or root alone */
+#define PROC_PUBLIC  0444
+#define PROC_PRIVATE 0400
+
 /*
  * a file under /proc, written by `p_show` with kprintf whenever somebody
- * reads it. false when the name is taken or there is no room for another
+ * reads it, and readable by whoever `u_mode` says: PROC_PUBLIC, or
+ * PROC_PRIVATE for what would tell a program where the kernel keeps
+ * things. false when the name is taken or there is no room for another
  */
-bool proc_register(const char *str_name, void (*p_show)(void));
+bool proc_register(const char *str_name, uint32_t u_mode,
+                   void (*p_show)(void));
+
+/* the mode a file was registered with, 0 for a file that does not exist. */
+uint32_t proc_mode(size_t sz_index);
 
 /* which registered file a name is, for an open. */
 bool proc_find(const char *str_name, size_t *p_index);

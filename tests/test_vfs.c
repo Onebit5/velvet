@@ -85,16 +85,25 @@ static const struct {
  */
 bool proc_find(const char *str_name, size_t *p_index)
 {
-    if (strcmp(str_name, "version") != 0) {
-        return false;
+    if (strcmp(str_name, "version") == 0) {
+        *p_index = 0;
+        return true;
     }
-    *p_index = 0;
-    return true;
+    if (strcmp(str_name, "secret") == 0) {
+        *p_index = 1;
+        return true;
+    }
+    return false;
 }
 
 const char *proc_name(size_t sz_index)
 {
-    return (sz_index == 0) ? "version" : NULL;
+    return (sz_index == 0) ? "version" : (sz_index == 1) ? "secret" : NULL;
+}
+
+uint32_t proc_mode(size_t sz_index)
+{
+    return (sz_index == 0) ? 0444 : (sz_index == 1) ? 0400 : 0;
 }
 
 int64_t proc_read(size_t sz_index, uint64_t u_offset, void *p_buf,
@@ -458,7 +467,13 @@ int main(void)
           "and /processes is not /proc");
     CHECK(vfs_readdir("/proc", 0, &f) && strcmp(f.name, "version") == 0
           && f.kind == VFS_PROC, "the listing has its file");
-    CHECK(!vfs_readdir("/proc", 1, &f), "and only that");
+    CHECK(vfs_open("/proc/secret", &f) && f.mode == 0400,
+          "a file can be root's alone");
+    CHECK(!vfs_may_read(&f, 1000) && vfs_may_read(&f, 0),
+          "so a guest may not read it, and root may");
+    CHECK(vfs_readdir("/proc", 1, &f) && strcmp(f.name, "secret") == 0
+          && f.mode == 0400, "it is listed with the mode it has");
+    CHECK(!vfs_readdir("/proc", 2, &f), "and the listing ends there");
     {
         int i_saw = 0;
         for (size_t sz_at = 0; vfs_readdir("/", sz_at, &f); sz_at++) {
