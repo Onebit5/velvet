@@ -189,12 +189,17 @@ the calls
 each is one syscall and nothing more, so what a test exercises is the
 kernel and not a library in front of it: ``write(fd, buf, len)``,
 ``exit(code)``, ``fork()``, ``wait(pid, &status)``, ``getpid()``,
-``sigsend(pid, sig)`` and ``sleep_ms(ms)``.
+``sigsend(pid, sig)``, ``sleep_ms(ms)``, ``open(path)``,
+``read(fd, buf, len)``, ``close(fd)`` and ``readdir(path, index, buf,
+size)``, which puts the name of a directory's entry ``index`` in ``buf``,
+a directory's with a ``/`` after it, and returns -1 past the last.
+``ksft_memeq(a, b, len)`` and ``ksft_streq(a, b)`` compare bytes and
+strings, which a test without a libc would otherwise write each time.
 
 ``wait`` puts how the child ended in ``status``: what it passed to
 ``exit``, or 128 plus the signal that ended it. any other call is made
 with ``ksft_syscall(nr, a0, a1, a2)`` and its number from
-``<velvet/syscall.h>``.
+``<velvet/syscall.h>``, or ``ksft_syscall5`` for one that takes five.
 
 example
 -------

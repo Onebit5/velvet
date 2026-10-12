@@ -79,6 +79,43 @@ static const struct {
 };
 #define WORK_COUNT (sizeof work_tree / sizeof work_tree[0])
 
+/*
+ * /proc, faked with one file, so what is tested here is the routing: the
+ * real files and what they say are tests/test_proc.c's
+ */
+bool proc_find(const char *str_name, size_t *p_index)
+{
+    if (strcmp(str_name, "version") != 0) {
+        return false;
+    }
+    *p_index = 0;
+    return true;
+}
+
+const char *proc_name(size_t sz_index)
+{
+    return (sz_index == 0) ? "version" : NULL;
+}
+
+int64_t proc_read(size_t sz_index, uint64_t u_offset, void *p_buf,
+                  uint64_t u_len)
+{
+    const char *str_text = "velvet version 0\n";
+    uint64_t u_size = strlen(str_text);
+
+    if (sz_index != 0) {
+        return -1;
+    }
+    if (u_offset >= u_size) {
+        return 0;
+    }
+    if (u_len > u_size - u_offset) {
+        u_len = u_size - u_offset;
+    }
+    memcpy(p_buf, str_text + u_offset, u_len);
+    return (int64_t)u_len;
+}
+
 bool disk_ready(size_t which)
 {
     return which == DISK_WORK ? have_work : have_disk;
@@ -401,6 +438,37 @@ int main(void)
     CHECK(vfs_open("/boot", &f) && f.is_dir, "and so is the mount point");
     CHECK(vfs_open("/boot/", &f) && f.is_dir, "however it is spelled");
 
+    /* /proc, which no disk or archive holds */
+    CHECK(vfs_open("/proc", &f) && f.is_dir && f.kind == VFS_PROC,
+          "/proc is a directory of its own");
+    CHECK(vfs_open("/proc/version", &f) && !f.is_dir && f.kind == VFS_PROC
+          && f.size == 0 && f.mode == 0444,
+          "a file in it says 0 bytes, and anyone may read it");
+    CHECK(vfs_may_read(&f, 1000), "including a guest");
+    {
+        char arr_text[32];
+        int64_t i_got = vfs_read(&f, 0, arr_text, sizeof arr_text);
+        CHECK(i_got == 17 && memcmp(arr_text, "velvet version 0\n", 17) == 0,
+              "and reading it reads what /proc writes");
+        CHECK(vfs_read(&f, 17, arr_text, sizeof arr_text) == 0,
+              "to the end and no further");
+    }
+    CHECK(!vfs_open("/proc/nothing", &f), "a name /proc does not have");
+    CHECK(!vfs_open("/processes", &f) || f.kind != VFS_PROC,
+          "and /processes is not /proc");
+    CHECK(vfs_readdir("/proc", 0, &f) && strcmp(f.name, "version") == 0
+          && f.kind == VFS_PROC, "the listing has its file");
+    CHECK(!vfs_readdir("/proc", 1, &f), "and only that");
+    {
+        int i_saw = 0;
+        for (size_t sz_at = 0; vfs_readdir("/", sz_at, &f); sz_at++) {
+            if (strcmp(f.name, "proc") == 0 && f.is_dir) {
+                i_saw = 1;
+            }
+        }
+        CHECK(i_saw, "and the root lists /proc among its mounts");
+    }
+
 
 
     int saw_boot = 0, saw_welcome = 0, count = 0;
@@ -411,8 +479,8 @@ int main(void)
     }
     CHECK(saw_welcome, "the root lists what is on the disk");
     CHECK(saw_boot, "and the mount standing on it, which is on no filesystem");
-    CHECK(count == (int)DISK_COUNT - 1 + 2,
-          "exactly the root filesystem plus the two mounts standing on it");
+    CHECK(count == (int)DISK_COUNT - 1 + 3,
+          "exactly the root filesystem plus the three mounts standing on it");
 
     int saw_hello = 0, saw_dirs = 0;
     count = 0;
@@ -448,7 +516,7 @@ int main(void)
 
     count = 0;
     for (size_t i = 0; vfs_readdir("//", i, &f); i++) count++;
-    CHECK(count == (int)DISK_COUNT - 1 + 2, "and a doubled slash is the root");
+    CHECK(count == (int)DISK_COUNT - 1 + 3, "and a doubled slash is the root");
 
     CHECK(!vfs_readdir("bootleg", 0, &f), "but bootleg is still not boot");
 
@@ -798,12 +866,14 @@ int main(void)
 
     count = 0;
     saw_boot = 0;
+    int i_saw_proc = 0;
     for (size_t i = 0; vfs_readdir("/", i, &f); i++) {
         if (strcmp(f.name, "boot") == 0) saw_boot = 1;
+        if (strcmp(f.name, "proc") == 0) i_saw_proc = 1;
         count++;
     }
-    CHECK(saw_boot && count == 1,
-          "the root holds nothing but /boot, which is honest");
+    CHECK(saw_boot && i_saw_proc && count == 2,
+          "the root holds nothing but /boot and /proc, which is honest");
 
     count = 0;
     for (size_t i = 0; vfs_readdir("/boot", i, &f); i++) {

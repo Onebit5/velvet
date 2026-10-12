@@ -10,6 +10,7 @@
 #include <velvet/source.h>
 #include <velvet/disk.h>
 #include <velvet/kmalloc.h>
+#include <velvet/proc.h>
 #include <velvet/string.h>
 
 /* what a file on the disk is allowed to be. */
@@ -61,6 +62,12 @@ static bool under_boot(const char *path, const char **rest)
  * did, and that is the sort of thing worth stating rather than relying
  * on nobody adding one
  */
+/* /proc, which no disk or archive holds: the kernel writes it as it is read. */
+static bool under_proc(const char *path, const char **rest)
+{
+    return under(path, PROC_AT, rest);
+}
+
 static bool under_src(const char *path, const char **rest)
 {
     return source_present() && under(path, VFS_SRC, rest);
@@ -237,6 +244,26 @@ bool vfs_open(const char *path, struct vfs_file *out)
     }
 
     const char *rest;
+    if (under_proc(path, &rest)) {
+        memset(out, 0, sizeof *out);
+        out->kind = VFS_PROC;
+        if (rest[0] == '\0') {
+            copy_name(out->name, PROC_AT + 1);
+            out->is_dir = true;
+            out->mode = 0555;
+            return true;
+        }
+        if (!proc_find(rest, &out->sz_proc)) {
+            return false;
+        }
+        /*
+         * anyone may read one, and none has a size until it is read, so
+         * it says 0 and a reader reads to the end like any other file
+         */
+        copy_name(out->name, rest);
+        out->mode = 0444;
+        return true;
+    }
     if (under_src(path, &rest)) {
         if (rest[0] == '\0') {
             source_mount_point(out);
@@ -362,7 +389,12 @@ static bool root_extra(size_t index, struct vfs_file *out)
         copy_name(out->name, VFS_BOOT + 1);     /* past the slash */
         return true;
     }
-    if (index == 1 && disk_ready(DISK_WORK)) {
+    if (index == 1) {
+        out->kind = VFS_PROC;
+        copy_name(out->name, PROC_AT + 1);
+        return true;
+    }
+    if (index == 2 && disk_ready(DISK_WORK)) {
         out->kind = VFS_DISK;
         out->mount = DISK_WORK;
         copy_name(out->name, DISK_WORK_AT + 1);
@@ -386,6 +418,18 @@ bool vfs_readdir(const char *path, size_t index, struct vfs_file *out)
     }
 
     const char *rest;
+    if (under_proc(path, &rest)) {
+        const char *name = proc_name(index);
+        if (rest[0] != '\0' || name == NULL) {
+            return false;
+        }
+        memset(out, 0, sizeof *out);
+        out->kind = VFS_PROC;
+        out->sz_proc = index;
+        out->mode = 0444;
+        copy_name(out->name, name);
+        return true;
+    }
     if (under_src(path, &rest)) {
         size_t prefix = strlen(rest);
         struct source_file f;
@@ -602,6 +646,9 @@ int64_t vfs_read(const struct vfs_file *f, uint64_t offset, void *buf,
 {
     if (f->is_dir) {
         return -1;
+    }
+    if (f->kind == VFS_PROC) {
+        return proc_read(f->sz_proc, offset, buf, len);
     }
     if (offset >= f->size) {
         return 0;

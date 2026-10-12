@@ -507,10 +507,13 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/termios \
              $(T)/epoch $(T)/pressure $(T)/hash \
              $(T)/inflate $(T)/crash \
-             $(T)/resize $(T)/switch $(T)/source
+             $(T)/resize $(T)/switch $(T)/source \
+             $(T)/proc
 
 $(T)/kprintf:  tests/test_kprintf.c  lib/kprintf.c \
                sched/spinlock.c
+$(T)/proc:     tests/test_proc.c     fs/proc.c lib/kprintf.c \
+               lib/string.c sched/spinlock.c
 $(T)/mm:       tests/test_mm.c       sched/spinlock.c \
                mm/pmm.c \
                mm/buddy.c mm/slab.c \
@@ -548,7 +551,7 @@ $(T)/syscall:  tests/test_syscall.c  sched/spinlock.c \
                fs/path.c arch/x86_64/syscall.c \
                sched/process.c sched/signal.c lib/string.c \
                lib/env.c \
-               fs/vfs.c fs/source.c \
+               fs/vfs.c fs/source.c fs/proc.c \
                lib/hash.c fs/pipe.c
 $(T)/elf:      tests/test_elf.c      fs/elf.c \
                lib/string.c
@@ -744,7 +747,7 @@ $(T)/serial:   tests/test_serial.c   drivers/serial.c \
 # so that what `init` prints is what init would actually have decided
 $(T)/shell:    tests/test_shell.c    lib/string.c \
                fs/ramdisk.c sched/auth.c \
-               drivers/pci.c fs/vfs.c \
+               drivers/pci.c fs/vfs.c fs/proc.c \
                fs/source.c \
                sched/spinlock.c fs/path.c \
                lib/env.c sched/init.c \
@@ -758,7 +761,7 @@ $(T)/shell:    tests/test_shell.c    lib/string.c \
                shell/shell.c
 $(T)/shell:    SRCS = tests/test_shell.c lib/string.c \
                       fs/ramdisk.c sched/auth.c \
-                      drivers/pci.c fs/vfs.c \
+                      drivers/pci.c fs/vfs.c fs/proc.c \
                       fs/source.c \
                       sched/spinlock.c fs/path.c \
                       lib/env.c sched/init.c \

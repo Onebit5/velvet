@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <velvet/proc.h>
 #include <velvet/epoch.h>
 #include <velvet/rtc.h>
 #include <velvet/boot.h>
@@ -211,6 +212,8 @@ void kmain(const struct ph_handoff *handoff)
     }
 
     ramdisk_init();
+
+    proc_init();
 
     /*
      * and the source it was all built from, which is on the medium

@@ -34,6 +34,7 @@ enum vfs_kind {
     VFS_RAMDISK,
     VFS_DISK,
     VFS_SOURCE,
+    VFS_PROC,       /* written by the kernel when read, see fs/proc.c */
 };
 
 struct vfs_file {
@@ -63,6 +64,9 @@ struct vfs_file {
     uint64_t    medium_at;
 
     struct fat32_time written;
+
+    /* which /proc file, for VFS_PROC */
+    size_t sz_proc;
 };
 
 bool vfs_open(const char *path, struct vfs_file *out);

@@ -542,6 +542,24 @@ static int64_t sys_read(uint64_t fd, uint64_t ptr, uint64_t len)
         return (int64_t)len;
     }
 
+    case FD_PROC: {
+        /*
+         * written afresh from where the last read stopped, so a reader
+         * taking it a piece at a time sees one file, as long as nothing
+         * in it changed in between
+         */
+        struct vfs_file vf;
+        memset(&vf, 0, sizeof vf);
+        vf.kind = VFS_PROC;
+        vf.sz_proc = f.sz_proc;
+
+        int64_t i_got = vfs_read(&vf, f.pos, (void *)ptr, len);
+        if (i_got > 0) {
+            process_fd_advance(caller_pid(), (int)fd, (uint64_t)i_got);
+        }
+        return i_got;
+    }
+
     default:
         return -1;      /* the console. there is nothing to read from it */
     }
@@ -999,6 +1017,9 @@ static int64_t sys_open(uint64_t ptr, uint64_t len)
     }
     if (f.kind == VFS_SOURCE) {
         return process_fd_open_source(caller_pid(), f.medium_at, f.size);
+    }
+    if (f.kind == VFS_PROC) {
+        return process_fd_open_proc(caller_pid(), f.sz_proc);
     }
     return process_fd_open(caller_pid(), f.data, f.size);
 }

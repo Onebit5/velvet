@@ -16,6 +16,7 @@ the disk was bolted on at ``/disk``, which had it backwards. now:
     /work      a second filesystem, when the drive holds one
     /boot      the ramdisk, always
     /boot/src  the source this was built from, out on the medium
+    /proc      what the kernel says about itself, written as it is read
 
 the ramdisk keeps its own mount point rather than being deleted, because it
 is what makes the machine work when the disk does not. every program, and
@@ -39,6 +40,31 @@ with ``work_`` in front of it, and two copies of anything drift. both are on
 the same drive, and that is the block cache's doing rather than a
 simplification: the cache holds absolute sector numbers and is bound to
 whichever drive is selected.
+
+/proc
+-----
+
+``proc.c`` holds files nothing stores. a file there is a name and a
+function that writes the file's text with ``kprintf``, the same way the
+kernel writes anything for a person, and a capture (``struct kcapture`` in
+``<velvet/kprintf.h>``) turns that text into the bytes of a read. so a
+subsystem that can describe itself on a screen describes itself to a
+program in the same words, by registering one name:
+
+.. code-block:: c
+
+   proc_register("version", show_version);
+
+nothing is kept between reads. every read writes the file again, which is
+why a file here says it is 0 bytes long and is read to its end like any
+other, and why two reads a second apart may disagree: they are two answers
+to the same question. a descriptor on one remembers only which file and how
+far along, so a reader taking it in pieces sees one file as long as nothing
+in it changed in between, and a fork or a close has nothing to free. anyone
+may read any of them.
+
+``/proc`` has ``version``, which kernel this is, and ``uptime``, seconds
+since boot to the hundredth. the rest are each subsystem's own.
 
 the ramdisk
 -----------

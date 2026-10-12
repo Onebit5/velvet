@@ -47,6 +47,22 @@ static inline int64_t ksft_syscall(int64_t i_nr, int64_t i_a0, int64_t i_a1,
     return i_ret;
 }
 
+/* the same, for a call that takes five */
+static inline int64_t ksft_syscall5(int64_t i_nr, int64_t i_a0, int64_t i_a1,
+                                    int64_t i_a2, int64_t i_a3, int64_t i_a4)
+{
+    int64_t i_ret;
+    register int64_t i_r10 __asm__("r10") = i_a3;
+    register int64_t i_r8 __asm__("r8") = i_a4;
+
+    __asm__ volatile ("syscall"
+                      : "=a"(i_ret)
+                      : "a"(i_nr), "D"(i_a0), "S"(i_a1), "d"(i_a2),
+                        "r"(i_r10), "r"(i_r8)
+                      : "rcx", "r11", "memory");
+    return i_ret;
+}
+
 /*
  * the calls a test makes, under the names a program knows them by. each
  * is one syscall and nothing more, so what a test exercises is the
@@ -92,6 +108,66 @@ static inline int sigsend(int i_pid, int i_sig)
 static inline int sleep_ms(int64_t i_ms)
 {
     return (int)ksft_syscall(SYS_SLEEP, i_ms, 0, 0);
+}
+
+static inline size_t ksft_strlen(const char *str_text)
+{
+    size_t sz_len = 0;
+
+    while (str_text[sz_len] != '\0') {
+        sz_len++;
+    }
+    return sz_len;
+}
+
+/* whether `sz_len` bytes are the same, which tests ask often enough */
+static inline bool ksft_memeq(const void *p_a, const void *p_b, size_t sz_len)
+{
+    const char *str_a = p_a;
+    const char *str_b = p_b;
+
+    for (size_t sz_at = 0; sz_at < sz_len; sz_at++) {
+        if (str_a[sz_at] != str_b[sz_at]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static inline bool ksft_streq(const char *str_a, const char *str_b)
+{
+    size_t sz_len = ksft_strlen(str_a);
+
+    return sz_len == ksft_strlen(str_b) && ksft_memeq(str_a, str_b, sz_len);
+}
+
+/* a file to read: its descriptor, or -1 */
+static inline int open(const char *str_path)
+{
+    return (int)ksft_syscall(SYS_OPEN, (int64_t)str_path,
+                             (int64_t)ksft_strlen(str_path), 0);
+}
+
+static inline int64_t read(int i_fd, void *p_buf, size_t sz_len)
+{
+    return ksft_syscall(SYS_READ, i_fd, (int64_t)p_buf, (int64_t)sz_len);
+}
+
+static inline int close(int i_fd)
+{
+    return (int)ksft_syscall(SYS_CLOSE, i_fd, 0, 0);
+}
+
+/*
+ * the name of entry `sz_index` in the directory `str_path` into `str_buf`,
+ * a directory's with a / after it: its length, or -1 past the last
+ */
+static inline int64_t readdir(const char *str_path, size_t sz_index,
+                              char *str_buf, size_t sz_size)
+{
+    return ksft_syscall5(SYS_READDIR, (int64_t)sz_index, (int64_t)str_buf,
+                         (int64_t)sz_size, (int64_t)str_path,
+                         (int64_t)ksft_strlen(str_path));
 }
 
 /*

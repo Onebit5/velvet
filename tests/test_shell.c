@@ -127,6 +127,13 @@ int input_peek(void)
 {
     return pending_key;
 }
+/* /proc writes its files through a capture, which nothing here reads */
+struct kcapture;
+void sched_capture(struct kcapture *p_cap)
+{
+    (void)p_cap;
+}
+
 uint64_t pit_uptime_ms(void)
 {
     return 12345;

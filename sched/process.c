@@ -655,6 +655,29 @@ int process_fd_open_source(int pid, uint64_t medium_at, uint64_t size)
     return fd;
 }
 
+int process_fd_open_proc(int i_pid, size_t sz_proc)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    int i_fd = -1;
+
+    struct process *p_proc = slot_for(i_pid);
+    if (p_proc != NULL) {
+        for (int i_at = FD_FIRST_FILE; i_at < MAX_FDS; i_at++) {
+            if (p_proc->fds[i_at].kind != FD_FREE) {
+                continue;
+            }
+            memset(&p_proc->fds[i_at], 0, sizeof p_proc->fds[i_at]);
+            p_proc->fds[i_at].kind = FD_PROC;
+            p_proc->fds[i_at].sz_proc = sz_proc;
+            i_fd = i_at;
+            break;
+        }
+    }
+
+    spin_unlock_irq(&process_lock, u_flags);
+    return i_fd;
+}
+
 bool process_fd_disk(int pid, int fd, struct fd_disk *out)
 {
     uint64_t flags = spin_lock_irq(&process_lock);
@@ -742,7 +765,11 @@ void process_fd_advance(int pid, int fd, uint64_t n)
          * new size recorded by process_fd_grew before this runs
          */
         struct fd *f = &p->fds[fd];
-        f->pos = (f->pos + n > f->size) ? f->size : f->pos + n;
+        if (f->kind == FD_PROC) {
+            f->pos += n;        /* no size to stop at: the read finds the end */
+        } else {
+            f->pos = (f->pos + n > f->size) ? f->size : f->pos + n;
+        }
     }
 
     spin_unlock_irq(&process_lock, flags);

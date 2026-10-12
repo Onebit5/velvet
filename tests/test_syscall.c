@@ -111,6 +111,13 @@ struct thread *sched_current(void)
     return &me;
 }
 
+/* /proc writes its files through a capture, which nothing here reads */
+struct kcapture;
+void sched_capture(struct kcapture *p_cap)
+{
+    (void)p_cap;
+}
+
 uint64_t pit_uptime_ms(void)
 {
     return 1234;
