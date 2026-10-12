@@ -30,4 +30,25 @@ void klog_printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 void klog_dump(void);
 
+/*
+ * a capture: what one thread prints, held in a buffer instead of going to
+ * the screen, the serial line and the log. it is how a report the kernel
+ * writes for a person, with kprintf, reaches a program as text it can
+ * read, write to a file or pipe somewhere else. `sz_len` counts what was
+ * kept and `b_overflowed` says some of it did not fit
+ */
+struct kcapture {
+    char  *str_buf;
+    size_t sz_size;
+    size_t sz_len;
+    bool   b_overflowed;
+};
+
+/*
+ * who is capturing right now, asked on every character. the answer is the
+ * scheduler's, since only it knows which thread is printing, and NULL
+ * means nobody: print as usual
+ */
+void kprintf_capture_source(struct kcapture *(*fn)(void));
+
 #endif

@@ -50,8 +50,32 @@ void kprintf_serial_filter(bool (*fn)(void))
     serial_wants = fn;
 }
 
+static struct kcapture *(*capturing)(void);
+
+void kprintf_capture_source(struct kcapture *(*fn)(void))
+{
+    capturing = fn;
+}
+
+/* one character into a capture, or counted as lost when it is full. */
+static void capture_put(struct kcapture *p_cap, char c_ch)
+{
+    if (p_cap->sz_len < p_cap->sz_size) {
+        p_cap->str_buf[p_cap->sz_len++] = c_ch;
+    } else {
+        p_cap->b_overflowed = true;
+    }
+}
+
 static void putc_both(char c)
 {
+    /* a report somebody asked for, which is theirs and nobody else's. */
+    struct kcapture *p_cap = (capturing != NULL) ? capturing() : NULL;
+    if (p_cap != NULL) {
+        capture_put(p_cap, c);
+        return;
+    }
+
     /* the serial line is a *second window onto the same seat*, not a fifth console. */
     if (serial_wants == NULL || serial_wants()) {
         serial_putchar(c);

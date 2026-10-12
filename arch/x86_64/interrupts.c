@@ -131,7 +131,28 @@ void irq_install(uint8_t line, void (*handler)(void))
     }
 }
 
+static void interrupt_handle(struct interrupt_frame *f);
+
+/*
+ * every interrupt and exception comes through here, counted on the thread
+ * it interrupted while it is handled. the count is the thread's own
+ * variable, so it is still the right thread's when the handler switched
+ * to another and back before returning
+ */
 void interrupt_dispatch(struct interrupt_frame *f)
+{
+    struct thread *p_thread = sched_current();
+
+    if (p_thread != NULL) {
+        p_thread->u_in_interrupt++;
+    }
+    interrupt_handle(f);
+    if (p_thread != NULL) {
+        p_thread->u_in_interrupt--;
+    }
+}
+
+static void interrupt_handle(struct interrupt_frame *f)
 {
     /*
      * the apic timer arrives on a vector of its own, above the range

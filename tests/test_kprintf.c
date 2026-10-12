@@ -57,6 +57,58 @@ static void check(const char *expect, const char *fmt, ...)
     }
 }
 
+/*
+ * a capture holds what is printed instead of letting it out, keeps what
+ * fits, and says when something did not. and when nobody is capturing,
+ * printing goes where it always went
+ */
+static struct kcapture *s_p_capturing;
+
+static struct kcapture *test_source(void)
+{
+    return s_p_capturing;
+}
+
+static void capture_tests(void)
+{
+    char arr_buf[8];
+    struct kcapture cap = { arr_buf, sizeof arr_buf, 0, false };
+
+    kprintf_capture_source(test_source);
+    memset(out, 0, sizeof(out));
+    pos = 0;
+
+    s_p_capturing = &cap;
+    kprintf("fsck %d", 42);
+    s_p_capturing = NULL;
+    if (cap.sz_len != 7 || memcmp(arr_buf, "fsck 42", 7) != 0
+        || cap.b_overflowed) {
+        printf("FAIL capture: got %zu bytes \"%.*s\"\n", cap.sz_len,
+               (int)cap.sz_len, arr_buf);
+        failures++;
+    }
+    if (pos != 0) {
+        printf("FAIL capture: \"%s\" also went to serial\n", out);
+        failures++;
+    }
+
+    s_p_capturing = &cap;
+    kprintf("ok");
+    s_p_capturing = NULL;
+    if (cap.sz_len != 8 || !cap.b_overflowed || arr_buf[7] != 'o') {
+        printf("FAIL capture overflow: len %zu, overflowed %d\n",
+               cap.sz_len, cap.b_overflowed);
+        failures++;
+    }
+
+    kprintf("out");
+    if (strcmp(out, "out") != 0) {
+        printf("FAIL after capture: serial got \"%s\"\n", out);
+        failures++;
+    }
+    kprintf_capture_source(NULL);
+}
+
 int main(void)
 {
     check("hello", "hello");
@@ -98,6 +150,8 @@ int main(void)
     check("42   |",    "%-05d|", 42);
     check("(null) |",  "%-7s|", (char *)NULL);
     check("a  b  |",   "%-3s%-3s|", "a", "b");
+
+    capture_tests();
 
     if (failures == 0) {
         printf("all good\n");

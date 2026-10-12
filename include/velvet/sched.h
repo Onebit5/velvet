@@ -30,6 +30,13 @@ void sched_tick(void);
 
 struct thread *sched_current(void);
 
+/*
+ * hold everything the running thread prints in `p_cap` until it is called
+ * again with NULL. see struct kcapture
+ */
+struct kcapture;
+void sched_capture(struct kcapture *p_cap);
+
 void sched_add(struct thread *t);
 
 struct waitq {

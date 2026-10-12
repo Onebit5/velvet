@@ -28,6 +28,8 @@ enum thread_state {
     THREAD_DEAD,        /* finished, waiting to be reaped */
 };
 
+struct kcapture;
+
 struct thread {
     uint64_t sp;
 
@@ -68,6 +70,17 @@ struct thread {
     struct thread *wait_next;
 
     int pid;
+
+    /* where this thread's kprintf goes instead of the screen, while set. */
+    struct kcapture *p_capture;
+
+    /*
+     * how many interrupt handlers this thread is inside. a handler runs on
+     * whichever thread it interrupted, so without this its prints would
+     * land in that thread's capture. counted on the thread rather than the
+     * core because a handler can switch threads before it returns
+     */
+    unsigned u_in_interrupt;
 };
 
 const char *thread_state_name(enum thread_state s);

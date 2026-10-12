@@ -70,6 +70,24 @@ struct thread *sched_current(void)
     return current;
 }
 
+/* kprintf's question, answered: the running thread's capture, if any. */
+static struct kcapture *capture_of_current(void)
+{
+    struct thread *p_thread = current;
+    if (p_thread == NULL || p_thread->u_in_interrupt != 0) {
+        return NULL;
+    }
+    return p_thread->p_capture;
+}
+
+void sched_capture(struct kcapture *p_cap)
+{
+    struct thread *p_thread = current;
+    if (p_thread != NULL) {
+        p_thread->p_capture = p_cap;
+    }
+}
+
 static void reap_dead(void);
 
 static void idle_loop(void *arg)
@@ -616,6 +634,9 @@ void sched_init(void)
     if (ME->idle == NULL) {
         panic("could not summon the idle thread. the wheel cannot turn");
     }
+
+    /* and from here on, a thread can hold what it prints. */
+    kprintf_capture_source(capture_of_current);
 }
 
 /* a core other than the first, joining in. */
