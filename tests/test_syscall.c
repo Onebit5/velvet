@@ -417,6 +417,35 @@ bool disk_sync(void)
     s_b_dirty = false;
     return true;
 }
+
+/* a filesystem with one wrong free count, which a mend puts right. */
+#include <velvet/fsck.h>
+
+static bool s_b_fsck_fails;
+
+const char *disk_mount_point(size_t sz_which)
+{
+    return sz_which == DISK_ROOT ? "/" : "/work";
+}
+bool disk_fsck(size_t sz_which, bool b_mend, struct fsck_report *p_out,
+               const char **pp_error)
+{
+    (void)sz_which;
+    if (s_b_fsck_fails) {
+        *pp_error = "the disk would not read";
+        return false;
+    }
+    memset(p_out, 0, sizeof *p_out);
+    p_out->found[FSCK_COUNTS_WRONG] = 1;
+    p_out->mended[FSCK_COUNTS_WRONG] = b_mend ? 1 : 0;
+    p_out->total_found = 1;
+    p_out->total_mended = b_mend ? 1 : 0;
+    p_out->blocks = 8192;
+    p_out->block_size = 1024;
+    p_out->inodes = 2048;
+    p_out->groups = 1;
+    return true;
+}
 bool disk_rmdir(size_t w, const char *path)
 {
     (void)w; (void)path; return disk_is_ready;
@@ -1480,6 +1509,54 @@ int main(void)
     disk_is_ready = true;
     s_b_drive_refuses = false;
     s_b_dirty = false;
+
+    /*
+     * fsck names a filesystem by where it is mounted, and only root may
+     * have it mend anything. what went wrong comes back as words a
+     * program can print, since -1 alone says nothing about why
+     */
+    {
+        struct user_fsck *p_fsck = (struct user_fsck *)(page + 512);
+        uint64_t u_fsck = (uint64_t)p_fsck;
+
+        strcpy(page, "/");
+        CHECK(call5(SYS_FSCK, user_page, 1, 0, u_fsck, 0) == 0,
+              "fsck checks the filesystem at /");
+        CHECK(p_fsck->arr_found[FSCK_COUNTS_WRONG] == 1
+              && p_fsck->arr_mended[FSCK_COUNTS_WRONG] == 0
+              && p_fsck->u_blocks == 8192 && p_fsck->u_block_size == 1024,
+              "and says what it found, mending nothing unasked");
+        CHECK(call5(SYS_FSCK, user_page, 1, FSCK_MEND, u_fsck, 0) == 0
+              && p_fsck->u_total_mended == 1,
+              "and with FSCK_MEND puts it right");
+
+        strcpy(page, "/nowhere");
+        CHECK(call5(SYS_FSCK, user_page, 8, 0, u_fsck, 0) == -1
+              && strstr(p_fsck->arr_why, "mounted") != NULL,
+              "a path nothing is mounted at is refused, and says so");
+
+        strcpy(page, "/");
+        s_b_fsck_fails = true;
+        CHECK(call5(SYS_FSCK, user_page, 1, 0, u_fsck, 0) == -1
+              && strcmp(p_fsck->arr_why, "the disk would not read") == 0,
+              "a check that could not be made says what stopped it");
+        s_b_fsck_fails = false;
+
+        CHECK(call5(SYS_FSCK, user_page, 1, 0, kernel_page, 0) == -1,
+              "and the answer goes nowhere but the caller's memory");
+
+        int i_guest = process_create("guest3", 0, 1000, false, 0);
+        int i_was = me.pid;
+        me.pid = i_guest;
+        CHECK(call5(SYS_FSCK, user_page, 1, FSCK_MEND, u_fsck, 0) == -1
+              && strstr(p_fsck->arr_why, "master") != NULL,
+              "a guest may not have a filesystem mended");
+        CHECK(call5(SYS_FSCK, user_page, 1, 0, u_fsck, 0) == 0,
+              "but may look");
+        me.pid = i_was;
+        process_exited(i_guest, 0, 0);
+        process_collect(i_guest, NULL);
+    }
 
     if (setjmp(jb) == 0) {
         syscall_dispatch(SYS_EXIT, 0, 0, 0, 0, 0, &caller_frame);

@@ -66,6 +66,7 @@ number  name          arguments                                         returns
 52      ALARM         (seconds)                                         seconds left on the last one
 53      SYSLOG        (type, buf, len)                                  bytes copied, the size, or -1
 54      SYNC          ()                                                0, or -1
+55      FSCK          (path, len, flags, user_fsck\*)                   0, or -1
 ======  ============  ================================================  ======================
 
 the kernel side
@@ -74,7 +75,8 @@ the kernel side
 the numbers, ``struct user_stat`` and ``struct user_from`` are in
 ``include/uapi/velvet/syscall.h``, with what the calls take beside it in
 the same directory: the signal numbers in ``signal.h``, the keys
-``getkey`` hands back in ``input.h``, and ``TTYMODE``'s flags in ``tty.h``.
+``getkey`` hands back in ``input.h``, ``TTYMODE``'s flags in ``tty.h``, and
+what ``fsck`` found in ``fsck.h``.
 that directory is the part of the kernel a program compiles against, and
 it includes nothing else of the kernel's. the entry stub, the saved frame
 and the rest of what follows are x86's, in ``<asm/syscall.h>``.
@@ -92,6 +94,8 @@ waiting, rather than asking again in a loop. every one of these takes a timeout 
 the kernel's log, what dmesg reads. the first argument says what to do with it: SYSLOG_SIZE_BUFFER answers how big a buffer the whole log needs, and SYSLOG_READ_ALL copies the newest len bytes of it, oldest first, and leaves it as it was. anyone may read it, as anyone at the shell may run dmesg. the numbers are the ones every dmesg already passes
 
 everything the kernel is holding for the disk, written to it. 0 once the disk holds what the kernel believes, which it already does when nothing was waiting or there is no disk, and -1 when the drive refused part of it
+
+check the filesystem mounted at a path, and with FSCK_MEND put right what has exactly one right answer, which only root may ask. what it found goes in a struct user_fsck, from <velvet/fsck.h>: 0 when the check was made, whatever it found, and -1 when it could not be, with the reason in its arr_why
 
 who a datagram came from, filled in by recvfrom. a struct rather than two more registers because the syscall abi has six and recvfrom would otherwise want seven
 

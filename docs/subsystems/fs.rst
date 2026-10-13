@@ -775,6 +775,11 @@ notice the driver being wrong, which is the one thing it is for.
 ``typedef bool (*fsck_io)(void *ctx, uint64_t lba, uint32_t count, void *buf);``
     how to reach the disk.
 
+``#include <uapi/velvet/fsck.h>``
+    the kinds of problem, ``FSCK_MEND`` and ``struct user_fsck``, which
+    are a program's as much as the kernel's, since a program asking for a
+    check with the ``fsck`` call is the one that names what was found.
+
 ``enum fsck_problem { FSCK_SUPERBLOCK,        /* it does not describe itself consistently */ FSCK_BLOCK_UNMARKED,    /* a file claims a block the bitmap calls free */ FSCK_BLOCK_CROSSED,     /* two files claim the same block */ FSCK_BLOCK_LEAKED,      /* the bitmap says used and nobody claims it */ FSCK_INODE_UNMARKED,    /* a name points at an inode the bitmap calls free */ FSCK_INODE_ORPHANED,    /* in use, and no name points at it */ FSCK_LINKS_WRONG,       /* the count is not the number of names */ FSCK_DIR_NO_DOTS,       /* a directory without . or .. */ FSCK_DIR_BAD_PARENT,    /* .. that is not the parent */ FSCK_DIR_BAD_RECORD,    /* a record whose length walks off the block */ FSCK_EXTENT_BAD,        /* a tree that does not parse */ FSCK_COUNTS_WRONG,      /* a free count that is not the true one */ FSCK_PROBLEMS };``
     what kind of thing was wrong.
 
@@ -789,6 +794,12 @@ notice the driver being wrong, which is the one thing it is for.
 
 ``const char *fsck_problem_name(enum fsck_problem which);``
     one line per kind of problem, for whoever is printing.
+
+a program asks with the ``fsck`` call, naming the filesystem by where it
+is mounted. the counts come back in a ``struct user_fsck``, and when the
+check could not be made, its ``arr_why`` holds the same words ``stopped``
+would have. looking is anyone's; mending, with ``FSCK_MEND``, is root's,
+since it writes the disk.
 
 
 the install interface

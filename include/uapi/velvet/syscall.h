@@ -154,7 +154,15 @@ struct user_stat {
  */
 #define SYS_SYNC      54
 
-#define SYSCALL_COUNT 55
+/*
+ * check the filesystem mounted at a path, and with FSCK_MEND put right
+ * what has exactly one right answer, which only root may ask. what it
+ * found goes in a struct user_fsck, from <velvet/fsck.h>: 0 when the
+ * check was made, whatever it found, and -1 when it could not be
+ */
+#define SYS_FSCK      55
+
+#define SYSCALL_COUNT 56
 
 /*
  * who a datagram came from, filled in by recvfrom. a struct rather than

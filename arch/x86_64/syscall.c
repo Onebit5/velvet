@@ -25,6 +25,7 @@
 #include <velvet/addrspace.h>
 #include <velvet/vfs.h>
 #include <velvet/disk.h>
+#include <velvet/fsck.h>
 #include <velvet/path.h>
 #include <velvet/tty.h>
 #include <velvet/console.h>
@@ -1122,6 +1123,75 @@ static int64_t sys_sync(void)
     return disk_sync() ? 0 : -1;
 }
 
+/* which of the disk's filesystems is mounted at `str_path`, or -1 */
+static int mounted_at(const char *str_path)
+{
+    for (size_t sz_which = 0; sz_which < DISK_MOUNTS; sz_which++) {
+        if (disk_ready(sz_which)
+            && strcmp(disk_mount_point(sz_which), str_path) == 0) {
+            return (int)sz_which;
+        }
+    }
+    return -1;
+}
+
+/* a reason, cut to what fits, for a program to print */
+static void say_why(char *str_why, size_t sz_size, const char *str_reason)
+{
+    strncpy(str_why, str_reason, sz_size - 1);
+    str_why[sz_size - 1] = '\0';
+}
+
+static int64_t sys_fsck(uint64_t u_ptr, uint64_t u_len, uint64_t u_flags,
+                        uint64_t u_out)
+{
+    struct user_fsck *p_out = (struct user_fsck *)u_out;
+    char arr_path[PATH_MAX];
+
+    if (!user_range_writable(u_out, sizeof *p_out)) {
+        return -1;
+    }
+    memset(p_out, 0, sizeof *p_out);
+    if (!copy_path_resolved(u_ptr, u_len, arr_path, sizeof arr_path)) {
+        say_why(p_out->arr_why, sizeof p_out->arr_why, "that is not a path");
+        return -1;
+    }
+
+    bool b_mend = (u_flags & FSCK_MEND) != 0;
+    if (b_mend && process_uid(caller_pid()) != 0) {
+        say_why(p_out->arr_why, sizeof p_out->arr_why,
+                "only the master may mend a filesystem");
+        return -1;
+    }
+    int i_which = mounted_at(arr_path);
+    if (i_which < 0) {
+        say_why(p_out->arr_why, sizeof p_out->arr_why,
+                "no filesystem of the disk's is mounted there");
+        return -1;
+    }
+
+    struct fsck_report r;
+    const char *str_error = NULL;
+    if (!disk_fsck((size_t)i_which, b_mend, &r, &str_error)) {
+        say_why(p_out->arr_why, sizeof p_out->arr_why,
+                str_error != NULL ? str_error : "cannot check it");
+        return -1;
+    }
+    for (int i_kind = 0; i_kind < FSCK_PROBLEMS; i_kind++) {
+        p_out->arr_found[i_kind] = r.found[i_kind];
+        p_out->arr_mended[i_kind] = r.mended[i_kind];
+    }
+    p_out->u_total_found = r.total_found;
+    p_out->u_total_mended = r.total_mended;
+    p_out->u_blocks = r.blocks;
+    p_out->u_inodes = r.inodes;
+    p_out->u_groups = r.groups;
+    p_out->u_block_size = r.block_size;
+    p_out->u_free_blocks = r.free_blocks;
+    p_out->u_free_inodes = r.free_inodes;
+    return 0;
+}
+
 static int64_t sys_mkdir(uint64_t ptr, uint64_t len)
 {
     char path[PATH_MAX];
@@ -1856,6 +1926,8 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
         return sys_syslog(a0, a1, a2);
     case SYS_SYNC:
         return sys_sync();
+    case SYS_FSCK:
+        return sys_fsck(a0, a1, a2, a3);
     case SYS_YIELD:
         sched_yield();
         return 0;

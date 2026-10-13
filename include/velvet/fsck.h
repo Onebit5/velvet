@@ -21,21 +21,8 @@ typedef bool (*fsck_io)(void *ctx, uint64_t lba, uint32_t count, void *buf);
 typedef bool (*fsck_out)(void *ctx, uint64_t lba, uint32_t count,
                          const void *buf);
 
-enum fsck_problem {
-    FSCK_SUPERBLOCK,        /* it does not describe itself consistently */
-    FSCK_BLOCK_UNMARKED,    /* a file claims a block the bitmap calls free */
-    FSCK_BLOCK_CROSSED,     /* two files claim the same block */
-    FSCK_BLOCK_LEAKED,      /* the bitmap says used and nobody claims it */
-    FSCK_INODE_UNMARKED,    /* a name points at an inode the bitmap calls free */
-    FSCK_INODE_ORPHANED,    /* in use, and no name points at it */
-    FSCK_LINKS_WRONG,       /* the count is not the number of names */
-    FSCK_DIR_NO_DOTS,       /* a directory without . or .. */
-    FSCK_DIR_BAD_PARENT,    /* .. that is not the parent */
-    FSCK_DIR_BAD_RECORD,    /* a record whose length walks off the block */
-    FSCK_EXTENT_BAD,        /* a tree that does not parse */
-    FSCK_COUNTS_WRONG,      /* a free count that is not the true one */
-    FSCK_PROBLEMS
-};
+/* the kinds of problem are a program's to name, so they are its header's */
+#include <uapi/velvet/fsck.h>
 
 struct fsck_report {
     uint32_t found[FSCK_PROBLEMS];      /* how many of each kind */
