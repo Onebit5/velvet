@@ -53,6 +53,13 @@ the tests run as guest, the account the kernel does the least for. a test
 can do only what any logged-in user could, and a promise the kernel keeps
 to a guest it keeps to everybody.
 
+the machine has a second drive: a copy of ``disk.img``, the disk ``make
+run`` boots, with the system mounted at ``/`` and a work filesystem at
+``/work`` that is smaller than its partition. the copy is made fresh for
+each run and thrown away after it, so a test that writes leaves nothing
+for the next run to trip on, and a call about filesystems has real ones
+to answer about.
+
 running a subset of selftests
 -----------------------------
 
@@ -73,6 +80,9 @@ named one by one:
 
    python3 tools/testing/selftests/run_kselftest.py velvet.img sched/wait
    python3 tools/testing/selftests/run_kselftest.py --timeout 60 velvet.img x86_64/fault
+   python3 tools/testing/selftests/run_kselftest.py --disk disk.img velvet.img fs/sync
+
+without ``--disk`` the machine has the boot medium and nothing else.
 
 the machine has 2 cpus unless ``CPUS`` says otherwise:
 ``make kselftest CPUS=4``.

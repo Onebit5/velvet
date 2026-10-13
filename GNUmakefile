@@ -1080,17 +1080,17 @@ arch-check:
 boottest: $(BOOTIMG) $(T)/mkext4
 	./tools/boottest.sh $(BOOTIMG)
 
-# the selftests, run where a program is run: the image booted headless,
-# logged in as guest, one `run` each, and every result read back as TAP.
-# needs qemu.
+# the selftests, run where a program is run: the image booted headless
+# with a fresh copy of the disk `make run` boots, logged in as guest, one
+# `run` each, and every result read back as TAP. needs qemu.
 #
 #   make kselftest                  every test
 #   make kselftest TARGETS=sched    the tests of one subsystem
 TARGETS ?= $(sort $(patsubst %/,%,$(dir $(SELFTESTS))))
 
 .PHONY: kselftest
-kselftest: $(BOOTIMG)
-	@python3 $(SELFTEST_DIR)/run_kselftest.py $(BOOTIMG) \
+kselftest: $(BOOTIMG) $(DISK)
+	@python3 $(SELFTEST_DIR)/run_kselftest.py --disk $(DISK) $(BOOTIMG) \
 		$(filter $(addsuffix /%,$(TARGETS)),$(SELFTESTS))
 
 clean:

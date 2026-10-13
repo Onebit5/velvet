@@ -12,7 +12,11 @@ test that takes the kernel down ends the run, because there is no kernel
 left to run the rest on. the whole serial log is kept in
 bin/<image>-kselftest.log either way.
 
-  usage: run_kselftest.py [--timeout SECONDS] IMAGE TEST...
+a --disk is a second drive. the machine gets a copy of it, made fresh
+for each run, so what a test writes is gone afterwards and every run
+starts from the same disk.
+
+  usage: run_kselftest.py [--timeout SECONDS] [--disk DISK] IMAGE TEST...
 
 a TEST is its path under tools/testing/selftests without the .c, which
 is also where it is on the medium, under selftests/.
@@ -20,8 +24,10 @@ is also where it is on the medium, under selftests/.
 
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -36,12 +42,15 @@ PANIC_LINES = re.compile(r"cpu exception|page fault at|double fault|"
 class Machine:
     """qemu with the serial port on a pipe, and what it has said so far."""
 
-    def __init__(self, image, log):
+    def __init__(self, image, log, disk=None):
         cmd = ["qemu-system-x86_64", "-M", "q35", "-m", "1G",
                "-smp", os.environ.get("CPUS", "2"), "-boot", "order=c",
                "-drive", "id=boot,file=%s,format=raw,if=none" % image,
                "-device", "ide-hd,drive=boot,bus=ide.0,bootindex=0",
                "-display", "none", "-serial", "stdio", "-no-reboot"]
+        if disk:
+            cmd += ["-drive", "id=data,file=%s,format=raw,if=none" % disk,
+                    "-device", "ide-hd,drive=data,bus=ide.1"]
         self.out = bytearray()
         self.lock = threading.Lock()
         self.log = open(log, "wb")
@@ -118,16 +127,33 @@ def judge(output):
 def main(argv):
     args = argv[1:]
     timeout = 30
-    if len(args) >= 2 and args[0] == "--timeout":
-        timeout = int(args[1])
+    disk = None
+    while len(args) >= 2 and args[0] in ("--timeout", "--disk"):
+        if args[0] == "--timeout":
+            timeout = int(args[1])
+        else:
+            disk = args[1]
         args = args[2:]
     if len(args) < 1:
-        sys.exit("usage: run_kselftest.py [--timeout SECONDS] IMAGE TEST...")
+        sys.exit("usage: run_kselftest.py [--timeout SECONDS] [--disk DISK] "
+                 "IMAGE TEST...")
     image, tests = args[0], args[1:]
 
     os.makedirs("bin", exist_ok=True)
     log = "bin/%s-kselftest.log" % os.path.splitext(os.path.basename(image))[0]
-    m = Machine(image, log)
+    scratch = tempfile.mkdtemp(prefix="velvet-kselftest-")
+    copy = None
+    if disk:
+        copy = os.path.join(scratch, "disk.img")
+        shutil.copyfile(disk, copy)
+    try:
+        return run(image, tests, timeout, log, copy)
+    finally:
+        shutil.rmtree(scratch)
+
+
+def run(image, tests, timeout, log, disk):
+    m = Machine(image, log, disk)
 
     print("TAP version 13")
     print("1..%d" % len(tests))
