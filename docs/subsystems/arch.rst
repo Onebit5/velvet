@@ -174,6 +174,11 @@ by people porting it.
     void cpu_stop(void)  [noreturn]
     uint64_t cpu_frame_pointer(void)
     uint64_t cpu_stack_pointer(void)
+    void cpu_show(void)
+
+``cpu_show`` writes, with kprintf, what the processors are and which of them
+are awake: what ``cpus`` prints, and ``/proc/cpuinfo``, which ``fs/proc.c``
+registers for every architecture. one with no table of processors says so.
 
 ``<asm/irq.h>``::
 

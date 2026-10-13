@@ -6,7 +6,11 @@
  */
 
 #include <asm/cpuinfo.h>
+#include <asm/cpu.h>
 #include <asm/msr.h>
+#include <asm/smp.h>
+#include <velvet/kprintf.h>
+#include <velvet/sched.h>
 
 void cpu_vendor(char *buf)
 {
@@ -62,4 +66,45 @@ void cpu_brand(char *buf)
         while (buf[lead + i] != '\0') { buf[i] = buf[lead + i]; i++; }
         buf[i] = '\0';
     }
+}
+
+/*
+ * the processors: what they are, which the firmware listed, which woke
+ * and which are taking work. what `cpus` prints and /proc/cpuinfo is
+ */
+void cpu_show(void)
+{
+    char arr_brand[49];
+
+    cpu_brand(arr_brand);
+    kprintf("model name  %s\n\n", arr_brand);
+
+    size_t n = smp_cpu_count();
+    if (n == 0) {
+        kprintf("the firmware never said how many processors this machine "
+                "has,\nso only the one the kernel woke up on is being used.\n");
+        return;
+    }
+
+    kprintf("%-4s %-6s %-8s %s\n", "cpu", "apic", "state", "running");
+    for (size_t i = 0; i < n; i++) {
+        const struct cpu *c = smp_cpu_at(i);
+        const char *what = "halted";
+        if (c->online && c->scheduling) {
+            what = sched_cpu_running(c->index);
+        } else if (c->online) {
+            what = "awake, not scheduling";
+        }
+        kprintf("%-4u %-6u %-8s %s%s\n", c->index, c->apic_id,
+                c->online ? "awake" : "silent", what,
+                (c->online && !c->bootstrap && c->reported_id != c->apic_id)
+                    ? "  (and reported a different apic id!)" : "");
+    }
+
+    kprintf("\n%zu of %zu processors awake, %zu taking work.\n\n",
+            smp_online_count(), n, sched_cores_scheduling());
+    kprintf("these are cores, not threads. `ps` lists threads and now says\n");
+    kprintf("which core each is on, a thread that is merely ready is on\n");
+    kprintf("none of them. there is one run queue and every core picks from\n");
+    kprintf("it, so `summon` a few and they land wherever there is room.\n");
 }

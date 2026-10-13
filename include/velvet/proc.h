@@ -56,7 +56,10 @@ int64_t proc_render(size_t sz_index, char *str_buf, size_t sz_size);
 int64_t proc_read(size_t sz_index, uint64_t u_offset, void *p_buf,
                   uint64_t u_len);
 
-/* the files /proc has of its own: the version and the uptime. */
+/*
+ * the files /proc has of its own: the version, the uptime, and cpuinfo,
+ * which the architecture writes
+ */
 void proc_init(void);
 
 #endif

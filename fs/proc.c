@@ -6,6 +6,7 @@
  */
 
 #include <velvet/proc.h>
+#include <asm/cpu.h>
 #include <velvet/kmalloc.h>
 #include <velvet/kprintf.h>
 #include <velvet/pit.h>
@@ -121,4 +122,5 @@ void proc_init(void)
 {
     proc_register("version", PROC_PUBLIC, show_version);
     proc_register("uptime", PROC_PUBLIC, show_uptime);
+    proc_register("cpuinfo", PROC_PUBLIC, cpu_show);
 }

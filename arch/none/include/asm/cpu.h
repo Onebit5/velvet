@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include <velvet/compiler.h>
+#include <velvet/kprintf.h>
 
 /*
  * one core, which is not a core. the number is 1 rather than something
@@ -53,5 +54,11 @@ ARCH_INLINE uint64_t cpu_stack_pointer(void)
 }
 
 void cpu_stop(void) __attribute__((noreturn));
+
+/* the processors, of which a machine with no architecture has no table. */
+ARCH_INLINE void cpu_show(void)
+{
+    kprintf("this machine has no table of processors to read\n");
+}
 
 #endif

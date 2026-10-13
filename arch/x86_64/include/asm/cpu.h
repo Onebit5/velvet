@@ -66,6 +66,11 @@ ARCH_INLINE uint64_t cpu_stack_pointer(void)
  * the shape of every arch leak: a portable file carrying two answers
  * because nowhere else was willing to hold them
  */
+/* a host has no table of processors this kernel should describe. */
+ARCH_INLINE void cpu_show(void)
+{
+}
+
 ARCH_INLINE uint32_t cpu_id(void)
 {
     static _Thread_local uint32_t id;
@@ -130,5 +135,13 @@ ARCH_INLINE uint64_t cpu_stack_pointer(void)
  * a host test that reached this really should stop too
  */
 void cpu_stop(void) __attribute__((noreturn));
+
+#ifndef VELVETOS_HOSTED
+/*
+ * the processors: what they are, which the firmware listed, which woke
+ * and which are taking work. what `cpus` prints and /proc/cpuinfo is
+ */
+void cpu_show(void);
+#endif
 
 #endif

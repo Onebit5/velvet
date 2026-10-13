@@ -861,41 +861,7 @@ static void cmd_locks(int argc, char **argv)
 static void cmd_cpus(int argc, char **argv)
 {
     (void)argc; (void)argv;
-
-#if !defined(VELVETOS_ARCH_X86_64)
-    kprintf("this machine has no firmware table of processors to read. "
-            "%zu core%s scheduling\n", sched_cores_scheduling(),
-            sched_cores_scheduling() == 1 ? " is" : "s are");
-#else
-    size_t n = smp_cpu_count();
-    if (n == 0) {
-        kprintf("the firmware never said how many processors this machine "
-                "has,\nso only the one the kernel woke up on is being used.\n");
-        return;
-    }
-
-    kprintf("%-4s %-6s %-8s %s\n", "cpu", "apic", "state", "running");
-    for (size_t i = 0; i < n; i++) {
-        const struct cpu *c = smp_cpu_at(i);
-        const char *what = "halted";
-        if (c->online && c->scheduling) {
-            what = sched_cpu_running(c->index);
-        } else if (c->online) {
-            what = "awake, not scheduling";
-        }
-        kprintf("%-4u %-6u %-8s %s%s\n", c->index, c->apic_id,
-                c->online ? "awake" : "silent", what,
-                (c->online && !c->bootstrap && c->reported_id != c->apic_id)
-                    ? "  (and reported a different apic id!)" : "");
-    }
-
-    kprintf("\n%zu of %zu processors awake, %zu taking work.\n\n",
-            smp_online_count(), n, sched_cores_scheduling());
-    kprintf("these are cores, not threads. `ps` lists threads and now says\n");
-    kprintf("which core each is on, a thread that is merely ready is on\n");
-    kprintf("none of them. there is one run queue and every core picks from\n");
-    kprintf("it, so `summon` a few and they land wherever there is room.\n");
-#endif
+    cpu_show();
 }
 
 /* mount a particular partition instead of whichever answered first. */

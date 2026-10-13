@@ -100,17 +100,19 @@ int main(void)
           "an empty one is fine, and so is root's own");
     CHECK(!proc_find("nothing", &sz_index), "a name nobody registered");
 
-    CHECK(strcmp(proc_name(2), "greeting") == 0, "listed by its name");
-    CHECK(proc_name(4) == NULL, "and the listing ends");
-    CHECK(proc_mode(2) == 0444 && proc_mode(3) == 0400,
+    CHECK(proc_find("cpuinfo", &sz_index) && sz_index == 2,
+          "and cpuinfo, which the architecture writes, the third");
+    CHECK(strcmp(proc_name(3), "greeting") == 0, "listed by its name");
+    CHECK(proc_name(5) == NULL, "and the listing ends");
+    CHECK(proc_mode(3) == 0444 && proc_mode(4) == 0400,
           "each keeps the mode it was registered with");
     CHECK(proc_mode(9) == 0, "and one that does not exist has none");
 
-    int64_t i_len = proc_render(2, arr_text, sizeof arr_text);
+    int64_t i_len = proc_render(3, arr_text, sizeof arr_text);
     CHECK(i_len == 31 && memcmp(arr_text, "hello from the kernel, 1 lines\n",
                                 31) == 0, "its text is what it printed");
     CHECK(s_p_capture == NULL, "and printing goes back to normal after");
-    CHECK(proc_render(3, arr_text, sizeof arr_text) == 0,
+    CHECK(proc_render(4, arr_text, sizeof arr_text) == 0,
           "a file that says nothing is empty");
     CHECK(proc_render(9, arr_text, sizeof arr_text) == -1,
           "a file that does not exist cannot be written");
@@ -127,7 +129,7 @@ int main(void)
     char arr_whole[64];
     size_t sz_at = 0;
     for (;;) {
-        int64_t i_got = proc_read(2, sz_at, arr_piece, 5);
+        int64_t i_got = proc_read(3, sz_at, arr_piece, 5);
         if (i_got <= 0) {
             CHECK(i_got == 0, "the end is a read of nothing");
             break;
@@ -137,7 +139,7 @@ int main(void)
     }
     CHECK(sz_at == 31 && memcmp(arr_whole, "hello from the kernel, 1 lines\n",
                                 31) == 0, "five bytes at a time adds up");
-    CHECK(proc_read(2, 1000, arr_piece, 5) == 0, "past the end, nothing");
+    CHECK(proc_read(3, 1000, arr_piece, 5) == 0, "past the end, nothing");
     CHECK(proc_read(9, 0, arr_piece, 5) == -1, "no such file, no read");
 
     if (s_i_failures == 0) {
