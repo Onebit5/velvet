@@ -24,6 +24,7 @@
 #include <velvet/usermode.h>
 #include <velvet/addrspace.h>
 #include <velvet/vfs.h>
+#include <velvet/disk.h>
 #include <velvet/path.h>
 #include <velvet/tty.h>
 #include <velvet/console.h>
@@ -1113,6 +1114,14 @@ static int64_t sys_syslog(uint64_t u_type, uint64_t u_ptr, uint64_t u_len)
     return (int64_t)sz_got;
 }
 
+static int64_t sys_sync(void)
+{
+    if (!disk_ready(DISK_ROOT) || !disk_dirty()) {
+        return 0;
+    }
+    return disk_sync() ? 0 : -1;
+}
+
 static int64_t sys_mkdir(uint64_t ptr, uint64_t len)
 {
     char path[PATH_MAX];
@@ -1845,6 +1854,8 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
         return (int64_t)pit_uptime_ms();
     case SYS_SYSLOG:
         return sys_syslog(a0, a1, a2);
+    case SYS_SYNC:
+        return sys_sync();
     case SYS_YIELD:
         sched_yield();
         return 0;

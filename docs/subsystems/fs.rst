@@ -244,6 +244,10 @@ it is a promise broken on purpose: until one of those happens, what is on
 the disk is not what the machine believes. power going out at the wrong
 moment loses work, which is why unix has had ``sync`` since 1971.
 
+a program says it with the ``sync`` call, which asks the drive only when
+something is waiting: 0 once the disk holds what the kernel does, and -1
+when the drive refused part of it.
+
 partitions
 ----------
 

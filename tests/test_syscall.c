@@ -398,6 +398,25 @@ bool disk_mkdir(size_t w, const char *path)
 {
     (void)w; (void)path; return disk_is_ready;
 }
+
+/* a write-back cache with something in it, or not, and a drive to take it. */
+static bool s_b_dirty;
+static bool s_b_drive_refuses;
+static int s_i_syncs;
+
+bool disk_dirty(void)
+{
+    return s_b_dirty;
+}
+bool disk_sync(void)
+{
+    s_i_syncs++;
+    if (s_b_drive_refuses) {
+        return false;
+    }
+    s_b_dirty = false;
+    return true;
+}
 bool disk_rmdir(size_t w, const char *path)
 {
     (void)w; (void)path; return disk_is_ready;
@@ -1439,6 +1458,28 @@ int main(void)
           "the kernel's own memory is refused");
     CHECK(call3(SYS_SYSLOG, 0, user_page, 64) == -1,
           "and so is anything it does not know how to do");
+
+    /*
+     * sync asks the drive only when something is waiting, and fails
+     * only when the drive refuses. no disk is nothing to lose
+     */
+    s_b_dirty = false;
+    s_i_syncs = 0;
+    CHECK(call3(SYS_SYNC, 0, 0, 0) == 0 && s_i_syncs == 0,
+          "sync with nothing waiting leaves the drive alone");
+    s_b_dirty = true;
+    CHECK(call3(SYS_SYNC, 0, 0, 0) == 0 && s_i_syncs == 1 && !s_b_dirty,
+          "and writes out what is");
+    s_b_dirty = true;
+    s_b_drive_refuses = true;
+    CHECK(call3(SYS_SYNC, 0, 0, 0) == -1,
+          "a drive that refuses is a sync that failed");
+    disk_is_ready = false;
+    CHECK(call3(SYS_SYNC, 0, 0, 0) == 0,
+          "and with no disk there is nothing anywhere to lose");
+    disk_is_ready = true;
+    s_b_drive_refuses = false;
+    s_b_dirty = false;
 
     if (setjmp(jb) == 0) {
         syscall_dispatch(SYS_EXIT, 0, 0, 0, 0, 0, &caller_frame);

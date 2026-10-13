@@ -146,7 +146,15 @@ struct user_stat {
 #define SYSLOG_READ_ALL    3
 #define SYSLOG_SIZE_BUFFER 10
 
-#define SYSCALL_COUNT 54
+/*
+ * everything the kernel is holding for the disk, written to it. 0 once
+ * the disk holds what the kernel believes, which it already does when
+ * nothing was waiting or there is no disk, and -1 when the drive
+ * refused part of it
+ */
+#define SYS_SYNC      54
+
+#define SYSCALL_COUNT 55
 
 /*
  * who a datagram came from, filled in by recvfrom. a struct rather than

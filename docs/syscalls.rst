@@ -65,6 +65,7 @@ number  name          arguments                                         returns
 51      NOW           ()                                                seconds since 1970, or 0 if unknown
 52      ALARM         (seconds)                                         seconds left on the last one
 53      SYSLOG        (type, buf, len)                                  bytes copied, the size, or -1
+54      SYNC          ()                                                0, or -1
 ======  ============  ================================================  ======================
 
 the kernel side
@@ -89,6 +90,8 @@ three calls are the smallest set that lets a program use udp: claim a port, send
 waiting, rather than asking again in a loop. every one of these takes a timeout in milliseconds, 0 to look and move on, which is exactly what recvfrom did before, and negative to wait as long as it takes
 
 the kernel's log, what dmesg reads. the first argument says what to do with it: SYSLOG_SIZE_BUFFER answers how big a buffer the whole log needs, and SYSLOG_READ_ALL copies the newest len bytes of it, oldest first, and leaves it as it was. anyone may read it, as anyone at the shell may run dmesg. the numbers are the ones every dmesg already passes
+
+everything the kernel is holding for the disk, written to it. 0 once the disk holds what the kernel believes, which it already does when nothing was waiting or there is no disk, and -1 when the drive refused part of it
 
 who a datagram came from, filled in by recvfrom. a struct rather than two more registers because the syscall abi has six and recvfrom would otherwise want seven
 
