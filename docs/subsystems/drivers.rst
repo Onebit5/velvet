@@ -160,7 +160,9 @@ configuration space whose first few fields are the same for all of them: who
 made it, what it is, and roughly what sort of thing that makes it. that is
 the doorway to every real driver; you cannot write to a disk you have not
 found. the config-space reader is a function pointer so a test can supply its
-own machine.
+own machine. what the scan found is ``pciinfo.c``'s to say: ``pci_show``
+writes the list ``lspci`` prints, and ``/proc/pci`` is the same list for a
+program.
 
 ``ahci.c`` is the sata controller, and it is nothing like the old ide
 interface it replaced: you do not write a command to a register and wait, you

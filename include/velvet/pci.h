@@ -49,6 +49,12 @@ size_t pci_scan_with(pci_reader read);
 /* the same, against the real hardware */
 void pci_scan(void);
 
+/* every device the scan found, as `lspci` prints it and /proc/pci is. */
+void pci_show(void);
+
+/* /proc/pci. */
+void pci_proc_init(void);
+
 size_t pci_count(void);
 const struct pci_device *pci_at(size_t index);
 

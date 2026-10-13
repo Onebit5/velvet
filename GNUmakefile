@@ -747,7 +747,8 @@ $(T)/serial:   tests/test_serial.c   drivers/serial.c \
 # so that what `init` prints is what init would actually have decided
 $(T)/shell:    tests/test_shell.c    lib/string.c \
                fs/ramdisk.c sched/auth.c \
-               drivers/pci.c fs/vfs.c fs/proc.c mm/meminfo.c \
+               drivers/pci.c drivers/pciinfo.c fs/vfs.c \
+               fs/proc.c mm/meminfo.c \
                fs/source.c \
                sched/spinlock.c fs/path.c \
                lib/env.c sched/init.c \
@@ -761,7 +762,8 @@ $(T)/shell:    tests/test_shell.c    lib/string.c \
                shell/shell.c
 $(T)/shell:    SRCS = tests/test_shell.c lib/string.c \
                       fs/ramdisk.c sched/auth.c \
-                      drivers/pci.c fs/vfs.c fs/proc.c mm/meminfo.c \
+                      drivers/pci.c drivers/pciinfo.c fs/vfs.c \
+                      fs/proc.c mm/meminfo.c \
                       fs/source.c \
                       sched/spinlock.c fs/path.c \
                       lib/env.c sched/init.c \

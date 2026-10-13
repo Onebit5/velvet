@@ -10,6 +10,7 @@
 #include <stdbool.h>
 #include <velvet/proc.h>
 #include <velvet/meminfo.h>
+#include <velvet/pci.h>
 #include <velvet/epoch.h>
 #include <velvet/rtc.h>
 #include <velvet/boot.h>
@@ -217,6 +218,7 @@ void kmain(const struct ph_handoff *handoff)
     proc_init();
     mm_proc_init();
     sched_proc_init();
+    pci_proc_init();
 
     /*
      * and the source it was all built from, which is on the medium
