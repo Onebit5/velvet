@@ -14,7 +14,10 @@ void mm_show_meminfo(void);
 /* every object cache, and what it holds against what it is using. */
 void mm_show_slabinfo(void);
 
-/* /proc/meminfo and /proc/slabinfo, which are these two. */
+/*
+ * /proc/meminfo and /proc/slabinfo, which are these two, and /proc/vmm,
+ * root's, which is vmm_show
+ */
 void mm_proc_init(void);
 
 #endif

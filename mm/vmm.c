@@ -267,6 +267,7 @@ bool vmm_unmap_page(uint64_t pml4, uint64_t virt)
 #include <asm/mmu.h>
 #include <asm/cpu.h>
 #include <velvet/boot.h>
+#include <velvet/kmalloc.h>
 
 void kmain(void);   /* just for its address, to check .text is mapped */
 
@@ -466,6 +467,31 @@ void vmm_dump(uint64_t virt)
             (f & PTE_WRITE)   ? 'w' : '-',
             (f & PTE_NX)      ? '-' : 'x',
             (f & PTE_HUGE)    ? "  (2MiB page)" : "");
+}
+
+void vmm_show(void)
+{
+    /* the shape of the address space, by pointing at one thing of each kind. */
+    kprintf("pml4 at %p\n", (void *)vmm_kernel_pml4());
+
+    kprintf("code (this very function):\n");
+    vmm_dump((uint64_t)(uintptr_t)vmm_show);
+
+    kprintf("a string constant:\n");
+    vmm_dump((uint64_t)(uintptr_t)"velvet");
+
+    void *p_heap = kmalloc(64);
+    if (p_heap != NULL) {
+        kprintf("the heap:\n");
+        vmm_dump((uint64_t)(uintptr_t)p_heap);
+        kfree(p_heap);
+    }
+
+    kprintf("this thread's stack:\n");
+    vmm_dump(cpu_stack_pointer());
+
+    kprintf("and somewhere nobody lives:\n");
+    vmm_dump(0x0000dead00000000ull);
 }
 
 #endif /* VELVETOS_HOSTED */

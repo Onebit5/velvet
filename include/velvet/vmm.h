@@ -70,4 +70,11 @@ void vmm_flush_page(uint64_t virt);
 
 void vmm_dump(uint64_t virt);
 
+/*
+ * the kernel's page tables, shown by where one of each kind of thing
+ * lands: code, a constant, the heap, a stack, and nowhere. /proc/vmm,
+ * root's, and the shell's `vmm` with no address
+ */
+void vmm_show(void);
+
 #endif

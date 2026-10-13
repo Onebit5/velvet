@@ -12,6 +12,7 @@
 #include <velvet/pressure.h>
 #include <velvet/proc.h>
 #include <velvet/slab.h>
+#include <velvet/vmm.h>
 
 /* the frames, what a program may still have, and the heap on top of them. */
 void mm_show_meminfo(void)
@@ -82,4 +83,5 @@ void mm_proc_init(void)
 {
     proc_register("meminfo", PROC_PUBLIC, mm_show_meminfo);
     proc_register("slabinfo", PROC_PUBLIC, mm_show_slabinfo);
+    proc_register("vmm", PROC_PRIVATE, vmm_show);
 }

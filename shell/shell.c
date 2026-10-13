@@ -1065,27 +1065,7 @@ static void cmd_vmm(int argc, char **argv)
         return;
     }
 
-    /* no argument: show the shape of the address space by pointing at one thing of each kind. */
-    kprintf("pml4 at %p\n", (void *)vmm_kernel_pml4());
-
-    kprintf("code (this very function):\n");
-    vmm_dump((uint64_t)(uintptr_t)cmd_vmm);
-
-    kprintf("a string constant:\n");
-    vmm_dump((uint64_t)(uintptr_t)"velvet");
-
-    void *heap = kmalloc(64);
-    if (heap != NULL) {
-        kprintf("the heap:\n");
-        vmm_dump((uint64_t)(uintptr_t)heap);
-        kfree(heap);
-    }
-
-    kprintf("this thread's stack:\n");
-    vmm_dump(cpu_stack_pointer());
-
-    kprintf("and somewhere nobody lives:\n");
-    vmm_dump(0x0000dead00000000ull);
+    vmm_show();
 }
 
 /* recurse until the stack runs out. */

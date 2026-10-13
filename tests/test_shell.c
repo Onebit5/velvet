@@ -917,6 +917,10 @@ size_t pipe_count(void)
 {
     return 0;
 }
+void vmm_show(void)
+{
+}
+
 void vmm_dump(uint64_t v)
 {
     kprintf("<VMM %#lx>", v);

@@ -214,7 +214,10 @@ program, which is not the same number as the free count.
 the same words are ``/proc/meminfo``, and ``slabs``, every object cache
 with what it holds against what it uses, is ``/proc/slabinfo``.
 ``mm/meminfo.c`` writes both, so a person at the shell and a program
-reading the file are told the same thing.
+reading the file are told the same thing. ``/proc/vmm`` is what ``vmm``
+prints with no address, the kernel's page tables shown by where one of
+each kind of thing lands, and it is root's alone, since it is a map of
+where the kernel keeps things.
 
 the addrspace interface
 -----------------------
