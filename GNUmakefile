@@ -748,7 +748,7 @@ $(T)/serial:   tests/test_serial.c   drivers/serial.c \
 $(T)/shell:    tests/test_shell.c    lib/string.c \
                fs/ramdisk.c sched/auth.c \
                drivers/pci.c drivers/pciinfo.c fs/vfs.c \
-               fs/proc.c mm/meminfo.c \
+               fs/proc.c fs/diskinfo.c mm/meminfo.c \
                fs/source.c \
                sched/spinlock.c fs/path.c \
                lib/env.c sched/init.c \
@@ -763,7 +763,7 @@ $(T)/shell:    tests/test_shell.c    lib/string.c \
 $(T)/shell:    SRCS = tests/test_shell.c lib/string.c \
                       fs/ramdisk.c sched/auth.c \
                       drivers/pci.c drivers/pciinfo.c fs/vfs.c \
-                      fs/proc.c mm/meminfo.c \
+                      fs/proc.c fs/diskinfo.c mm/meminfo.c \
                       fs/source.c \
                       sched/spinlock.c fs/path.c \
                       lib/env.c sched/init.c \

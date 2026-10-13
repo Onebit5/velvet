@@ -69,6 +69,12 @@ guest's.
 ``/proc`` has ``version``, which kernel this is, and ``uptime``, seconds
 since boot to the hundredth. the rest are each subsystem's own.
 
+the filesystem's own are written by ``diskinfo.c``: ``disk``, the drive
+with every filesystem on it and what the block cache is holding;
+``partitions``, what each drive's table says it has; and ``mounts``, which
+filesystem is where. ``disk``, ``parts`` and ``mount`` in the shell call
+the same three functions, so the screen and the file cannot drift apart.
+
 the ramdisk
 -----------
 
@@ -550,6 +556,29 @@ file says which of them it means.
 
 ``const char *disk_label(size_t which);``
     what to tell the user about it
+
+
+the diskinfo interface
+------------------------
+
+the disk and the namespace, described. each call writes with kprintf, so
+it lands on the screen for the shell and in the reader's buffer for
+``/proc``.
+
+``void disk_show(void);``
+    the drive, every filesystem on it, and the block cache: what ``disk``
+    prints, and ``/proc/disk``
+
+``void disk_show_partitions(void);``
+    what each drive's partition table says it holds: ``parts``, and
+    ``/proc/partitions``
+
+``void vfs_show_mounts(void);``
+    which filesystem is where: ``mount`` with nothing after it, and
+    ``/proc/mounts``
+
+``void fs_proc_init(void);``
+    registers those three, for anyone to read
 
 
 the fat32 interface
