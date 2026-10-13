@@ -109,8 +109,63 @@ static void capture_tests(void)
     kprintf_capture_source(NULL);
 }
 
+/*
+ * the log hands back its newest bytes, oldest first, before it has gone
+ * round and after, and a copy takes nothing out of it. this has to run
+ * first, while the log holds nothing but what it writes
+ */
+static char s_arr_log[KLOG_SIZE + 64];
+
+static bool no_serial(void)
+{
+    return false;
+}
+
+static void fail_klog(const char *str_what)
+{
+    printf("FAIL klog: %s\n", str_what);
+    failures++;
+}
+
+static void klog_tests(void)
+{
+    char arr_buf[64];
+
+    /* the serial stub has room for a line, not for a whole log */
+    kprintf_serial_filter(no_serial);
+
+    kwrite("boot", 4);
+    if (klog_copy(arr_buf, sizeof arr_buf) != 4
+        || memcmp(arr_buf, "boot", 4) != 0) {
+        fail_klog("a log that has not gone round gives what it holds");
+    }
+    if (klog_copy(arr_buf, 2) != 2 || memcmp(arr_buf, "ot", 2) != 0) {
+        fail_klog("a short buffer gets the newest of it");
+    }
+
+    /* round once and six bytes past where "boot" began */
+    for (size_t sz_i = 0; sz_i < KLOG_SIZE - 2; sz_i++) {
+        kwrite("x", 1);
+    }
+    kwrite("tail", 4);
+
+    for (int i_pass = 0; i_pass < 2; i_pass++) {
+        if (klog_copy(s_arr_log, sizeof s_arr_log) != KLOG_SIZE) {
+            fail_klog("a log that has gone round holds exactly its size");
+        }
+        if (s_arr_log[0] != 'x'
+            || memcmp(s_arr_log + KLOG_SIZE - 4, "tail", 4) != 0) {
+            fail_klog("oldest first, ending with the last thing written");
+        }
+    }
+
+    kprintf_serial_filter(NULL);
+}
+
 int main(void)
 {
+    klog_tests();
+
     check("hello", "hello");
     check("42", "%d", 42);
     check("-42", "%d", -42);

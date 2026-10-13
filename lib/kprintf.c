@@ -15,12 +15,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-/*
- * a ring of everything printed, so quieting the screen doesnt actually
- * throw anything away. 32k is a few hundred lines, which covers boot
- * and then some
- */
-#define KLOG_SIZE (32 * 1024)
 /* so two cores do not interleave halfway through a word. */
 static struct spinlock print_lock = SPINLOCK("print", LOCK_RANK_PRINT);
 
@@ -122,6 +116,26 @@ void klog_dump(void)
     for (size_t i = 0; i < count; i++) {
         console_putchar(klog[(start + i) % KLOG_SIZE]);
     }
+}
+
+size_t klog_copy(char *str_buf, size_t sz_size)
+{
+    /*
+     * under the print lock, so a line another core is halfway through
+     * is either all there or not there yet
+     */
+    uint64_t u_flags = spin_lock_irq(&print_lock);
+
+    size_t sz_held = klog_wrapped ? KLOG_SIZE : klog_head;
+    size_t sz_count = (sz_size < sz_held) ? sz_size : sz_held;
+    size_t sz_start = (klog_head + KLOG_SIZE - sz_count) % KLOG_SIZE;
+
+    for (size_t sz_i = 0; sz_i < sz_count; sz_i++) {
+        str_buf[sz_i] = klog[(sz_start + sz_i) % KLOG_SIZE];
+    }
+
+    spin_unlock_irq(&print_lock, u_flags);
+    return sz_count;
 }
 
 /* print an unsigned number in the given base, right aligned to width. */

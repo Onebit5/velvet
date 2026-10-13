@@ -31,6 +31,14 @@ four shells writing down one wire is four conversations in one column.
 something worth recording that arrives when the screen belongs to somebody
 else.
 
+a program reads the log with the ``syslog`` call, which ``klog_copy()``
+answers: the newest bytes, as many as the caller has room for, copied
+under the print lock so a line another core is halfway through is either
+all there or not yet. the copy goes into a buffer of the kernel's first
+and to the program's after the lock is let go, since a write to a user
+page can fault and nobody should take a fault with every core's printing
+held up.
+
 the format strings are checked against what this file actually implements,
 not against real printf: gcc checks a format string against *real* printf,
 which accepts far more than this does. a ``%-7s`` slipped through once,
@@ -267,6 +275,11 @@ port.
 
 ``void klog_dump(void)``
     everything kprintf has printed, oldest first. this is what ``dmesg`` is.
+
+``size_t klog_copy(char *str_buf, size_t sz_size)``
+    the newest ``sz_size`` bytes of the log, oldest first, into
+    ``str_buf``: how many that was. the log is left as it was, so every
+    reader sees all of it.
 
 
 the ksyms interface

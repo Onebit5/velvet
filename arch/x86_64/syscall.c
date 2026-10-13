@@ -1088,6 +1088,31 @@ static int64_t sys_getcwd(uint64_t ptr, uint64_t len)
     return (int64_t)n;
 }
 
+/*
+ * the log is copied into a buffer of the kernel's under the print lock,
+ * and only then to the caller: a write to a user page can fault, and a
+ * fault is not something to take with every core's printing stopped
+ */
+static int64_t sys_syslog(uint64_t u_type, uint64_t u_ptr, uint64_t u_len)
+{
+    if (u_type == SYSLOG_SIZE_BUFFER) {
+        return KLOG_SIZE;
+    }
+    if (u_type != SYSLOG_READ_ALL || !user_range_writable(u_ptr, u_len)) {
+        return -1;
+    }
+
+    char *str_log = kmalloc(KLOG_SIZE);
+    if (str_log == NULL) {
+        return -1;
+    }
+    size_t sz_want = (u_len < KLOG_SIZE) ? (size_t)u_len : KLOG_SIZE;
+    size_t sz_got = klog_copy(str_log, sz_want);
+    memcpy((void *)u_ptr, str_log, sz_got);
+    kfree(str_log);
+    return (int64_t)sz_got;
+}
+
 static int64_t sys_mkdir(uint64_t ptr, uint64_t len)
 {
     char path[PATH_MAX];
@@ -1818,6 +1843,8 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
         return process_uid(caller_pid());
     case SYS_UPTIME:
         return (int64_t)pit_uptime_ms();
+    case SYS_SYSLOG:
+        return sys_syslog(a0, a1, a2);
     case SYS_YIELD:
         sched_yield();
         return 0;

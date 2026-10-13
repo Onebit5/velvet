@@ -194,6 +194,15 @@ static inline int64_t ksft_read_file(const char *str_path, char *str_buf,
     return (int64_t)sz_len;
 }
 
+/*
+ * the kernel's log: SYSLOG_SIZE_BUFFER for how big all of it is, or
+ * SYSLOG_READ_ALL for the newest `i_len` bytes of it in `str_buf`
+ */
+static inline int64_t klogctl(int i_type, char *str_buf, int64_t i_len)
+{
+    return ksft_syscall(SYS_SYSLOG, i_type, (int64_t)str_buf, i_len);
+}
+
 /* whether `str_needle` is somewhere in the first `i_len` bytes of `str_text` */
 static inline bool ksft_contains(const char *str_text, int64_t i_len,
                                  const char *str_needle)

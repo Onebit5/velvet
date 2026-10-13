@@ -134,7 +134,19 @@ struct user_stat {
 #define SYS_NOW       51
 #define SYS_ALARM     52
 
-#define SYSCALL_COUNT 53
+/*
+ * the kernel's log, what dmesg reads. the first argument says what to
+ * do with it: SYSLOG_SIZE_BUFFER answers how big a buffer the whole log
+ * needs, and SYSLOG_READ_ALL copies the newest len bytes of it, oldest
+ * first, and leaves it as it was. the numbers are the ones every dmesg
+ * already passes
+ */
+#define SYS_SYSLOG    53
+
+#define SYSLOG_READ_ALL    3
+#define SYSLOG_SIZE_BUFFER 10
+
+#define SYSCALL_COUNT 54
 
 /*
  * who a datagram came from, filled in by recvfrom. a struct rather than

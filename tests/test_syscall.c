@@ -118,6 +118,20 @@ void sched_capture(struct kcapture *p_cap)
     (void)p_cap;
 }
 
+/* the kernel's log, as far as syslog can tell. */
+#include <velvet/kprintf.h>
+
+static const char s_str_klog[] = "philemon handed over\nvelvet is up\n";
+
+size_t klog_copy(char *str_buf, size_t sz_size)
+{
+    size_t sz_held = sizeof s_str_klog - 1;
+    size_t sz_count = (sz_size < sz_held) ? sz_size : sz_held;
+
+    memcpy(str_buf, s_str_klog + sz_held - sz_count, sz_count);
+    return sz_count;
+}
+
 uint64_t pit_uptime_ms(void)
 {
     return 1234;
@@ -1407,6 +1421,24 @@ int main(void)
                            0xffff800000000000ull, 64, 0, &caller_frame) == -1,
           "and recvfrom refuses to write into one");
 
+
+    /*
+     * the log goes to whoever asks, copied out rather than handed over,
+     * and only into memory the caller may write
+     */
+    CHECK(call3(SYS_SYSLOG, SYSLOG_SIZE_BUFFER, 0, 0) == KLOG_SIZE,
+          "syslog says how big a buffer the whole log needs");
+    memset(page, 0, 64);
+    CHECK(call3(SYS_SYSLOG, SYSLOG_READ_ALL, user_page, 64)
+          == (int64_t)strlen(s_str_klog),
+          "and reads all of it into a buffer big enough");
+    CHECK(strcmp(page, s_str_klog) == 0, "word for word");
+    CHECK(call3(SYS_SYSLOG, SYSLOG_READ_ALL, user_page, 0) == 0,
+          "an empty buffer takes nothing, and that is not a failure");
+    CHECK(call3(SYS_SYSLOG, SYSLOG_READ_ALL, kernel_page, 64) == -1,
+          "the kernel's own memory is refused");
+    CHECK(call3(SYS_SYSLOG, 0, user_page, 64) == -1,
+          "and so is anything it does not know how to do");
 
     if (setjmp(jb) == 0) {
         syscall_dispatch(SYS_EXIT, 0, 0, 0, 0, 0, &caller_frame);
