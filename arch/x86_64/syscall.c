@@ -1192,6 +1192,63 @@ static int64_t sys_fsck(uint64_t u_ptr, uint64_t u_len, uint64_t u_flags,
     return 0;
 }
 
+static int64_t sys_resize(uint64_t u_ptr, uint64_t u_len, uint64_t u_blocks,
+                          uint64_t u_out)
+{
+    struct user_resize *p_out = (struct user_resize *)u_out;
+    char arr_path[PATH_MAX];
+
+    if (!user_range_writable(u_out, sizeof *p_out)) {
+        return -1;
+    }
+    memset(p_out, 0, sizeof *p_out);
+    if (!copy_path_resolved(u_ptr, u_len, arr_path, sizeof arr_path)) {
+        say_why(p_out->arr_why, sizeof p_out->arr_why, "that is not a path");
+        return -1;
+    }
+    if (process_uid(caller_pid()) != 0) {
+        say_why(p_out->arr_why, sizeof p_out->arr_why,
+                "only the master may change the size of a filesystem");
+        return -1;
+    }
+    int i_which = mounted_at(arr_path);
+    if (i_which < 0) {
+        say_why(p_out->arr_why, sizeof p_out->arr_why,
+                "no filesystem of the disk's is mounted there");
+        return -1;
+    }
+
+    size_t sz_which = (size_t)i_which;
+    p_out->u_room = disk_room(sz_which);
+    p_out->u_ceiling = disk_ceiling(sz_which);
+    p_out->u_block_size = disk_cluster_bytes(sz_which);
+
+    /* 0 is as far as the partition and the table both allow */
+    if (u_blocks == 0) {
+        u_blocks = (p_out->u_room < p_out->u_ceiling) ? p_out->u_room
+                                                      : p_out->u_ceiling;
+    }
+
+    struct ext4_resize r;
+    const char *str_error = NULL;
+    bool b_done = disk_resize(sz_which, u_blocks, &r, &str_error);
+
+    p_out->u_blocks_before = r.blocks_before;
+    p_out->u_blocks_after = r.blocks_after;
+    p_out->u_groups_before = r.groups_before;
+    p_out->u_groups_after = r.groups_after;
+    p_out->u_inodes_before = r.inodes_before;
+    p_out->u_inodes_after = r.inodes_after;
+    p_out->u_blocks_in_way = r.blocks_in_way;
+    p_out->u_inodes_in_way = r.inodes_in_way;
+    if (!b_done) {
+        say_why(p_out->arr_why, sizeof p_out->arr_why,
+                str_error != NULL ? str_error : "it would not resize");
+        return -1;
+    }
+    return 0;
+}
+
 static int64_t sys_mkdir(uint64_t ptr, uint64_t len)
 {
     char path[PATH_MAX];
@@ -1928,6 +1985,8 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
         return sys_sync();
     case SYS_FSCK:
         return sys_fsck(a0, a1, a2, a3);
+    case SYS_RESIZE:
+        return sys_resize(a0, a1, a2, a3);
     case SYS_YIELD:
         sched_yield();
         return 0;

@@ -316,6 +316,15 @@ the descriptor table is reserved up front (``s_reserved_gdt_blocks``) so
 that growing the filesystem never has to move every bitmap and inode table
 on the disk. see `resize` in the testing page.
 
+a program asks for a resize with the ``resize`` call, root's alone, naming
+the filesystem by where it is mounted and the size in its own blocks, 0
+for as far as the partition and that reserved table both allow. how far
+the partition allows is ``disk_resize``'s to enforce rather than its
+caller's: the filesystem is handed a view that ends where its partition
+does and cannot see past it, and a filesystem longer than its partition
+writes over whatever is next. what happened comes back in a ``struct
+user_resize``, before and after, with what was in the way of a shrink.
+
 checking a filesystem
 ---------------------
 
@@ -554,6 +563,10 @@ file says which of them it means.
 
 ``bool disk_fsck(size_t which, bool mend, struct fsck_report *out, const char **error);``
     check the mounted filesystem and mend what has exactly one right answer.
+
+``bool disk_resize(size_t which, uint64_t blocks, struct ext4_resize *out, const char **error);``
+    resize the filesystem mounted at `which` to `blocks` of its own, and
+    refuse a size longer than the partition under it
 
 ``uint64_t disk_room(size_t which);``
     how many of this filesystem's blocks the partition under it holds, and the largest it could ever be told to become

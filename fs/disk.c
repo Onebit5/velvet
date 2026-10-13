@@ -821,6 +821,19 @@ bool disk_resize(size_t which, uint64_t blocks, struct ext4_resize *out,
         *error = "there is no ext4 filesystem mounted there to resize";
         return false;
     }
+
+    /*
+     * the filesystem was handed a view that ends where the partition
+     * does and cannot see past it, so only this knows how far it may
+     * grow. a filesystem longer than its partition writes over whatever
+     * is next
+     */
+    if (blocks > disk_room(which)) {
+        *error = "longer than the partition under it, which would write "
+                 "over its neighbour";
+        return false;
+    }
+
     if (!disk_sync()) {
         *error = "the drive would not take what was waiting for it";
         return false;

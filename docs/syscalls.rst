@@ -67,12 +67,14 @@ number  name          arguments                                         returns
 53      SYSLOG        (type, buf, len)                                  bytes copied, the size, or -1
 54      SYNC          ()                                                0, or -1
 55      FSCK          (path, len, flags, user_fsck\*)                   0, or -1
+56      RESIZE        (path, len, blocks, user_resize\*)                0, or -1
 ======  ============  ================================================  ======================
 
 the kernel side
 ---------------
 
-the numbers, ``struct user_stat`` and ``struct user_from`` are in
+the numbers, ``struct user_stat``, ``struct user_from`` and ``struct
+user_resize`` are in
 ``include/uapi/velvet/syscall.h``, with what the calls take beside it in
 the same directory: the signal numbers in ``signal.h``, the keys
 ``getkey`` hands back in ``input.h``, ``TTYMODE``'s flags in ``tty.h``, and
@@ -96,6 +98,10 @@ the kernel's log, what dmesg reads. the first argument says what to do with it: 
 everything the kernel is holding for the disk, written to it. 0 once the disk holds what the kernel believes, which it already does when nothing was waiting or there is no disk, and -1 when the drive refused part of it
 
 check the filesystem mounted at a path, and with FSCK_MEND put right what has exactly one right answer, which only root may ask. what it found goes in a struct user_fsck, from <velvet/fsck.h>: 0 when the check was made, whatever it found, and -1 when it could not be, with the reason in its arr_why
+
+grow or shrink the ext4 filesystem mounted at a path to a number of its own blocks, 0 for as far as its partition and its descriptor table both allow. root's alone. what happened goes in a struct user_resize: 0 when it is that size now, which it may already have been, and -1 when it is not
+
+what SYS_RESIZE did, in blocks of u_block_size: the partition's room, the most the descriptor table can describe, and the filesystem before and after. a shrink that would lose something refuses and counts what was in the way. when the call returns -1, arr_why says why
 
 who a datagram came from, filled in by recvfrom. a struct rather than two more registers because the syscall abi has six and recvfrom would otherwise want seven
 

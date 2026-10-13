@@ -162,7 +162,35 @@ struct user_stat {
  */
 #define SYS_FSCK      55
 
-#define SYSCALL_COUNT 56
+/*
+ * grow or shrink the ext4 filesystem mounted at a path to a number of
+ * its own blocks, 0 for as far as its partition and its descriptor
+ * table both allow. root's alone. what happened goes in a struct
+ * user_resize: 0 when it is that size now, which it may already have
+ * been, and -1 when it is not
+ */
+#define SYS_RESIZE    56
+
+#define SYSCALL_COUNT 57
+
+#define RESIZE_WHY_MAX 128
+
+/*
+ * what SYS_RESIZE did, in blocks of u_block_size: the partition's room,
+ * the most the descriptor table can describe, and the filesystem before
+ * and after. a shrink that would lose something refuses and counts what
+ * was in the way. when the call returns -1, arr_why says why
+ */
+struct user_resize {
+    uint64_t u_room, u_ceiling;
+    uint64_t u_blocks_in_way, u_inodes_in_way;
+    uint32_t u_block_size;
+    uint32_t u_blocks_before, u_blocks_after;
+    uint32_t u_groups_before, u_groups_after;
+    uint32_t u_inodes_before, u_inodes_after;
+    uint32_t u_pad;
+    char     arr_why[RESIZE_WHY_MAX];
+};
 
 /*
  * who a datagram came from, filled in by recvfrom. a struct rather than

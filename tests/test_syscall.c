@@ -446,6 +446,42 @@ bool disk_fsck(size_t sz_which, bool b_mend, struct fsck_report *p_out,
     p_out->groups = 1;
     return true;
 }
+
+/* 2048 blocks of filesystem in a partition with room for 6144. */
+static uint64_t s_u_resized_to;
+static bool s_b_resize_fails;
+
+uint64_t disk_room(size_t sz_which)
+{
+    (void)sz_which;
+    return 6144;
+}
+uint64_t disk_ceiling(size_t sz_which)
+{
+    (void)sz_which;
+    return 16384;
+}
+uint32_t disk_cluster_bytes(size_t sz_which)
+{
+    (void)sz_which;
+    return 1024;
+}
+bool disk_resize(size_t sz_which, uint64_t u_blocks,
+                 struct ext4_resize *p_out, const char **pp_error)
+{
+    (void)sz_which;
+    s_u_resized_to = u_blocks;
+    memset(p_out, 0, sizeof *p_out);
+    p_out->blocks_before = 2048;
+    p_out->blocks_after = 2048;
+    if (s_b_resize_fails) {
+        p_out->blocks_in_way = 3;
+        *pp_error = "something is in the way";
+        return false;
+    }
+    p_out->blocks_after = (uint32_t)u_blocks;
+    return true;
+}
 bool disk_rmdir(size_t w, const char *path)
 {
     (void)w; (void)path; return disk_is_ready;
@@ -1553,6 +1589,54 @@ int main(void)
               "a guest may not have a filesystem mended");
         CHECK(call5(SYS_FSCK, user_page, 1, 0, u_fsck, 0) == 0,
               "but may look");
+        me.pid = i_was;
+        process_exited(i_guest, 0, 0);
+        process_collect(i_guest, NULL);
+    }
+
+    /*
+     * resize is root's. with no size it fills the partition, or as much
+     * of it as the descriptor table allows, and a refusal comes back
+     * with what was in the way and why
+     */
+    {
+        struct user_resize *p_rs = (struct user_resize *)(page + 512);
+        uint64_t u_rs = (uint64_t)p_rs;
+
+        strcpy(page, "/");
+        CHECK(call5(SYS_RESIZE, user_page, 1, 0, u_rs, 0) == 0
+              && s_u_resized_to == 6144,
+              "resize with no size fills the partition");
+        CHECK(p_rs->u_room == 6144 && p_rs->u_ceiling == 16384
+              && p_rs->u_block_size == 1024
+              && p_rs->u_blocks_before == 2048
+              && p_rs->u_blocks_after == 6144,
+              "and says what it was, what it is and how far it could go");
+        CHECK(call5(SYS_RESIZE, user_page, 1, 4096, u_rs, 0) == 0
+              && s_u_resized_to == 4096,
+              "or goes to the size it is asked for");
+
+        s_b_resize_fails = true;
+        CHECK(call5(SYS_RESIZE, user_page, 1, 3000, u_rs, 0) == -1
+              && p_rs->u_blocks_in_way == 3
+              && strcmp(p_rs->arr_why, "something is in the way") == 0,
+              "a refusal counts what was in the way, and says so");
+        s_b_resize_fails = false;
+
+        strcpy(page, "/work");
+        CHECK(call5(SYS_RESIZE, user_page, 5, 0, u_rs, 0) == -1,
+              "nothing mounted there, nothing to resize");
+        strcpy(page, "/");
+        CHECK(call5(SYS_RESIZE, user_page, 1, 0, kernel_page, 0) == -1,
+              "and the answer goes nowhere but the caller's memory");
+
+        int i_guest = process_create("guest4", 0, 1000, false, 0);
+        int i_was = me.pid;
+        me.pid = i_guest;
+        s_u_resized_to = 0;
+        CHECK(call5(SYS_RESIZE, user_page, 1, 0, u_rs, 0) == -1
+              && s_u_resized_to == 0 && strstr(p_rs->arr_why, "master"),
+              "a guest may not change the size of a filesystem");
         me.pid = i_was;
         process_exited(i_guest, 0, 0);
         process_collect(i_guest, NULL);
