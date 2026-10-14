@@ -299,6 +299,14 @@ redirection is the process table's business rather than the pipe's: 0, 1 and
 would have been before the program starts is the whole mechanism. see
 `file descriptors <sched.rst>`_.
 
+a program builds the same thing with two calls. ``pipe`` hands it both ends
+of a new pipe, in the lowest free slots. ``dup2`` makes one slot another
+handle on what a second one holds, closing whatever the first held, so a
+shell forks, puts a pipe end on 0 or 1 in the child, and execs. a copied
+pipe end is one more holder, so the reader sees end of file only when
+every copy is closed or its holder has ended; a copied file keeps a
+position of its own, the same rule fork has always followed.
+
 making a filesystem
 -------------------
 

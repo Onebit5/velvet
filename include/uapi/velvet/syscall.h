@@ -192,7 +192,22 @@ struct user_stat {
  */
 #define SYS_EXECVE    58
 
-#define SYSCALL_COUNT 59
+/*
+ * a pipe the caller holds both ends of: the reading end's descriptor in
+ * fds[0] and the writing end's in fds[1], two ints. reads wait for
+ * something to arrive and return 0 once every writing end is closed
+ */
+#define SYS_PIPE      59
+
+/*
+ * make descriptor `to` another handle on whatever `from` is, closing
+ * what `to` held first: `to`, or -1 when `from` is not open. a copy of
+ * a pipe end is one more holder of it, and a copy of a file keeps a
+ * position of its own
+ */
+#define SYS_DUP2      60
+
+#define SYSCALL_COUNT 61
 
 /*
  * what SYS_SOURCE says: the archive on the medium, its files, bytes and

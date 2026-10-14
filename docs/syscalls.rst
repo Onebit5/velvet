@@ -70,6 +70,8 @@ number  name          arguments                                         returns
 56      RESIZE        (path, len, blocks, user_resize\*)                0, or -1
 57      SOURCE        (flags, user_source\*)                            0, or -1
 58      EXECVE        (path, len, argv)                                 does not return, or -1
+59      PIPE          (fds\*)                                           0, or -1
+60      DUP2          (from, to)                                        to, or -1
 ======  ============  ================================================  ======================
 
 the kernel side
@@ -110,6 +112,10 @@ the source tree this kernel was built from, out on the medium it booted from, de
 what SYS_SOURCE says: the archive on the medium, its files, bytes and first sector, then the size and sha1 of the archive the kernel was built with, and with SOURCE_HASH the sha1 of the one on the medium. both digests are hex. the build's is filled in even when the call returns -1, since the kernel knows it whatever the medium says
 
 become another program: the one at path, with argv, a NULL-ended array of strings, as its arguments, or with only its own path when argv is NULL. the pid, the descriptors, the working directory, the uid and the environment stay; caught signals go back to their defaults, since the code that caught them is gone. it does not return, unless it failed, and then it returns -1 with nothing changed. an argv longer than MAX_ARGS is refused rather than cut short
+
+a pipe the caller holds both ends of: the reading end's descriptor in fds[0] and the writing end's in fds[1], two ints. reads wait for something to arrive and return 0 once every writing end is closed
+
+make descriptor to another handle on whatever from is, closing what to held first: to, or -1 when from is not open. a copy of a pipe end is one more holder of it, and a copy of a file keeps a position of its own
 
 who a datagram came from, filled in by recvfrom. a struct rather than two more registers because the syscall abi has six and recvfrom would otherwise want seven
 

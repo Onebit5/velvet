@@ -268,6 +268,9 @@ bool process_fd_get(int pid, int fd, struct fd *out);
 
 bool process_fd_install(int pid, int fd, const struct fd *src);
 
+/* into the lowest free slot past the standard three: which, or -1 */
+int process_fd_place(int i_pid, const struct fd *p_src);
+
 bool process_fds_inherit(int pid, int from);
 
 struct pipe_end {

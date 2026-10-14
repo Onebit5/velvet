@@ -574,19 +574,26 @@ static int64_t sys_read(uint64_t fd, uint64_t ptr, uint64_t len)
  * wakes whoever is waiting on the other, so the pipe comes back out
  * of the table first and is closed here, holding nothing
  */
+/* one end of a pipe the caller no longer has, let go of */
+static void let_go(const struct pipe_end *p_end)
+{
+    if (p_end->p == NULL) {
+        return;
+    }
+    if (p_end->writing) {
+        pipe_close_write(p_end->p);
+    } else {
+        pipe_close_read(p_end->p);
+    }
+}
+
 static int64_t sys_close(int fd)
 {
     struct pipe_end e;
     if (!process_fd_close(caller_pid(), fd, &e)) {
         return -1;
     }
-    if (e.p != NULL) {
-        if (e.writing) {
-            pipe_close_write(e.p);
-        } else {
-            pipe_close_read(e.p);
-        }
-    }
+    let_go(&e);
     return 0;
 }
 
@@ -1376,6 +1383,64 @@ static int64_t sys_execve(struct user_regs *regs, uint64_t u_ptr,
     return 0;
 }
 
+static int64_t sys_pipe(uint64_t u_fds)
+{
+    int i_pid = caller_pid();
+
+    if (!user_range_writable(u_fds, 2 * sizeof(int32_t))) {
+        return -1;
+    }
+    struct pipe *p_pipe = pipe_create();
+    if (p_pipe == NULL) {
+        return -1;
+    }
+
+    struct fd end;
+    memset(&end, 0, sizeof end);
+    end.kind = FD_PIPE;
+    end.pipe = p_pipe;
+    int i_read = process_fd_place(i_pid, &end);
+    end.writing = true;
+    int i_write = (i_read >= 0) ? process_fd_place(i_pid, &end) : -1;
+
+    if (i_write < 0) {
+        /* no room for both, so neither end was ever the caller's */
+        struct pipe_end taken;
+        if (i_read >= 0) {
+            process_fd_close(i_pid, i_read, &taken);
+        }
+        pipe_close_read(p_pipe);
+        pipe_close_write(p_pipe);
+        return -1;
+    }
+    ((int32_t *)u_fds)[0] = i_read;
+    ((int32_t *)u_fds)[1] = i_write;
+    return 0;
+}
+
+static int64_t sys_dup2(uint64_t u_from, uint64_t u_to)
+{
+    int i_pid = caller_pid();
+    struct fd src;
+
+    if (u_to >= MAX_FDS || !process_fd_get(i_pid, (int)u_from, &src)) {
+        return -1;
+    }
+    if (u_from == u_to) {
+        return (int64_t)u_to;
+    }
+
+    /* counted before it is installed, so no moment has it held and uncounted */
+    if (src.kind == FD_PIPE) {
+        pipe_share(src.pipe, src.writing);
+    }
+    struct pipe_end closing = { NULL, false };
+    process_fd_close(i_pid, (int)u_to, &closing);
+    let_go(&closing);
+    process_fd_install(i_pid, (int)u_to, &src);
+    return (int64_t)u_to;
+}
+
 static int64_t sys_mkdir(uint64_t ptr, uint64_t len)
 {
     char path[PATH_MAX];
@@ -2118,6 +2183,10 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
         return sys_source(a0, a1);
     case SYS_EXECVE:
         return sys_execve(regs, a0, a1, a2);
+    case SYS_PIPE:
+        return sys_pipe(a0);
+    case SYS_DUP2:
+        return sys_dup2(a0, a1);
     case SYS_YIELD:
         sched_yield();
         return 0;

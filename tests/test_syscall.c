@@ -1693,6 +1693,53 @@ int main(void)
     }
 
     /*
+     * a pipe is two descriptors, one each way. what goes in one end comes
+     * out of the other, dup2 puts an end wherever it is wanted, and once
+     * every writing end is gone a read says so with 0
+     */
+    {
+        int32_t *p_fds = (int32_t *)(page + 512);
+        size_t sz_pipes = pipe_count();
+        int i_spare = MAX_FDS - 1;
+
+        call3(SYS_CLOSE, (uint64_t)i_spare, 0, 0);
+        CHECK(call3(SYS_PIPE, (uint64_t)p_fds, 0, 0) == 0
+              && p_fds[0] >= FD_FIRST_FILE && p_fds[1] > p_fds[0],
+              "pipe gives two descriptors");
+        int i_rd = p_fds[0];
+        int i_wr = p_fds[1];
+
+        strcpy(page, "through");
+        CHECK(call3(SYS_WRITE, (uint64_t)i_wr, user_page, 7) == 7,
+              "a write goes in one end");
+        memset(page + 64, 0, 16);
+        CHECK(call3(SYS_READ, (uint64_t)i_rd, user_page + 64, 16) == 7
+              && memcmp(page + 64, "through", 7) == 0,
+              "and comes out of the other");
+
+        CHECK(call3(SYS_DUP2, (uint64_t)i_wr, (uint64_t)i_spare, 0)
+              == i_spare,
+              "dup2 puts the writing end in another slot");
+        CHECK(call3(SYS_WRITE, (uint64_t)i_spare, user_page, 3) == 3
+              && call3(SYS_READ, (uint64_t)i_rd, user_page + 64, 16) == 3,
+              "and a write through either lands in the same pipe");
+        CHECK(call3(SYS_CLOSE, (uint64_t)i_wr, 0, 0) == 0
+              && call3(SYS_CLOSE, (uint64_t)i_spare, 0, 0) == 0
+              && call3(SYS_READ, (uint64_t)i_rd, user_page + 64, 16) == 0,
+              "with both writing ends closed, the reader reads 0");
+
+        CHECK(call3(SYS_DUP2, (uint64_t)i_spare, 4, 0) == -1,
+              "dup2 of a descriptor that is not open is -1");
+        CHECK(call3(SYS_DUP2, (uint64_t)i_rd, MAX_FDS, 0) == -1,
+              "and so is one onto a slot past the table");
+        CHECK(call3(SYS_PIPE, kernel_page, 0, 0) == -1,
+              "pipe writes nowhere but the caller's memory");
+
+        call3(SYS_CLOSE, (uint64_t)i_rd, 0, 0);
+        CHECK(pipe_count() == sz_pipes, "and no pipe is left behind");
+    }
+
+    /*
      * a machine started without a source tree on its medium says so,
      * and still says which tree it was built from
      */

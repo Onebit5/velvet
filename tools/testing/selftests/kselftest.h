@@ -194,6 +194,18 @@ static inline int64_t ksft_read_file(const char *str_path, char *str_buf,
     return (int64_t)sz_len;
 }
 
+/* a pipe: its reading end in arr_fds[0] and its writing end in arr_fds[1] */
+static inline int pipe(int32_t arr_fds[2])
+{
+    return (int)ksft_syscall(SYS_PIPE, (int64_t)arr_fds, 0, 0);
+}
+
+/* descriptor `i_to` becomes another handle on `i_from`: `i_to`, or -1 */
+static inline int dup2(int i_from, int i_to)
+{
+    return (int)ksft_syscall(SYS_DUP2, i_from, i_to, 0);
+}
+
 /*
  * become the program at `str_path`, with `pp_argv`, NULL-ended, as its
  * arguments and the caller's environment as its own. returns only when

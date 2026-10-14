@@ -906,6 +906,26 @@ bool process_fd_get(int pid, int fd, struct fd *out)
     return ok;
 }
 
+int process_fd_place(int i_pid, const struct fd *p_src)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    int i_fd = -1;
+
+    struct process *p = slot_for(i_pid);
+    if (p != NULL) {
+        for (int i_at = FD_FIRST_FILE; i_at < MAX_FDS; i_at++) {
+            if (p->fds[i_at].kind == FD_FREE) {
+                p->fds[i_at] = *p_src;
+                i_fd = i_at;
+                break;
+            }
+        }
+    }
+
+    spin_unlock_irq(&process_lock, u_flags);
+    return i_fd;
+}
+
 bool process_fd_install(int pid, int fd, const struct fd *src)
 {
     uint64_t flags = spin_lock_irq(&process_lock);
