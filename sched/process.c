@@ -141,22 +141,19 @@ void process_exited(int pid, int code, uint64_t now_ms)
         p->exit_code = code;
         p->ended_ms  = now_ms;
         p->thread_id = 0;
-        /* whatever it had open closes with it. */
+        /*
+         * whatever it had open closes with it, except a pipe. closing
+         * one wakes whoever waits at the other end, which reaches the
+         * scheduler, and this lock may not be held while doing that. so
+         * a pipe end stays in its slot, and pipe_release_for, which
+         * every way a process ends calls after this, takes it out and
+         * closes it with no lock held. clearing it here instead was how
+         * a reader came to wait forever on a writer already gone
+         */
         for (size_t f = 0; f < MAX_FDS; f++) {
-            /*
-             * FIXME: a pipe in one of these is cleared rather than
-             * released, and the comment below says the caller has taken
-             * them off beforehand, which no caller does. thread_exit,
-             * the scheduler's reaper and init's orphan sweep all call
-             * pipe_release_for *after* this, and that function finds the
-             * ends with process_take_pipes, which looks for exactly the
-             * kind this loop has just overwritten. so no pipe end is
-             * released on exit: the peer blocked in a read never sees end
-             * of file, and a pipeline waits on a writer that has already
-             * gone. take the pipe ends out here and hand them back the way
-             * process_fd_close does, or have every caller do it first.
-             */
-            p->fds[f].kind = FD_FREE;
+            if (p->fds[f].kind != FD_PIPE) {
+                p->fds[f].kind = FD_FREE;
+            }
         }
 
         /* and whatever it was the parent of is init's now. */

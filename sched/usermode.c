@@ -448,6 +448,7 @@ int user_spawn(const char *path, int argc, const char *const argv[],
         if (!ok) {
             int ignored;
             process_exited(pid, PROCESS_KILLED, pit_uptime_ms());
+            pipe_release_for(pid);
             process_collect(pid, &ignored);
             kfree(start);
             addrspace_destroy(space);
@@ -478,6 +479,7 @@ int user_spawn(const char *path, int argc, const char *const argv[],
     if (t == NULL) {
         int ignored;
         process_exited(pid, PROCESS_KILLED, pit_uptime_ms());
+        pipe_release_for(pid);
         process_collect(pid, &ignored);
         kfree(start);
         addrspace_destroy(space);
@@ -533,6 +535,18 @@ bool user_exec(const char *str_path, int i_argc, const char *const pp_argv[],
 }
 
 /* wait for a pid, however it ends. */
+/*
+ * collect a process that has ended, letting go of its pipes first. a
+ * killed one leaves them for the reaper, and a parent that collects it
+ * before the reaper comes round would otherwise take the slot, and the
+ * only record of those ends, with it
+ */
+static bool collect(int i_pid, int *p_code)
+{
+    pipe_release_for(i_pid);
+    return process_collect(i_pid, p_code);
+}
+
 bool user_wait(int pid, int *code)
 {
     struct thread *self = sched_current();
@@ -553,7 +567,7 @@ bool user_wait(int pid, int *code)
         }
         sleep_ms(20);
     }
-    return process_collect(pid, code);
+    return collect(pid, code);
 }
 
 /* let a spawned process actually begin. */
@@ -593,7 +607,7 @@ void user_job_collect(struct job *j)
             continue;
         }
         int code = 0;
-        if (process_collect(j->pids[i], &code)) {
+        if (collect(j->pids[i], &code)) {
             /* the last one's status is the job's. */
             if (i == j->count - 1) {
                 j->status = code;

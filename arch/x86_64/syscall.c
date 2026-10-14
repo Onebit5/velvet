@@ -658,6 +658,7 @@ static int64_t sys_fork(struct user_regs *regs)
         kfree(frame);
         addrspace_destroy(space);
         process_exited(pid, PROCESS_KILLED, pit_uptime_ms());
+        pipe_release_for(pid);
         process_collect(pid, NULL);
         return -1;
     }
@@ -668,6 +669,7 @@ static int64_t sys_fork(struct user_regs *regs)
         kfree(frame);
         addrspace_destroy(space);
         process_exited(pid, PROCESS_KILLED, pit_uptime_ms());
+        pipe_release_for(pid);
         process_collect(pid, NULL);
         return -1;
     }

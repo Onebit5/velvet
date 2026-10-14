@@ -159,6 +159,31 @@ int main(void)
     CHECK(process_count() == 0, "and the table is empty for what follows");
 
 
+    /*
+     * a process that ends keeps its pipe ends in their slots, for
+     * pipe_release_for to take and close with no lock held, and lets go
+     * of everything else on the spot
+     */
+    {
+        static int s_i_pipe;   /* stands in for a pipe, never looked inside */
+        struct fd pipe_end = { .kind = FD_PIPE, .writing = true,
+                               .pipe = (struct pipe *)&s_i_pipe };
+        struct fd memory_file = { .kind = FD_MEMORY };
+        struct pipe_end arr_ends[MAX_FDS];
+        int i_writer = process_create("bin/writer", 0, 0, false, 400);
+
+        process_fd_install(i_writer, FD_STDOUT, &pipe_end);
+        process_fd_install(i_writer, FD_FIRST_FILE, &memory_file);
+        process_exited(i_writer, 0, 410);
+        CHECK(process_take_pipes(i_writer, arr_ends, MAX_FDS) == 1
+              && arr_ends[0].p == (struct pipe *)&s_i_pipe
+              && arr_ends[0].writing,
+              "an exited process still holds its pipe end for release");
+        CHECK(process_fd_count(i_writer) == 0,
+              "and nothing else, once that end is taken");
+        process_collect(i_writer, NULL);
+    }
+
     int pid = process_create("bin/hello", 0, 0, false, 1000);
     CHECK(pid > 0, "a process gets a pid");
     CHECK(process_count() == 1, "and occupies a slot");
