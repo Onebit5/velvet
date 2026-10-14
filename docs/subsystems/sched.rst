@@ -218,6 +218,13 @@ handler waits rather than nesting, without it, ctrl+c held down is a stack
 that grows until it hits the guard page. see `sigsuspend` and the rest in
 `the system calls <../syscalls.rst>`_.
 
+a program sends one with ``sigsend``, and only where it has a say: to its
+own processes, or to anybody's when it is root. the kernel raises signals
+of its own, ctrl+c and a pipe with no reader among them, and those go
+wherever they are due; the rule is about one program reaching another.
+a guest able to stop root's programs, init among them, would be a guest
+able to stop the machine.
+
 init
 ----
 

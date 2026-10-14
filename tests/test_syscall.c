@@ -1693,6 +1693,34 @@ int main(void)
     }
 
     /*
+     * a signal goes to the sender's own processes, or to anybody's
+     * from root, and never to one that is not there
+     */
+    {
+        int i_rootly = process_create("rootly", 0, 0, false, 0);
+        int i_mine = process_create("mine", 0, 1000, false, 0);
+        int i_guest = process_create("guest5", 0, 1000, false, 0);
+        int i_was = me.pid;
+
+        me.pid = i_guest;
+        CHECK(call3(SYS_SIGSEND, (uint64_t)i_rootly, SIGTERM, 0) == -1,
+              "a guest may not signal root's process");
+        CHECK(call3(SYS_SIGSEND, (uint64_t)i_mine, SIGTERM, 0) == 0,
+              "but may signal one of its own");
+        CHECK(call3(SYS_SIGSEND, 4000, SIGTERM, 0) == -1,
+              "and nobody may signal a pid that is not there");
+        me.pid = i_was;
+        CHECK(call3(SYS_SIGSEND, (uint64_t)i_mine, SIGTERM, 0) == 0,
+              "root may signal anybody's");
+
+        int arr_pids[] = { i_rootly, i_mine, i_guest };
+        for (int i_at = 0; i_at < 3; i_at++) {
+            process_exited(arr_pids[i_at], 0, 0);
+            process_collect(arr_pids[i_at], NULL);
+        }
+    }
+
+    /*
      * a pipe is two descriptors, one each way. what goes in one end comes
      * out of the other, dup2 puts an end wherever it is wanted, and once
      * every writing end is gone a read says so with 0

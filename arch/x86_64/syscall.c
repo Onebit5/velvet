@@ -1978,6 +1978,24 @@ static void deliver_signals(struct user_regs *regs)
  * its own, so that a program cannot arrange to have handlers without
  * having somewhere for them to return to
  */
+/*
+ * a signal goes only where the sender has a say: to its own processes,
+ * or to anybody's when the sender is root. a guest able to stop root's
+ * programs, init among them, is a guest able to stop the machine
+ */
+static int64_t sys_sigsend(uint64_t u_pid, uint64_t u_sig)
+{
+    const struct process *p_target = process_find((int)u_pid);
+    if (p_target == NULL || p_target->exited) {
+        return -1;
+    }
+    int i_uid = process_uid(caller_pid());
+    if (i_uid != 0 && i_uid != p_target->uid) {
+        return -1;
+    }
+    return process_signal((int)u_pid, (int)u_sig) ? 0 : -1;
+}
+
 static int64_t sys_signal(uint64_t sig, uint64_t handler, uint64_t tramp)
 {
     struct signal_state *st = process_signal_state(caller_pid());
@@ -2051,7 +2069,7 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
     case SYS_SIGNAL:
         return sys_signal(a0, a1, a2);
     case SYS_SIGSEND:
-        return process_signal((int)a0, (int)a1) ? 0 : -1;
+        return sys_sigsend(a0, a1);
     case SYS_SIGRETURN:
         return sys_sigreturn(a0, regs);
     case SYS_TTYMODE: {
