@@ -26,6 +26,8 @@
 #include <velvet/vfs.h>
 #include <velvet/disk.h>
 #include <velvet/fsck.h>
+#include <velvet/source.h>
+#include <velvet/hash.h>
 #include <velvet/path.h>
 #include <velvet/tty.h>
 #include <velvet/console.h>
@@ -1249,6 +1251,33 @@ static int64_t sys_resize(uint64_t u_ptr, uint64_t u_len, uint64_t u_blocks,
     return 0;
 }
 
+static int64_t sys_source(uint64_t u_flags, uint64_t u_out)
+{
+    struct user_source *p_out = (struct user_source *)u_out;
+
+    if (!user_range_writable(u_out, sizeof *p_out)) {
+        return -1;
+    }
+    memset(p_out, 0, sizeof *p_out);
+    memcpy(p_out->arr_built, source_stamp, sizeof p_out->arr_built);
+    p_out->u_built_bytes = source_stamp_bytes;
+    if (!source_present()) {
+        return -1;
+    }
+    p_out->u_files = source_count();
+    p_out->u_bytes = source_bytes();
+    p_out->u_lba = source_lba();
+
+    if ((u_flags & SOURCE_HASH) != 0) {
+        uint8_t arr_digest[20];
+        if (!source_digest(arr_digest)) {
+            return -1;
+        }
+        sha1_hex(arr_digest, p_out->arr_medium);
+    }
+    return 0;
+}
+
 static int64_t sys_mkdir(uint64_t ptr, uint64_t len)
 {
     char path[PATH_MAX];
@@ -1987,6 +2016,8 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
         return sys_fsck(a0, a1, a2, a3);
     case SYS_RESIZE:
         return sys_resize(a0, a1, a2, a3);
+    case SYS_SOURCE:
+        return sys_source(a0, a1);
     case SYS_YIELD:
         sched_yield();
         return 0;

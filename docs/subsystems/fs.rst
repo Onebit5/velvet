@@ -372,6 +372,12 @@ and a kernel sitting in one image are two files that happen to be adjacent;
 "this is the source *this* kernel was built from" can only be established at
 the one moment both halves are in the same room, which is the build.
 
+a program asks with the ``source`` call: the archive's files, bytes and
+first sector and the build's stamp, in a ``struct user_source``, and with
+``SOURCE_HASH`` the medium's own digest beside it, so the comparison
+``src verify`` makes is one a program can make. both digests are hex,
+since the stamp already is.
+
 the installer
 -------------
 

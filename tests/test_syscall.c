@@ -447,6 +447,12 @@ bool disk_fsck(size_t sz_which, bool b_mend, struct fsck_report *p_out,
     return true;
 }
 
+/* what the build would have written, for a tree of one sector */
+#include <velvet/source.h>
+
+const char source_stamp[41] = "da39a3ee5e6b4b0d3255bfef95601890afd80709";
+const uint64_t source_stamp_bytes = 512;
+
 /* 2048 blocks of filesystem in a partition with room for 6144. */
 static uint64_t s_u_resized_to;
 static bool s_b_resize_fails;
@@ -1592,6 +1598,23 @@ int main(void)
         me.pid = i_was;
         process_exited(i_guest, 0, 0);
         process_collect(i_guest, NULL);
+    }
+
+    /*
+     * a machine started without a source tree on its medium says so,
+     * and still says which tree it was built from
+     */
+    {
+        struct user_source *p_src = (struct user_source *)(page + 512);
+
+        CHECK(call3(SYS_SOURCE, SOURCE_HASH, (uint64_t)p_src, 0) == -1
+              && p_src->u_files == 0,
+              "source with nothing on the medium is -1");
+        CHECK(strcmp(p_src->arr_built, source_stamp) == 0
+              && p_src->u_built_bytes == source_stamp_bytes,
+              "and still names the tree the kernel was built from");
+        CHECK(call3(SYS_SOURCE, 0, kernel_page, 0) == -1,
+              "and writes nowhere but the caller's memory");
     }
 
     /*

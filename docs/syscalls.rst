@@ -68,13 +68,14 @@ number  name          arguments                                         returns
 54      SYNC          ()                                                0, or -1
 55      FSCK          (path, len, flags, user_fsck\*)                   0, or -1
 56      RESIZE        (path, len, blocks, user_resize\*)                0, or -1
+57      SOURCE        (flags, user_source\*)                            0, or -1
 ======  ============  ================================================  ======================
 
 the kernel side
 ---------------
 
-the numbers, ``struct user_stat``, ``struct user_from`` and ``struct
-user_resize`` are in
+the numbers, ``struct user_stat``, ``struct user_from``, ``struct
+user_resize`` and ``struct user_source`` are in
 ``include/uapi/velvet/syscall.h``, with what the calls take beside it in
 the same directory: the signal numbers in ``signal.h``, the keys
 ``getkey`` hands back in ``input.h``, ``TTYMODE``'s flags in ``tty.h``, and
@@ -102,6 +103,10 @@ check the filesystem mounted at a path, and with FSCK_MEND put right what has ex
 grow or shrink the ext4 filesystem mounted at a path to a number of its own blocks, 0 for as far as its partition and its descriptor table both allow. root's alone. what happened goes in a struct user_resize: 0 when it is that size now, which it may already have been, and -1 when it is not
 
 what SYS_RESIZE did, in blocks of u_block_size: the partition's room, the most the descriptor table can describe, and the filesystem before and after. a shrink that would lose something refuses and counts what was in the way. when the call returns -1, arr_why says why
+
+the source tree this kernel was built from, out on the medium it booted from, described in a struct user_source. with SOURCE_HASH the archive on the medium is read and hashed as well, so a program can say whether it is the tree this kernel was built from. -1 when the medium carries no source, or stopped answering part way through the hash
+
+what SYS_SOURCE says: the archive on the medium, its files, bytes and first sector, then the size and sha1 of the archive the kernel was built with, and with SOURCE_HASH the sha1 of the one on the medium. both digests are hex. the build's is filled in even when the call returns -1, since the kernel knows it whatever the medium says
 
 who a datagram came from, filled in by recvfrom. a struct rather than two more registers because the syscall abi has six and recvfrom would otherwise want seven
 
