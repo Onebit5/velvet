@@ -850,6 +850,22 @@ const char *process_name(int pid)
     return (p != NULL) ? p->name : "?";
 }
 
+void process_set_name(int i_pid, const char *str_name)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+
+    if (p != NULL) {
+        size_t sz_at = 0;
+        while (str_name[sz_at] != '\0' && sz_at < PROC_NAME_MAX - 1) {
+            p->name[sz_at] = str_name[sz_at];
+            sz_at++;
+        }
+        p->name[sz_at] = '\0';
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+}
+
 bool process_fds_inherit(int pid, int from)
 {
     /* copied out under the lock and the pipes referenced after it. */

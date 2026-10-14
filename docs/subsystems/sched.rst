@@ -775,6 +775,22 @@ something.
 ``void user_spawn_env(const struct spawn_env *env);``
     what the next spawn should hand its child.
 
+``bool user_exec(const char *str_path, int i_argc, const char *const pp_argv[], struct user_entry *p_out, const char **pp_error);``
+    the calling process becomes the program at ``str_path``, keeping its
+    pid, descriptors, working directory, uid and environment, with its
+    caught signals back to their defaults. true with ``p_out`` saying
+    where the new program starts; false with nothing changed at all
+
+spawn and exec share everything up to the program being ready to run:
+the image read and described or loaded, a fresh address space, a stack
+and the arguments on it. what differs is what goes around it. spawn
+makes a new process and a thread for it. exec swaps the new address
+space in for the caller's and destroys the old one, and only after
+everything that can fail has already succeeded, so a failed exec leaves
+the caller running exactly what it was. the ``execve`` call then
+rewrites the frame the syscall exit path restores, so the return from
+the call is the new program's first instruction.
+
 ``#define PIPELINE_MAX 4``
     one command in a pipeline: already resolved to a path, with the arguments it was typed with and whatever redirection was written beside it
 

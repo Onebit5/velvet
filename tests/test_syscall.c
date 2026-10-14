@@ -658,6 +658,34 @@ int user_spawn(const char *path, int argc, const char *const argv[],
     spawned_cwd = cwd;
     return 77;
 }
+/* exec, as far as the call can see it: what it was handed, and a start */
+#include <velvet/usermode.h>
+
+static bool s_b_exec_fails;
+static int s_i_exec_argc;
+static char s_arr_exec_path[64];
+static char s_arr_exec_argv[MAX_ARGS][64];
+
+bool user_exec(const char *str_path, int i_argc, const char *const pp_argv[],
+               struct user_entry *p_out, const char **pp_error)
+{
+    if (s_b_exec_fails) {
+        *pp_error = "no such file";
+        return false;
+    }
+    strncpy(s_arr_exec_path, str_path, sizeof s_arr_exec_path - 1);
+    s_i_exec_argc = i_argc;
+    for (int i_at = 0; i_at < i_argc; i_at++) {
+        strncpy(s_arr_exec_argv[i_at], pp_argv[i_at],
+                sizeof s_arr_exec_argv[i_at] - 1);
+    }
+    p_out->u_entry = 0x401000;
+    p_out->u_stack_top = 0x6fffffffef00ull;
+    p_out->u_argc = (uint64_t)i_argc;
+    p_out->u_argv = 0x6fffffffef10ull;
+    return true;
+}
+
 static int wait_code = 5;
 bool user_wait(int pid, int *code)
 {
@@ -1598,6 +1626,70 @@ int main(void)
         me.pid = i_was;
         process_exited(i_guest, 0, 0);
         process_collect(i_guest, NULL);
+    }
+
+    /*
+     * exec copies the arguments out of the caller before anything else
+     * happens, refuses rather than cuts short, and on success leaves the
+     * frame holding the new program's start and none of the old one
+     */
+    {
+        struct user_regs frame = caller_frame;
+        uint64_t *p_list = (uint64_t *)(page + 256);
+
+        strcpy(page, "bin/two");
+        strcpy(page + 64, "two");
+        strcpy(page + 80, "-n");
+        strcpy(page + 96, "3");
+        p_list[0] = user_page + 64;
+        p_list[1] = user_page + 80;
+        p_list[2] = user_page + 96;
+        p_list[3] = 0;
+        CHECK(syscall_dispatch(SYS_EXECVE, user_page, 7, user_page + 256,
+                               0, 0, &frame) == 0,
+              "execve becomes another program");
+        CHECK(strcmp(s_arr_exec_path, "/bin/two") == 0 && s_i_exec_argc == 3
+              && strcmp(s_arr_exec_argv[1], "-n") == 0
+              && strcmp(s_arr_exec_argv[2], "3") == 0,
+              "with the path resolved and every argument copied across");
+        CHECK(frame.rcx == 0x401000 && frame.rsp == 0x6fffffffef00ull
+              && frame.rdi == 3 && frame.rsi == 0x6fffffffef10ull
+              && frame.r11 == 0x202 && frame.rbx == 0 && frame.r15 == 0,
+              "and returns into its start, holding nothing of the old one");
+
+        CHECK(syscall_dispatch(SYS_EXECVE, user_page, 7, 0, 0, 0,
+                               &frame) == 0
+              && s_i_exec_argc == 1 && strcmp(s_arr_exec_argv[0],
+                                              "/bin/two") == 0,
+              "with no argv the program gets its own path, as spawn gives");
+
+        frame = caller_frame;
+        for (int i_at = 0; i_at <= MAX_ARGS; i_at++) {
+            p_list[i_at] = user_page + 96;
+        }
+        p_list[MAX_ARGS + 1] = 0;
+        CHECK(syscall_dispatch(SYS_EXECVE, user_page, 7, user_page + 256,
+                               0, 0, &frame) == -1
+              && frame.rcx == caller_frame.rcx,
+              "one argument too many is refused, not cut short");
+
+        p_list[0] = kernel_page;
+        p_list[1] = 0;
+        CHECK(syscall_dispatch(SYS_EXECVE, user_page, 7, user_page + 256,
+                               0, 0, &frame) == -1,
+              "an argument in the kernel's memory is refused");
+        CHECK(syscall_dispatch(SYS_EXECVE, user_page, 7, kernel_page,
+                               0, 0, &frame) == -1,
+              "and so is an argv that is");
+
+        p_list[0] = user_page + 64;
+        s_b_exec_fails = true;
+        CHECK(syscall_dispatch(SYS_EXECVE, user_page, 7, user_page + 256,
+                               0, 0, &frame) == -1
+              && frame.rcx == caller_frame.rcx && frame.rbx == 3,
+              "a program that will not load leaves the caller as it was");
+        s_b_exec_fails = false;
+        strcpy(page, "motd.txt");
     }
 
     /*

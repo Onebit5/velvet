@@ -69,6 +69,7 @@ number  name          arguments                                         returns
 55      FSCK          (path, len, flags, user_fsck\*)                   0, or -1
 56      RESIZE        (path, len, blocks, user_resize\*)                0, or -1
 57      SOURCE        (flags, user_source\*)                            0, or -1
+58      EXECVE        (path, len, argv)                                 does not return, or -1
 ======  ============  ================================================  ======================
 
 the kernel side
@@ -107,6 +108,8 @@ what SYS_RESIZE did, in blocks of u_block_size: the partition's room, the most t
 the source tree this kernel was built from, out on the medium it booted from, described in a struct user_source. with SOURCE_HASH the archive on the medium is read and hashed as well, so a program can say whether it is the tree this kernel was built from. -1 when the medium carries no source, or stopped answering part way through the hash
 
 what SYS_SOURCE says: the archive on the medium, its files, bytes and first sector, then the size and sha1 of the archive the kernel was built with, and with SOURCE_HASH the sha1 of the one on the medium. both digests are hex. the build's is filled in even when the call returns -1, since the kernel knows it whatever the medium says
+
+become another program: the one at path, with argv, a NULL-ended array of strings, as its arguments, or with only its own path when argv is NULL. the pid, the descriptors, the working directory, the uid and the environment stay; caught signals go back to their defaults, since the code that caught them is gone. it does not return, unless it failed, and then it returns -1 with nothing changed. an argv longer than MAX_ARGS is refused rather than cut short
 
 who a datagram came from, filled in by recvfrom. a struct rather than two more registers because the syscall abi has six and recvfrom would otherwise want seven
 

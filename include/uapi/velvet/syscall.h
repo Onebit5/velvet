@@ -182,7 +182,17 @@ struct user_stat {
 
 #define SOURCE_HASH 1
 
-#define SYSCALL_COUNT 58
+/*
+ * become another program: the one at path, with argv, a NULL-ended
+ * array of strings, as its arguments, or with only its own path when
+ * argv is NULL. the pid, the descriptors, the working directory, the uid
+ * and the environment stay; caught signals go back to their defaults,
+ * since the code that caught them is gone. it does not return, unless
+ * it failed, and then it returns -1 with nothing changed
+ */
+#define SYS_EXECVE    58
+
+#define SYSCALL_COUNT 59
 
 /*
  * what SYS_SOURCE says: the archive on the medium, its files, bytes and

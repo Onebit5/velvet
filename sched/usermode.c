@@ -23,6 +23,8 @@
 #include <velvet/pit.h>
 #include <velvet/pipe.h>
 #include <velvet/netif.h>
+#include <velvet/signal.h>
+#include <asm/irq.h>
 
 const char *const USER_RUN_NO_SUCH_FILE = "no such file";
 
@@ -224,10 +226,21 @@ void user_spawn_env(const struct spawn_env *env)
     pending_env = env;
 }
 
-int user_spawn(const char *path, int argc, const char *const argv[],
-               const char *cwd,
-               int parent, int uid, bool announce,
-               const struct spawn_io *io, const char **error)
+/*
+ * a program made ready to run, short of anything to run it: its own
+ * address space with the image and a stack in it, where it starts, and
+ * its arguments already on that stack. spawn puts a new process around
+ * one, and exec swaps one in for the caller's
+ */
+struct user_image {
+    struct addrspace *p_space;
+    uint64_t u_entry;
+    struct argblock args;
+};
+
+static bool image_build(const char *str_path, int i_argc,
+                        const char *const pp_argv[],
+                        struct user_image *p_out, const char **pp_error)
 {
     /*
      * a program off the ramdisk is already in memory and is used where
@@ -237,16 +250,16 @@ int user_spawn(const char *path, int argc, const char *const argv[],
     const void *image = NULL;
     uint64_t image_size = 0;
     bool owned = false;
-    if (!vfs_slurp(path, &image, &image_size, &owned)) {
-        *error = USER_RUN_NO_SUCH_FILE;
-        return 0;
+    if (!vfs_slurp(str_path, &image, &image_size, &owned)) {
+        *pp_error = USER_RUN_NO_SUCH_FILE;
+        return false;
     }
 
     const char *bad = NULL;
     if (!elf_is_loadable(image, image_size, &bad)) {
         vfs_release(image, owned);
-        *error = bad;
-        return 0;
+        *pp_error = bad;
+        return false;
     }
 
     /*
@@ -256,8 +269,8 @@ int user_spawn(const char *path, int argc, const char *const argv[],
     struct addrspace *space = addrspace_create(vmm_kernel_pml4());
     if (space == NULL) {
         vfs_release(image, owned);
-        *error = "no memory for an address space";
-        return 0;
+        *pp_error = "no memory for an address space";
+        return false;
     }
 
     /*
@@ -313,8 +326,8 @@ int user_spawn(const char *path, int argc, const char *const argv[],
 
     if (!loaded.ok) {
         addrspace_destroy(space);
-        *error = (loaded.error != NULL) ? loaded.error : why;
-        return 0;
+        *pp_error = (loaded.error != NULL) ? loaded.error : why;
+        return false;
     }
 
     /* a stack for ring 3: writable, never executable, mapped user. */
@@ -324,16 +337,16 @@ int user_spawn(const char *path, int argc, const char *const argv[],
     if (!addrspace_add_region(space, stack_base, USER_STACK_TOP,
                               stack_flags, VMA_ANON, NULL, 0, 0)) {
         addrspace_destroy(space);
-        *error = "no room to describe a stack";
-        return 0;
+        *pp_error = "no room to describe a stack";
+        return false;
     }
 
     uint64_t eager_base = USER_STACK_TOP - USER_STACK_EAGER * PAGE_SIZE;
     uint64_t stack_phys = pmm_alloc_pages(USER_STACK_EAGER);
     if (stack_phys == 0) {
         addrspace_destroy(space);
-        *error = "no memory for a user stack";
-        return 0;
+        *pp_error = "no memory for a user stack";
+        return false;
     }
     memset(pmm_phys_to_virt(stack_phys), 0, USER_STACK_EAGER * PAGE_SIZE);
 
@@ -341,28 +354,41 @@ int user_spawn(const char *path, int argc, const char *const argv[],
                        USER_STACK_EAGER * PAGE_SIZE, stack_flags)) {
         pmm_free_pages(stack_phys, USER_STACK_EAGER);
         addrspace_destroy(space);
-        *error = "could not map a user stack";
-        return 0;
+        *pp_error = "could not map a user stack";
+        return false;
     }
 
+    if (!build_args(stack_phys, i_argc, pp_argv, &p_out->args)) {
+        addrspace_destroy(space);   /* which owns the stack by now */
+        *pp_error = "those arguments do not fit on a stack";
+        return false;
+    }
+    p_out->p_space = space;
+    p_out->u_entry = loaded.entry;
+    return true;
+}
+
+int user_spawn(const char *path, int argc, const char *const argv[],
+               const char *cwd,
+               int parent, int uid, bool announce,
+               const struct spawn_io *io, const char **error)
+{
+    struct user_image img;
+    if (!image_build(path, argc, argv, &img, error)) {
+        return 0;
+    }
+    struct addrspace *space = img.p_space;
     struct user_start *start = kmalloc(sizeof *start);
     if (start == NULL) {
-        addrspace_destroy(space);   /* which owns the stack by now */
+        addrspace_destroy(space);
         *error = "no memory";
         return 0;
     }
-    struct argblock args;
-    if (!build_args(stack_phys, argc, argv, &args)) {
-        kfree(start);
-        addrspace_destroy(space);
-        *error = "those arguments do not fit on a stack";
-        return 0;
-    }
 
-    start->entry     = loaded.entry;
-    start->stack_top = args.stack_top;
-    start->argc      = args.argc;
-    start->argv      = args.argv;
+    start->entry     = img.u_entry;
+    start->stack_top = img.args.stack_top;
+    start->argc      = img.args.argc;
+    start->argv      = img.args.argv;
 
     /*
      * the process comes first, because it is what outlives the thread
@@ -464,9 +490,46 @@ int user_spawn(const char *path, int argc, const char *const argv[],
 
     if (announce) {
         kprintf("[kernel] %s is pid %d, ring 3 at %p\n",
-                path, pid, (void *)loaded.entry);
+                path, pid, (void *)img.u_entry);
     }
     return pid;
+}
+
+bool user_exec(const char *str_path, int i_argc, const char *const pp_argv[],
+               struct user_entry *p_out, const char **pp_error)
+{
+    struct thread *p_me = sched_current();
+    if (p_me == NULL || p_me->pid == 0 || p_me->space == NULL) {
+        *pp_error = "only a program can become another one";
+        return false;
+    }
+
+    /* everything that can fail, done while the old program is still whole */
+    struct user_image img;
+    if (!image_build(str_path, i_argc, pp_argv, &img, pp_error)) {
+        return false;
+    }
+
+    /*
+     * interrupts off across the swap, so the scheduler never finds this
+     * thread naming one space while the cpu walks the other's tables
+     */
+    struct addrspace *p_old = p_me->space;
+    uint64_t u_flags = irq_save();
+    p_me->space = img.p_space;
+    addrspace_switch(img.p_space);
+    irq_restore(u_flags);
+    addrspace_destroy(p_old);
+
+    signal_exec(process_signal_state(p_me->pid));
+    process_set_name(p_me->pid, str_path);
+    thread_set_name(p_me, str_path);
+
+    p_out->u_entry = img.u_entry;
+    p_out->u_stack_top = img.args.stack_top;
+    p_out->u_argc = img.args.argc;
+    p_out->u_argv = img.args.argv;
+    return true;
 }
 
 /* wait for a pid, however it ends. */

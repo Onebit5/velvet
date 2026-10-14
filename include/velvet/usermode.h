@@ -29,6 +29,23 @@ void enter_usermode(uint64_t entry, uint64_t stack_top,
 
 extern const char *const USER_RUN_NO_SUCH_FILE;
 
+/* where a program starts, for whoever is about to send a thread there */
+struct user_entry {
+    uint64_t u_entry;
+    uint64_t u_stack_top;
+    uint64_t u_argc;
+    uint64_t u_argv;
+};
+
+/*
+ * the calling process becomes the program at `str_path`, keeping its
+ * pid, descriptors, working directory, uid and environment, with its
+ * caught signals back to their defaults. true with `p_out` saying where
+ * the new program starts; false with nothing changed at all
+ */
+bool user_exec(const char *str_path, int i_argc, const char *const pp_argv[],
+               struct user_entry *p_out, const char **pp_error);
+
 struct pipe;
 
 /* where a program's standard input and output go, before it starts. */

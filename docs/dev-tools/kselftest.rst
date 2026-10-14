@@ -202,7 +202,8 @@ kernel and not a library in front of it: ``write(fd, buf, len)``,
 ``sigsend(pid, sig)``, ``sleep_ms(ms)``, ``open(path)``,
 ``read(fd, buf, len)``, ``close(fd)``, ``readdir(path, index, buf,
 size)``, which puts the name of a directory's entry ``index`` in ``buf``,
-a directory's with a ``/`` after it, and returns -1 past the last, and
+a directory's with a ``/`` after it, and returns -1 past the last,
+``execv(path, argv)``, which keeps the caller's environment, and
 ``klogctl(type, buf, len)``, the ``syslog`` call under the name a C
 library gives it.
 ``ksft_memeq(a, b, len)`` and ``ksft_streq(a, b)`` compare bytes and

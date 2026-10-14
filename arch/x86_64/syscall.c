@@ -1278,6 +1278,102 @@ static int64_t sys_source(uint64_t u_flags, uint64_t u_out)
     return 0;
 }
 
+/*
+ * a string of the caller's whose length it did not say, into `str_out`.
+ * false when it runs past `sz_size` or off the end of what the caller
+ * owns; each page is asked about once, as the walk reaches it
+ */
+static bool copy_user_string(uint64_t u_str, char *str_out, size_t sz_size)
+{
+    for (size_t sz_at = 0; sz_at < sz_size; sz_at++) {
+        uint64_t u_addr = u_str + sz_at;
+        if ((sz_at == 0 || (u_addr & 0xfff) == 0)
+            && !user_range_ok(u_addr, 1)) {
+            return false;
+        }
+        str_out[sz_at] = *(const char *)u_addr;
+        if (str_out[sz_at] == '\0') {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* how much of the arguments the kernel carries across, strings and all */
+#define EXEC_ARGS_MAX 2048
+
+static int64_t sys_execve(struct user_regs *regs, uint64_t u_ptr,
+                          uint64_t u_len, uint64_t u_argv)
+{
+    char arr_path[PATH_MAX];
+    if (regs == NULL
+        || !copy_path_resolved(u_ptr, u_len, arr_path, sizeof arr_path)) {
+        return -1;
+    }
+
+    /*
+     * the arguments are copied out before anything else happens, since
+     * the memory they are in is about to stop existing
+     */
+    char *str_args = kmalloc(EXEC_ARGS_MAX);
+    if (str_args == NULL) {
+        return -1;
+    }
+    const char *arr_argv[MAX_ARGS];
+    int i_argc = 0;
+    size_t sz_used = 0;
+    bool b_ok = true;
+
+    if (u_argv == 0) {
+        arr_argv[i_argc++] = arr_path;
+    }
+    while (u_argv != 0) {
+        uint64_t u_slot = u_argv + (uint64_t)i_argc * 8;
+        if (!user_range_ok(u_slot, 8)) {
+            b_ok = false;
+            break;
+        }
+        uint64_t u_str = *(const uint64_t *)u_slot;
+        if (u_str == 0) {
+            break;
+        }
+        /*
+         * refused rather than cut short: a program run with half its
+         * arguments does the wrong thing quietly
+         */
+        if (i_argc == MAX_ARGS
+            || !copy_user_string(u_str, str_args + sz_used,
+                                 EXEC_ARGS_MAX - sz_used)) {
+            b_ok = false;
+            break;
+        }
+        arr_argv[i_argc++] = str_args + sz_used;
+        sz_used += strlen(str_args + sz_used) + 1;
+    }
+
+    struct user_entry e;
+    const char *str_why = NULL;
+    if (!b_ok || i_argc == 0
+        || !user_exec(arr_path, i_argc, arr_argv, &e, &str_why)) {
+        kfree(str_args);
+        return -1;
+    }
+    kfree(str_args);
+
+    /*
+     * the frame the exit path restores is the new program's start: its
+     * entry, its stack, its arguments where _start looks for them, the
+     * flags a fresh program gets, and nothing of the old one's
+     */
+    memset(regs, 0, sizeof *regs);
+    regs->rcx = e.u_entry;
+    regs->rsp = e.u_stack_top;
+    regs->rdi = e.u_argc;
+    regs->rsi = e.u_argv;
+    regs->r11 = RFLAGS_IF | 0x2;
+    return 0;
+}
+
 static int64_t sys_mkdir(uint64_t ptr, uint64_t len)
 {
     char path[PATH_MAX];
@@ -2018,6 +2114,8 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
         return sys_resize(a0, a1, a2, a3);
     case SYS_SOURCE:
         return sys_source(a0, a1);
+    case SYS_EXECVE:
+        return sys_execve(regs, a0, a1, a2);
     case SYS_YIELD:
         sched_yield();
         return 0;

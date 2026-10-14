@@ -195,6 +195,18 @@ static inline int64_t ksft_read_file(const char *str_path, char *str_buf,
 }
 
 /*
+ * become the program at `str_path`, with `pp_argv`, NULL-ended, as its
+ * arguments and the caller's environment as its own. returns only when
+ * it failed, with -1
+ */
+static inline int execv(const char *str_path, char *const pp_argv[])
+{
+    return (int)ksft_syscall(SYS_EXECVE, (int64_t)str_path,
+                             (int64_t)ksft_strlen(str_path),
+                             (int64_t)pp_argv);
+}
+
+/*
  * the kernel's log: SYSLOG_SIZE_BUFFER for how big all of it is, or
  * SYSLOG_READ_ALL for the newest `i_len` bytes of it in `str_buf`
  */

@@ -197,6 +197,9 @@ const struct process *process_find(int pid);
 
 const char *process_name(int pid);
 
+/* what a process is called from now on, which exec changes */
+void process_set_name(int i_pid, const char *str_name);
+
 bool process_set_env(int pid, const char *block, size_t len);
 
 size_t process_get_env(int pid, char *out, size_t max);
