@@ -162,6 +162,9 @@ void process_interrupt_group(int pgid);
 
 bool process_group_alive(int pgid);
 
+/* the live members of a group, by pid: how many, up to `sz_max` */
+size_t process_group_pids(int i_pgid, int *p_pids, size_t sz_max);
+
 void process_set_thread(int pid, int thread_id);
 
 int  process_thread(int pid);

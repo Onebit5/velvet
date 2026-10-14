@@ -1983,17 +1983,70 @@ static void deliver_signals(struct user_regs *regs)
  * or to anybody's when the sender is root. a guest able to stop root's
  * programs, init among them, is a guest able to stop the machine
  */
+static bool may_signal(int i_uid, int i_pid)
+{
+    const struct process *p_target = process_find(i_pid);
+    return p_target != NULL && !p_target->exited
+           && (i_uid == 0 || i_uid == p_target->uid);
+}
+
+/*
+ * a pid, or a whole group as minus its pgid, which reaches every member
+ * the sender may signal. -1 is not a group: elsewhere it means everyone,
+ * and this kernel does not offer that
+ */
 static int64_t sys_sigsend(uint64_t u_pid, uint64_t u_sig)
 {
-    const struct process *p_target = process_find((int)u_pid);
-    if (p_target == NULL || p_target->exited) {
-        return -1;
-    }
+    int i_pid = (int)u_pid;
     int i_uid = process_uid(caller_pid());
-    if (i_uid != 0 && i_uid != p_target->uid) {
+
+    if (i_pid >= 0) {
+        if (!may_signal(i_uid, i_pid)) {
+            return -1;
+        }
+        return process_signal(i_pid, (int)u_sig) ? 0 : -1;
+    }
+    if (i_pid == -1) {
         return -1;
     }
-    return process_signal((int)u_pid, (int)u_sig) ? 0 : -1;
+
+    int arr_pids[MAX_PROCESSES];
+    size_t sz_n = process_group_pids(-i_pid, arr_pids, MAX_PROCESSES);
+    bool b_any = false;
+    for (size_t sz_at = 0; sz_at < sz_n; sz_at++) {
+        if (may_signal(i_uid, arr_pids[sz_at])) {
+            b_any |= process_signal(arr_pids[sz_at], (int)u_sig);
+        }
+    }
+    return b_any ? 0 : -1;
+}
+
+/*
+ * put a process in a group: the caller or a child of its own, into a
+ * group named after it or one that already has a member of the same
+ * user. 0 for the pid means the caller and 0 for the group means the
+ * pid's own
+ */
+static int64_t sys_setpgid(uint64_t u_pid, uint64_t u_pgid)
+{
+    int i_me = caller_pid();
+    int i_pid = (u_pid == 0) ? i_me : (int)u_pid;
+    int i_pgid = (u_pgid == 0) ? i_pid : (int)u_pgid;
+    const struct process *p_target = process_find(i_pid);
+
+    if (p_target == NULL || p_target->exited || i_pgid <= 0
+        || (i_pid != i_me && p_target->parent != i_me)) {
+        return -1;
+    }
+    if (i_pgid != i_pid) {
+        int i_member = 0;
+        if (process_group_pids(i_pgid, &i_member, 1) == 0
+            || process_uid(i_member) != process_uid(i_me)) {
+            return -1;
+        }
+    }
+    process_set_pgid(i_pid, i_pgid);
+    return 0;
 }
 
 static int64_t sys_signal(uint64_t sig, uint64_t handler, uint64_t tramp)
@@ -2205,6 +2258,8 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
         return sys_pipe(a0);
     case SYS_DUP2:
         return sys_dup2(a0, a1);
+    case SYS_SETPGID:
+        return sys_setpgid(a0, a1);
     case SYS_YIELD:
         sched_yield();
         return 0;

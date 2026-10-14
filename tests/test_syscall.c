@@ -1721,6 +1721,56 @@ int main(void)
     }
 
     /*
+     * groups: a process puts itself or a child of its own into a group
+     * named after it, or into one of the same user's, and a signal to
+     * minus a pgid reaches every member the sender may signal
+     */
+    {
+        int i_was = me.pid;
+        int i_shell = process_create("sh", 0, 1000, false, 0);
+        int i_left = process_create("left", i_shell, 1000, false, 0);
+        int i_right = process_create("right", i_shell, 1000, false, 0);
+        int i_stranger = process_create("stranger", 0, 1000, false, 0);
+        int i_rootly = process_create("rootly2", 0, 0, false, 0);
+
+        me.pid = i_shell;
+        CHECK(call3(SYS_SETPGID, 0, 0, 0) == 0
+              && process_pgid(i_shell) == i_shell,
+              "setpgid(0, 0) is a group of one's own");
+        CHECK(call3(SYS_SETPGID, (uint64_t)i_left, 0, 0) == 0
+              && process_pgid(i_left) == i_left,
+              "a child can be put in a group of its own");
+        CHECK(call3(SYS_SETPGID, (uint64_t)i_right, (uint64_t)i_left, 0) == 0
+              && process_pgid(i_right) == i_left,
+              "or into a group that already has a member");
+        CHECK(call3(SYS_SETPGID, (uint64_t)i_stranger, 0, 0) == -1,
+              "but a process that is not the caller's child cannot");
+        CHECK(call3(SYS_SETPGID, 0, 30000, 0) == -1,
+              "nor can a group with nobody in it be joined");
+        process_set_pgid(i_rootly, i_rootly);
+        CHECK(call3(SYS_SETPGID, 0, (uint64_t)i_rootly, 0) == -1,
+              "nor another user's");
+
+        CHECK(call3(SYS_SIGSEND, (uint64_t)-i_left, SIGTERM, 0) == 0
+              && (process_signal_state(i_left)->pending & (1u << SIGTERM))
+              && (process_signal_state(i_right)->pending & (1u << SIGTERM))
+              && !(process_signal_state(i_shell)->pending
+                   & (1u << SIGTERM)),
+              "minus a pgid signals every member and nobody else");
+        CHECK(call3(SYS_SIGSEND, (uint64_t)-i_rootly, SIGTERM, 0) == -1,
+              "a group with no member the sender may signal is -1");
+        CHECK(call3(SYS_SIGSEND, (uint64_t)-1, SIGTERM, 0) == -1,
+              "and -1 is not a group");
+        me.pid = i_was;
+
+        int arr_pids[] = { i_shell, i_left, i_right, i_stranger, i_rootly };
+        for (int i_at = 0; i_at < 5; i_at++) {
+            process_exited(arr_pids[i_at], 0, 0);
+            process_collect(arr_pids[i_at], NULL);
+        }
+    }
+
+    /*
      * a pipe is two descriptors, one each way. what goes in one end comes
      * out of the other, dup2 puts an end wherever it is wanted, and once
      * every writing end is gone a read says so with 0

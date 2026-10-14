@@ -72,6 +72,7 @@ number  name          arguments                                         returns
 58      EXECVE        (path, len, argv)                                 does not return, or -1
 59      PIPE          (fds\*)                                           0, or -1
 60      DUP2          (from, to)                                        to, or -1
+61      SETPGID       (pid, pgid)                                       0, or -1
 ======  ============  ================================================  ======================
 
 the kernel side
@@ -116,6 +117,8 @@ become another program: the one at path, with argv, a NULL-ended array of string
 a pipe the caller holds both ends of: the reading end's descriptor in fds[0] and the writing end's in fds[1], two ints. reads wait for something to arrive and return 0 once every writing end is closed
 
 make descriptor to another handle on whatever from is, closing what to held first: to, or -1 when from is not open. a copy of a pipe end is one more holder of it, and a copy of a file keeps a position of its own
+
+put a process in a group: the caller or a child of its own, into a group named after it or one that already has a member of the same user. 0 for the pid means the caller and 0 for the group means the pid's own. sigsend with minus a pgid signals the whole group
 
 who a datagram came from, filled in by recvfrom. a struct rather than two more registers because the syscall abi has six and recvfrom would otherwise want seven
 

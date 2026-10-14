@@ -207,7 +207,15 @@ struct user_stat {
  */
 #define SYS_DUP2      60
 
-#define SYSCALL_COUNT 61
+/*
+ * put a process in a group: the caller or a child of its own, into a
+ * group named after it or one that already has a member of the same
+ * user. 0 for the pid means the caller and 0 for the group means the
+ * pid's own. sigsend with minus a pgid signals the whole group
+ */
+#define SYS_SETPGID   61
+
+#define SYSCALL_COUNT 62
 
 /*
  * what SYS_SOURCE says: the archive on the medium, its files, bytes and

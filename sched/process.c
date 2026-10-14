@@ -547,6 +547,22 @@ size_t process_group_threads(int pgid, int *ids, size_t max)
     return n;
 }
 
+size_t process_group_pids(int i_pgid, int *p_pids, size_t sz_max)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    size_t sz_n = 0;
+
+    for (size_t sz_at = 0; sz_at < MAX_PROCESSES && sz_n < sz_max; sz_at++) {
+        if (table[sz_at].pid != 0 && table[sz_at].pgid == i_pgid
+            && !table[sz_at].exited) {
+            p_pids[sz_n++] = table[sz_at].pid;
+        }
+    }
+
+    spin_unlock_irq(&process_lock, u_flags);
+    return sz_n;
+}
+
 bool process_group_alive(int pgid)
 {
     uint64_t flags = spin_lock_irq(&process_lock);

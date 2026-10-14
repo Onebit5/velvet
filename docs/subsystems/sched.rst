@@ -225,6 +225,13 @@ wherever they are due; the rule is about one program reaching another.
 a guest able to stop root's programs, init among them, would be a guest
 able to stop the machine.
 
+a job is a process group, and a shell makes one with ``setpgid``: itself
+or a child of its own, into a group named after it or one that already
+has a member of the same user. minus a pgid, given to ``sigsend``, is the
+whole group, and reaches every member the sender may signal. -1 is not a
+group: elsewhere it means everyone, which is not something this kernel
+offers.
+
 init
 ----
 

@@ -204,7 +204,7 @@ kernel and not a library in front of it: ``write(fd, buf, len)``,
 size)``, which puts the name of a directory's entry ``index`` in ``buf``,
 a directory's with a ``/`` after it, and returns -1 past the last,
 ``execv(path, argv)``, which keeps the caller's environment,
-``pipe(fds)``, ``dup2(from, to)`` and
+``pipe(fds)``, ``dup2(from, to)``, ``setpgid(pid, pgid)`` and
 ``klogctl(type, buf, len)``, the ``syslog`` call under the name a C
 library gives it.
 ``ksft_memeq(a, b, len)`` and ``ksft_streq(a, b)`` compare bytes and

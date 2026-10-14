@@ -194,6 +194,12 @@ static inline int64_t ksft_read_file(const char *str_path, char *str_buf,
     return (int64_t)sz_len;
 }
 
+/* process `i_pid` into group `i_pgid`, 0 meaning the caller and its own */
+static inline int setpgid(int i_pid, int i_pgid)
+{
+    return (int)ksft_syscall(SYS_SETPGID, i_pid, i_pgid, 0);
+}
+
 /* a pipe: its reading end in arr_fds[0] and its writing end in arr_fds[1] */
 static inline int pipe(int32_t arr_fds[2])
 {
