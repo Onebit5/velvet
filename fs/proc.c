@@ -104,10 +104,15 @@ int64_t proc_read(size_t sz_index, uint64_t u_offset, void *p_buf,
     return i_got;
 }
 
-/* what is running. the same words the boot banner starts with */
+/*
+ * what is running, the compiler that made it and when: version, then
+ * the compiler in brackets, then the date. a program wanting one of
+ * them splits the line rather than opening three files
+ */
 static void show_version(void)
 {
-    kprintf("velvet version %s\n", VELVET_VERSION);
+    kprintf("velvet version %s (gcc %s) %s %s\n", VELVET_VERSION,
+            __VERSION__, __DATE__, __TIME__);
 }
 
 /* how long it has been up, in seconds, to the hundredth. */

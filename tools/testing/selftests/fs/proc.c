@@ -71,11 +71,13 @@ int main(int i_argc, char **pp_argv)
     (void)i_argc;
     (void)pp_argv;
     ksft_print_header();
-    ksft_set_plan(6);
+    ksft_set_plan(7);
 
     int64_t i_len = slurp("/proc/version", arr_whole, TEXT_MAX, TEXT_MAX);
     ksft_test_result(i_len > 15 && ksft_memeq(arr_whole, "velvet version ", 15),
                      "/proc/version says which kernel this is\n");
+    ksft_test_result(ksft_contains(arr_whole, i_len, " (gcc "),
+                     "and which compiler made it\n");
 
     int64_t i_bits = slurp("/proc/version", arr_bits, TEXT_MAX, 3);
     ksft_test_result(i_bits == i_len && ksft_memeq(arr_whole, arr_bits,

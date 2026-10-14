@@ -66,8 +66,9 @@ file is registered as ``PROC_PUBLIC``, for anyone to read, or
 kernel keeps things is: an address of the kernel's is no business of a
 guest's.
 
-``/proc`` has ``version``, which kernel this is, and ``uptime``, seconds
-since boot to the hundredth. the rest are each subsystem's own.
+``/proc`` has ``version``, which kernel this is, the compiler that made it
+and when, on one line, and ``uptime``, seconds since boot to the
+hundredth. the rest are each subsystem's own.
 
 the filesystem's own are written by ``diskinfo.c``: ``disk``, the drive
 with every filesystem on it and what the block cache is holding;

@@ -123,6 +123,9 @@ int main(void)
     i_len = proc_render(0, arr_text, sizeof arr_text);
     CHECK(i_len > 15 && memcmp(arr_text, "velvet version ", 15) == 0,
           "version says which kernel");
+    arr_text[i_len] = '\0';
+    CHECK(strstr(arr_text, " (gcc ") != NULL && arr_text[i_len - 1] == '\n',
+          "and which compiler made it, on one line");
 
     /* read in pieces, it is the same file */
     char arr_piece[8];
