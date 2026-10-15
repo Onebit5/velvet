@@ -27,6 +27,7 @@
 #include <velvet/disk.h>
 #include <velvet/fsck.h>
 #include <velvet/source.h>
+#include <velvet/init.h>
 #include <velvet/hash.h>
 #include <velvet/path.h>
 #include <velvet/tty.h>
@@ -2303,6 +2304,13 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
         return tty_hand_to(caller_pid(), (int)a0) ? 0 : -1;
     case SYS_TCGETPGRP:
         return tty_foreground();
+    case SYS_REBOOT:
+        if (process_uid(caller_pid()) != 0
+            || (a0 != REBOOT_RESTART && a0 != REBOOT_POWER_OFF)) {
+            return -1;
+        }
+        init_stop_machine(a0 == REBOOT_RESTART ? INIT_REBOOT
+                                               : INIT_POWEROFF);
     case SYS_SETUID: {
         int i_uid = process_uid(caller_pid());
         if ((int)a0 < 0 || (i_uid != 0 && (int)a0 != i_uid)) {

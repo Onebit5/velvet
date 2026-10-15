@@ -247,7 +247,19 @@ struct user_stat {
  */
 #define SYS_SETUID    65
 
-#define SYSCALL_COUNT 66
+/*
+ * stop the machine: REBOOT_RESTART or REBOOT_POWER_OFF, and root's
+ * alone. on success it does not return. every program but init is asked
+ * to stop, then the kernel's own services, and the disk is written out
+ * and closed before the machine goes. -1 for anyone else, or for anything
+ * else asked
+ */
+#define SYS_REBOOT    66
+
+#define REBOOT_RESTART   1
+#define REBOOT_POWER_OFF 2
+
+#define SYSCALL_COUNT 67
 
 /*
  * what SYS_SOURCE says: the archive on the medium, its files, bytes and

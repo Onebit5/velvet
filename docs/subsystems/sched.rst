@@ -264,6 +264,13 @@ loses whatever had not reached the drive. everything has to be *stopped*
 before the sync, and it can only be stopped in an order if it was started in
 one.
 
+a program asks for that with ``reboot``, root's alone. it is the same road
+the shell's ``reboot`` and ``poweroff`` take, so a program stopping the
+machine stops it as tidily: every program but init first, then the
+services in the reverse of their order, then the disk written out and its
+journal closed. init is left waiting in the call, which is where an init
+that asked is meant to be.
+
 a *service* is a kernel thread init is prepared to start again. the four
 console sessions are services, and so is the disk flusher; everything else
 is a program somebody typed, and a program somebody typed should stay dead

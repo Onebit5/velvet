@@ -702,6 +702,16 @@ bool user_exec(const char *str_path, int i_argc, const char *const pp_argv[],
     return true;
 }
 
+/* stopping the machine never comes back, so the stub jumps out */
+#include <velvet/init.h>
+
+static int s_i_stopped_how = -1;
+void init_stop_machine(enum init_stop e_how)
+{
+    s_i_stopped_how = (int)e_how;
+    longjmp(jb, 1);
+}
+
 bool user_collect(int i_pid, int *p_code)
 {
     return process_collect(i_pid, p_code);
@@ -1814,6 +1824,32 @@ int main(void)
             process_exited(arr_pids[i_at], 0, 0);
             process_collect(arr_pids[i_at], NULL);
         }
+    }
+
+    /*
+     * the machine is root's to stop, and only the two ways it can stop
+     */
+    {
+        int i_was = me.pid;
+        int i_guest = process_create("guest7", 0, 1000, false, 0);
+
+        me.pid = i_guest;
+        CHECK(call3(SYS_REBOOT, REBOOT_POWER_OFF, 0, 0) == -1
+              && s_i_stopped_how == -1,
+              "a guest may not stop the machine");
+        me.pid = i_was;
+        CHECK(call3(SYS_REBOOT, 7, 0, 0) == -1 && s_i_stopped_how == -1,
+              "nor may root ask for a way it does not stop");
+        if (setjmp(jb) == 0) {
+            call3(SYS_REBOOT, REBOOT_POWER_OFF, 0, 0);
+        }
+        CHECK(s_i_stopped_how == INIT_POWEROFF, "root powers it off");
+        if (setjmp(jb) == 0) {
+            call3(SYS_REBOOT, REBOOT_RESTART, 0, 0);
+        }
+        CHECK(s_i_stopped_how == INIT_REBOOT, "or restarts it");
+        process_exited(i_guest, 0, 0);
+        process_collect(i_guest, NULL);
     }
 
     /*

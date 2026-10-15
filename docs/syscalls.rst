@@ -77,6 +77,7 @@ number  name          arguments                                         returns
 63      TCSETPGRP     (pgid)                                            0, or -1
 64      TCGETPGRP     ()                                                the pgid in front
 65      SETUID        (uid)                                             0, or -1
+66      REBOOT        (how)                                             does not return, or -1
 ======  ============  ================================================  ======================
 
 the kernel side
@@ -129,6 +130,8 @@ put a process in a group: the caller or a child of its own, into a group named a
 the terminal. ttyattach, root's alone, moves the caller onto console n and makes it the program that console belongs to, with its group in front; its children are born on that console. tcsetpgrp puts a group in front of the caller's console, which the console's program may do, and so may a member of the group in front, giving it away. tcgetpgrp says which group is in front, 0 while it is the kernel's own shell. ctrl+c and ctrl+z on a program's console are SIGINT and SIGTSTP to the group in front
 
 run as uid from now on. root may become anybody, which is how a login becomes the user it let in, and anyone else only who they already are, so nothing that is not root ever becomes root this way
+
+stop the machine: REBOOT_RESTART or REBOOT_POWER_OFF, and root's alone. on success it does not return. every program but init is asked to stop, then the kernel's own services, and the disk is written out and closed before the machine goes. -1 for anyone else, or for anything else asked
 
 who a datagram came from, filled in by recvfrom. a struct rather than two more registers because the syscall abi has six and recvfrom would otherwise want seven
 
