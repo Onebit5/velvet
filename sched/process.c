@@ -64,6 +64,12 @@ int process_create(const char *name, int parent, int uid, bool announce,
         }
         struct process *p = &table[i];
 
+        /*
+         * the slot still holds whatever the last process in it left. a
+         * field nobody sets below would start out as that process's
+         */
+        memset(p, 0, sizeof *p);
+
         p->pid        = next_pid++;
         p->parent     = parent;
         /*
@@ -73,19 +79,10 @@ int process_create(const char *name, int parent, int uid, bool announce,
         p->pgid       = p->pid;
         p->uid        = uid;
         p->announce   = announce;
-        p->thread_id  = 0;
-        p->exited     = false;
-        p->exit_code  = 0;
-        p->interrupted = false;
         signal_reset(&p->sig);
-        p->sig_trampoline = 0;
-        p->killed_by = 0;
-        p->alarm_at = 0;
         p->started_ms = now_ms;
-        p->ended_ms   = 0;
 
         /* the three every process is born with. */
-        memset(p->fds, 0, sizeof p->fds);
         p->fds[FD_STDIN].kind  = FD_KEYBOARD;
         p->fds[FD_STDOUT].kind = FD_CONSOLE;
         p->fds[FD_STDERR].kind = FD_CONSOLE;
