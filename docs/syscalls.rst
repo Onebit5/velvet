@@ -73,6 +73,9 @@ number  name          arguments                                         returns
 59      PIPE          (fds\*)                                           0, or -1
 60      DUP2          (from, to)                                        to, or -1
 61      SETPGID       (pid, pgid)                                       0, or -1
+62      TTYATTACH     (console)                                         0, or -1
+63      TCSETPGRP     (pgid)                                            0, or -1
+64      TCGETPGRP     ()                                                the pgid in front
 ======  ============  ================================================  ======================
 
 the kernel side
@@ -121,6 +124,8 @@ a pipe the caller holds both ends of: the reading end's descriptor in fds[0] and
 make descriptor to another handle on whatever from is, closing what to held first: to, or -1 when from is not open. a copy of a pipe end is one more holder of it, and a copy of a file keeps a position of its own
 
 put a process in a group: the caller or a child of its own, into a group named after it or one that already has a member of the same user. 0 for the pid means the caller and 0 for the group means the pid's own. sigsend with minus a pgid signals the whole group
+
+the terminal. ttyattach, root's alone, moves the caller onto console n and makes it the program that console belongs to, with its group in front; its children are born on that console. tcsetpgrp puts a group in front of the caller's console, which the console's program may do, and so may a member of the group in front, giving it away. tcgetpgrp says which group is in front, 0 while it is the kernel's own shell. ctrl+c and ctrl+z on a program's console are SIGINT and SIGTSTP to the group in front
 
 who a datagram came from, filled in by recvfrom. a struct rather than two more registers because the syscall abi has six and recvfrom would otherwise want seven
 

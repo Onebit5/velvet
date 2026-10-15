@@ -2296,6 +2296,13 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
         return sys_dup2(a0, a1);
     case SYS_SETPGID:
         return sys_setpgid(a0, a1);
+    case SYS_TTYATTACH:
+        return (process_uid(caller_pid()) == 0
+                && tty_attach(caller_pid(), (unsigned)a0)) ? 0 : -1;
+    case SYS_TCSETPGRP:
+        return tty_hand_to(caller_pid(), (int)a0) ? 0 : -1;
+    case SYS_TCGETPGRP:
+        return tty_foreground();
     case SYS_YIELD:
         sched_yield();
         return 0;

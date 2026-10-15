@@ -548,6 +548,22 @@ int tty_foreground(void)
     return foreground_pid;
 }
 
+/* the rules are test_tty's; here only that the calls reach them, and who may */
+static unsigned s_u_attached = 99;
+bool tty_attach(int i_pid, unsigned u_console)
+{
+    (void)i_pid;
+    s_u_attached = u_console;
+    return true;
+}
+static int s_i_handed = 0;
+bool tty_hand_to(int i_caller, int i_pgid)
+{
+    (void)i_caller;
+    s_i_handed = i_pgid;
+    return true;
+}
+
 /* the line discipline is the tty's own business and has its own suite. */
 static bool tty_was_read;
 int64_t tty_read_line(int pid, char *buf, uint64_t len)
@@ -1798,6 +1814,31 @@ int main(void)
             process_exited(arr_pids[i_at], 0, 0);
             process_collect(arr_pids[i_at], NULL);
         }
+    }
+
+    /*
+     * a console is root's to give: a guest may not take one, and the
+     * group in front is anybody's to ask about
+     */
+    {
+        int i_was = me.pid;
+        int i_guest = process_create("guest6", 0, 1000, false, 0);
+
+        CHECK(call3(SYS_TTYATTACH, 2, 0, 0) == 0 && s_u_attached == 2,
+              "root attaches to a console");
+        me.pid = i_guest;
+        s_u_attached = 99;
+        CHECK(call3(SYS_TTYATTACH, 1, 0, 0) == -1 && s_u_attached == 99,
+              "a guest may not");
+        CHECK(call3(SYS_TCSETPGRP, 77, 0, 0) == 0 && s_i_handed == 77,
+              "tcsetpgrp asks the terminal");
+        foreground_pid = 31;
+        CHECK(call3(SYS_TCGETPGRP, 0, 0, 0) == 31,
+              "and tcgetpgrp says who is in front");
+        me.pid = i_was;
+        foreground_pid = i_was;
+        process_exited(i_guest, 0, 0);
+        process_collect(i_guest, NULL);
     }
 
     /*

@@ -24,6 +24,14 @@ static int foreground[VCONSOLE_COUNT];
 /* set by ctrl+z, taken by whoever was waiting. */
 static int stopped_group[VCONSOLE_COUNT];
 
+/*
+ * the program that took each console as its terminal, or 0 while the
+ * console is the kernel shell's. on a program's console ctrl+c and
+ * ctrl+z are signals to the group in front and nothing more: what
+ * becomes of a job is the program's business
+ */
+static int controller[VCONSOLE_COUNT];
+
 unsigned tty_my_console(void)
 {
     struct thread *t = sched_current();
@@ -72,6 +80,45 @@ bool tty_is_current(int pid)
 int tty_foreground(void)
 {
     return foreground[tty_my_console()];
+}
+
+bool tty_attach(int i_pid, unsigned u_console)
+{
+    struct thread *p_me = sched_current();
+    if (p_me == NULL || u_console >= VCONSOLE_COUNT) {
+        return false;
+    }
+    int i_pgid = process_pgid(i_pid);
+
+    p_me->console = u_console;
+    uint64_t u_flags = spin_lock_irq(&tty_lock);
+    controller[u_console] = i_pid;
+    foreground[u_console] = i_pgid;
+    spin_unlock_irq(&tty_lock, u_flags);
+    return true;
+}
+
+bool tty_hand_to(int i_caller, int i_pgid)
+{
+    int i_member = 0;
+    int i_uid = process_uid(i_caller);
+    int i_caller_pgid = process_pgid(i_caller);
+
+    if (process_group_pids(i_pgid, &i_member, 1) == 0
+        || (i_uid != 0 && process_uid(i_member) != i_uid)) {
+        return false;
+    }
+
+    unsigned u_console = tty_my_console();
+    uint64_t u_flags = spin_lock_irq(&tty_lock);
+    bool b_may = (controller[u_console] != 0
+                  && controller[u_console] == i_caller)
+                 || i_caller_pgid == foreground[u_console];
+    if (b_may) {
+        foreground[u_console] = i_pgid;
+    }
+    spin_unlock_irq(&tty_lock, u_flags);
+    return b_may;
 }
 
 /* ctrl+z: stop the whole job where it stands. */
@@ -143,6 +190,12 @@ bool tty_intercept(int key)
     if (pgid == TTY_SHELL) {
         /* the shell is at the front. */
         return key == KEY_CTRL_Z;
+    }
+
+    /* a program's terminal: a signal to the group in front, and that is all */
+    if (controller[console] != 0) {
+        process_signal_group(pgid, key == KEY_CTRL_C ? SIGINT : SIGTSTP);
+        return true;
     }
 
     if (key == KEY_CTRL_Z) {

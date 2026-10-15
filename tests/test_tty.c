@@ -419,6 +419,52 @@ int main(void)
         process_collect(pid2, NULL);
     }
 
+    /*
+     * a console a program owns: it and the group in front may hand the
+     * terminal on, nobody else may, and ctrl+c and ctrl+z are signals
+     * to the group in front and nothing more
+     */
+    {
+        int i_sh = process_create("sh", 0, 1000, false, 0);
+        int i_job = process_create("job", i_sh, 1000, false, 0);
+        int i_stranger = process_create("stranger", 0, 1000, false, 0);
+        int i_rootly = process_create("rootly", 0, 0, false, 0);
+        process_set_thread(i_job, 41);
+
+        CHECK(tty_attach(i_sh, 1) && this_thread.console == 1
+              && tty_foreground() == i_sh,
+              "attaching puts the program's group in front of its console");
+        CHECK(tty_hand_to(i_sh, i_job) && tty_foreground() == i_job,
+              "the console's program hands it to a job");
+        CHECK(!tty_hand_to(i_stranger, i_stranger),
+              "a stranger may not take it");
+        CHECK(!tty_hand_to(i_sh, 30000),
+              "nor may it go to a group with nobody in it");
+        CHECK(!tty_hand_to(i_sh, i_rootly), "nor to another user's");
+
+        shown = 1;
+        stopped_count = 0;
+        killed_thread = -1;
+        CHECK(tty_intercept(KEY_CTRL_C)
+              && (process_signal_state(i_job)->pending & (1u << SIGINT)),
+              "ctrl+c is SIGINT to the group in front");
+        CHECK(tty_intercept(KEY_CTRL_C) && killed_thread == -1,
+              "and a second is another SIGINT, not a kill");
+        CHECK(tty_intercept(KEY_CTRL_Z) && stopped_count == 1
+              && tty_foreground() == i_job,
+              "ctrl+z stops the job and leaves the terminal where it is");
+        CHECK(tty_hand_to(i_sh, i_sh) && tty_foreground() == i_sh,
+              "for the program to take back itself");
+
+        int arr_pids[] = { i_sh, i_job, i_stranger, i_rootly };
+        for (int i_at = 0; i_at < 4; i_at++) {
+            process_exited(arr_pids[i_at], 0, 0);
+            process_collect(arr_pids[i_at], NULL);
+        }
+        shown = 0;
+        this_thread.console = 0;
+    }
+
     if (!failures) printf("all good\n");
     return failures;
 }

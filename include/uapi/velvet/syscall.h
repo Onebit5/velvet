@@ -226,7 +226,21 @@ struct user_stat {
  */
 #define SYS_SETPGID   61
 
-#define SYSCALL_COUNT 62
+/*
+ * the terminal. ttyattach, root's alone, moves the caller onto console
+ * n and makes it the program that console belongs to, with its group in
+ * front; its children are born on that console. tcsetpgrp puts a group
+ * in front of the caller's console, which the console's program may do,
+ * and so may a member of the group in front, giving it away. tcgetpgrp
+ * says which group is in front, 0 while it is the kernel's own shell.
+ * ctrl+c and ctrl+z on a program's console are SIGINT and SIGTSTP to
+ * the group in front
+ */
+#define SYS_TTYATTACH 62
+#define SYS_TCSETPGRP 63
+#define SYS_TCGETPGRP 64
+
+#define SYSCALL_COUNT 65
 
 /*
  * what SYS_SOURCE says: the archive on the medium, its files, bytes and

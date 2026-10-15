@@ -210,6 +210,18 @@ static inline int setpgid(int i_pid, int i_pgid)
     return (int)ksft_syscall(SYS_SETPGID, i_pid, i_pgid, 0);
 }
 
+/* the group in front of the caller's console, 0 for the kernel's shell */
+static inline int tcgetpgrp(void)
+{
+    return (int)ksft_syscall(SYS_TCGETPGRP, 0, 0, 0);
+}
+
+/* put group `i_pgid` in front of the caller's console */
+static inline int tcsetpgrp(int i_pgid)
+{
+    return (int)ksft_syscall(SYS_TCSETPGRP, i_pgid, 0, 0);
+}
+
 /* a pipe: its reading end in arr_fds[0] and its writing end in arr_fds[1] */
 static inline int pipe(int32_t arr_fds[2])
 {

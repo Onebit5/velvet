@@ -27,6 +27,20 @@ void tty_set_foreground(int pgid);
 int  tty_foreground(void);
 
 /*
+ * the calling thread moves to console `u_console`, and process `i_pid`
+ * becomes the program that console belongs to, with its group in front
+ */
+bool tty_attach(int i_pid, unsigned u_console);
+
+/*
+ * put group `i_pgid` in front of the caller's console. the program the
+ * console belongs to may, and so may a member of the group in front,
+ * giving it away. the group has to have somebody in it, of the caller's
+ * own user unless the caller is root
+ */
+bool tty_hand_to(int i_caller, int i_pgid);
+
+/*
  * a key arrived. returns true if the tty consumed it rather than
  * passing it on as a character, ctrl+c and ctrl+z aimed at a program
  * are requests, not bytes, and must not end up in anybody's buffer

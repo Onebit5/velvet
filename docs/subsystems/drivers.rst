@@ -112,6 +112,19 @@ console a caller means is not passed in: it is whichever the calling thread
 belongs to, because that is always the right answer and passing it would
 only be an opportunity to pass the wrong one.
 
+a console can also belong to a program. ``ttyattach``, which only root
+may call, moves the caller onto a console and makes it the program that
+console belongs to, with its group in front; its children are born on the
+same console. from then on the jobs are the program's to run: it puts a
+group in front with ``tcsetpgrp``, and ctrl+c and ctrl+z are SIGINT and
+SIGTSTP to whatever group is in front, with no second ctrl+c turning into
+a kill and no terminal handed back on a stop. the shell learns of the
+stop from ``wait`` and takes the terminal back itself. the console's
+program may always put a group in front; otherwise only a member of the
+group already there may, which is how a job gives the terminal back. the
+kernel shell's own consoles keep their old rules for as long as it runs
+jobs.
+
 ``termios.c`` is how a terminal treats what is typed at it, and it is only
 the *policy*: given a mode and a key, what does the terminal do. the reading,
 echoing and waking need a machine and live in ``tty.c``; this half does not,
