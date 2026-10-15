@@ -240,6 +240,13 @@ uint64_t process_set_alarm(int pid, uint64_t seconds, uint64_t now_ms);
 void process_check_alarms(uint64_t now_ms);
 
 void process_died_by_signal(int pid, int sig);
+
+/*
+ * a pending, unblocked signal whose action is to end the process, taken
+ * off it: which, or 0. the others are left for delivery, since running
+ * a handler needs the frame a call leaves and an interrupt does not
+ */
+int process_take_fatal(int i_pid);
 int  process_killed_by(int pid);
 
 bool process_interrupt_pending(int pid);

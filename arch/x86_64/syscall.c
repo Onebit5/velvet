@@ -1928,6 +1928,17 @@ static bool enter_handler(struct user_regs *regs, int sig, uint64_t handler)
     return true;
 }
 
+void syscall_end_if_fatal(void)
+{
+    int i_pid = caller_pid();
+    int i_sig = (i_pid > 0) ? process_take_fatal(i_pid) : 0;
+
+    if (i_sig != 0) {
+        process_died_by_signal(i_pid, i_sig);
+        thread_exit(128 + i_sig);       /* never returns */
+    }
+}
+
 static void deliver_signals(struct user_regs *regs)
 {
     int pid = caller_pid();

@@ -115,6 +115,28 @@ int process_create(const char *name, int parent, int uid, bool announce,
     return pid;
 }
 
+int process_take_fatal(int i_pid)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    int i_found = 0;
+
+    if (p != NULL) {
+        uint32_t u_ready = p->sig.pending & ~p->sig.blocked;
+        for (int i_sig = 1; i_sig < SIGNAL_MAX && i_found == 0; i_sig++) {
+            if ((u_ready & (1u << i_sig))
+                && signal_action_for(&p->sig, i_sig)
+                   == SIGNAL_ACTION_TERMINATE) {
+                p->sig.pending &= ~(1u << i_sig);
+                i_found = i_sig;
+            }
+        }
+        p->interrupted = signal_deliverable(&p->sig);
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    return i_found;
+}
+
 void process_set_thread(int pid, int thread_id)
 {
     uint64_t flags = spin_lock_irq(&process_lock);

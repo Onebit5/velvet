@@ -218,6 +218,14 @@ handler waits rather than nesting, without it, ctrl+c held down is a stack
 that grows until it hits the guard page. see `sigsuspend` and the rest in
 `the system calls <../syscalls.rst>`_.
 
+signals are delivered on the way back to ring 3 from a call, where the
+kernel has the program's registers to hand for a handler. a program busy
+in a loop makes no calls, so an interrupt that is about to return to
+ring 3 also looks, for a pending signal whose action is to end the
+process, and ends it there. SIGKILL ending anything at all is the whole
+of its promise. a handler still waits for the next call: running one
+needs the frame a call leaves, and an interrupt's is shaped differently.
+
 a program sends one with ``sigsend``, and only where it has a say: to its
 own processes, or to anybody's when it is root. the kernel raises signals
 of its own, ctrl+c and a pipe with no reader among them, and those go

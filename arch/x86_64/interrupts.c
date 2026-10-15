@@ -20,6 +20,7 @@
 #include <velvet/addrspace.h>
 #include <velvet/console.h>
 #include <velvet/sched.h>
+#include <asm/syscall.h>
 #include <stddef.h>
 
 /*
@@ -147,6 +148,9 @@ void interrupt_dispatch(struct interrupt_frame *f)
         p_thread->u_in_interrupt++;
     }
     interrupt_handle(f);
+    if ((f->cs & 3) == 3) {
+        syscall_end_if_fatal();
+    }
     if (p_thread != NULL) {
         p_thread->u_in_interrupt--;
     }

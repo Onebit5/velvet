@@ -184,6 +184,31 @@ int main(void)
         process_collect(i_writer, NULL);
     }
 
+    /*
+     * what an interrupt back to ring 3 may act on: a pending, unblocked
+     * signal that ends the process, and nothing that needs a handler
+     */
+    {
+        int i_busy = process_create("busy", 0, 0, false, 600);
+        struct signal_state *p_sig = process_signal_state(i_busy);
+
+        signal_set_handler(p_sig, SIGINT, 0x401000);
+        process_signal(i_busy, SIGINT);
+        process_signal(i_busy, SIGCHLD);
+        CHECK(process_take_fatal(i_busy) == 0
+              && (p_sig->pending & (1u << SIGINT)),
+              "a handled signal is left for delivery, an ignored one too");
+        p_sig->blocked |= 1u << SIGTERM;
+        process_signal(i_busy, SIGTERM);
+        CHECK(process_take_fatal(i_busy) == 0, "a blocked one waits");
+        p_sig->blocked = 0;
+        CHECK(process_take_fatal(i_busy) == SIGTERM
+              && !(p_sig->pending & (1u << SIGTERM)),
+              "and an unblocked SIGTERM is taken, to end it");
+        process_exited(i_busy, 0, 610);
+        process_collect(i_busy, NULL);
+    }
+
     int pid = process_create("bin/hello", 0, 0, false, 1000);
     CHECK(pid > 0, "a process gets a pid");
     CHECK(process_count() == 1, "and occupies a slot");

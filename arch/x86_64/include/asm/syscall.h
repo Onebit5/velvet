@@ -51,6 +51,14 @@ _Static_assert(sizeof(struct user_regs) == 15 * 8,
  */
 void fork_return(struct user_regs *frame);
 
+/*
+ * for an interrupt about to go back to ring 3: a pending signal that
+ * ends the process ends it here. a program busy in a loop makes no
+ * calls for one to be delivered on the way out of, and SIGKILL has to
+ * end it all the same
+ */
+void syscall_end_if_fatal(void);
+
 
 /* wire up STAR/LSTAR/SFMASK and turn on EFER.SCE */
 void syscall_init(void);
