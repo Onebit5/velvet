@@ -1817,6 +1817,30 @@ int main(void)
     }
 
     /*
+     * root may become anybody, anybody else only who they already are,
+     * and once root has become a guest there is no way back
+     */
+    {
+        int i_was = me.pid;
+        int i_login = process_create("login", 0, 0, false, 0);
+
+        me.pid = i_login;
+        CHECK(call3(SYS_SETUID, 1000, 0, 0) == 0
+              && call3(SYS_GETUID, 0, 0, 0) == 1000,
+              "root becomes the user it let in");
+        CHECK(call3(SYS_SETUID, 1000, 0, 0) == 0,
+              "a user may stay who it is");
+        CHECK(call3(SYS_SETUID, 0, 0, 0) == -1
+              && call3(SYS_GETUID, 0, 0, 0) == 1000,
+              "and may not become root again");
+        CHECK(call3(SYS_SETUID, (uint64_t)-5, 0, 0) == -1,
+              "nor anybody with a negative uid");
+        me.pid = i_was;
+        process_exited(i_login, 0, 0);
+        process_collect(i_login, NULL);
+    }
+
+    /*
      * a console is root's to give: a guest may not take one, and the
      * group in front is anybody's to ask about
      */

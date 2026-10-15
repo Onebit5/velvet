@@ -157,6 +157,9 @@ bool process_announces(int pid);
 int  process_uid(int pid);
 
 int  process_pgid(int pid);
+
+/* who a process runs as from now on. whether it may is the caller's question */
+void process_set_uid(int i_pid, int i_uid);
 void process_set_pgid(int pid, int pgid);
 
 size_t process_group_threads(int pgid, int *ids, size_t max);

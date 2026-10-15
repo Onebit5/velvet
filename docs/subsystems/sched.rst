@@ -295,6 +295,11 @@ of it. ``auth_load()`` takes the text directly so the awkward cases.
 comments, blank lines, a line with a field missing. can be fed in
 deliberately rather than hoped about.
 
+a login in ring 3 checks the password itself and then becomes the user
+with ``setuid``. root may become anybody and anyone else only who they
+already are, so the one way to a uid of 0 is to have it already, and a
+login that has become a guest cannot come back.
+
 ring 3
 ------
 

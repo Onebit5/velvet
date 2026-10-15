@@ -616,6 +616,16 @@ bool process_take_interrupt(int pid)
 
 
 
+void process_set_uid(int i_pid, int i_uid)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    if (p != NULL) {
+        p->uid = i_uid;
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+}
+
 int process_pgid(int pid)
 {
     uint64_t flags = spin_lock_irq(&process_lock);

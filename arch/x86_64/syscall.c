@@ -2303,6 +2303,14 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
         return tty_hand_to(caller_pid(), (int)a0) ? 0 : -1;
     case SYS_TCGETPGRP:
         return tty_foreground();
+    case SYS_SETUID: {
+        int i_uid = process_uid(caller_pid());
+        if ((int)a0 < 0 || (i_uid != 0 && (int)a0 != i_uid)) {
+            return -1;
+        }
+        process_set_uid(caller_pid(), (int)a0);
+        return 0;
+    }
     case SYS_YIELD:
         sched_yield();
         return 0;

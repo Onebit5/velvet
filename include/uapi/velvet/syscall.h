@@ -240,7 +240,14 @@ struct user_stat {
 #define SYS_TCSETPGRP 63
 #define SYS_TCGETPGRP 64
 
-#define SYSCALL_COUNT 65
+/*
+ * run as uid from now on. root may become anybody, which is how a login
+ * becomes the user it let in, and anyone else only who they already are,
+ * so nothing that is not root ever becomes root this way
+ */
+#define SYS_SETUID    65
+
+#define SYSCALL_COUNT 66
 
 /*
  * what SYS_SOURCE says: the archive on the medium, its files, bytes and
