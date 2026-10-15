@@ -95,6 +95,16 @@ static inline int wait(int i_pid, int *p_status)
     return (int)ksft_syscall(SYS_WAIT, i_pid, (int64_t)p_status, 0);
 }
 
+/*
+ * wait with flags: WNOHANG for 0 rather than waiting, WUNTRACED to be
+ * told of a stop, as WAIT_STOPPED plus the signal. -1 for the pid is any
+ * child
+ */
+static inline int waitpid(int i_pid, int *p_status, int i_flags)
+{
+    return (int)ksft_syscall(SYS_WAIT, i_pid, (int64_t)p_status, i_flags);
+}
+
 static inline int getpid(void)
 {
     return (int)ksft_syscall(SYS_GETPID, 0, 0, 0);

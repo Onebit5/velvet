@@ -21,7 +21,7 @@ number  name          arguments                                         returns
 7       CLOSE         (fd)                                              
 8       GETPID        ()                                                pid
 9       SPAWN         (path, len)                                       pid of the new one
-10      WAIT          (pid, int \*code)                                 pid, blocks
+10      WAIT          (pid, int \*status, flags)                       pid, 0, or -1
 11      READDIR       (n,buf,len,path,plen)                             name length, or -1
 12      GETUID        ()                                                who this runs as
 13      CREATE        (path, len)                                       fd, for writing
@@ -89,6 +89,8 @@ it includes nothing else of the kernel's. the entry stub, the saved frame
 and the rest of what follows are x86's, in ``<asm/syscall.h>``.
 
 the door between ring 3 and here. numbers are the kernel's, deliberately small in number, there is no libc out there to satisfy, only the handful of things a program in this kernel could want
+
+wait(pid, &status, flags). pid is a child, or -1 for any. the status is what the child passed to exit, 128 plus the signal that ended it, or with WUNTRACED, WAIT_STOPPED plus the signal that stopped it, told once per stop. WNOHANG returns 0 rather than waiting when no child has anything to tell yet. -1 for no such child, or an interrupted wait
 
 four calls here are for a program drawing whole screens, and a shell needs none of them: it prints a prompt, reads a line and prints an answer, and the console keeps the cursor where the printing left it. an editor cannot work that way. it paints the entire screen, puts the cursor somewhere in the middle of what it painted, and waits for one keystroke rather than a line. getkey is the interesting one, because it is *also* how raw mode arrives. there is no flag anywhere saying "this terminal is raw": asking for a line gets the line discipline with its echo and its backspace handling, and asking for a key gets the key. the two questions are different, so they are different calls, and nothing has to remember which mode anything is in
 

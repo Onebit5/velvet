@@ -114,6 +114,9 @@ struct process {
 
     bool     interrupted;
 
+    int      i_stopped_by;      /* the signal that stopped it, 0 running */
+    bool     b_stop_told;       /* and whether a wait has said so yet */
+
     struct signal_state sig;
 
     uint64_t sig_trampoline;
@@ -226,6 +229,19 @@ void process_interrupt(int pid);
 
 bool process_signal(int pid, int sig);
 bool process_signal_group(int pgid, int sig);
+
+/* stopped by `i_sig` on its way back to ring 3, rather than when sent */
+void process_stopped(int i_pid, int i_sig);
+
+/*
+ * a child of `i_parent` with something to say, `i_pid` itself or any
+ * when it is -1: its pid, with `*p_ended` true and the exit status, or
+ * false and WAIT_STOPPED with the signal for a stop not yet told, when
+ * `b_untraced` asks about stops. 0 when none has anything yet, and -1
+ * when there is no such child at all
+ */
+int process_reportable(int i_parent, int i_pid, bool b_untraced,
+                       int *p_status, bool *p_ended);
 
 struct signal_state *process_signal_state(int pid);
 

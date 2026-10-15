@@ -27,6 +27,17 @@
 #define SYS_GETPID 8
 #define SYS_SPAWN  9
 #define SYS_WAIT   10
+
+/*
+ * wait(pid, &status, flags). pid is a child, or -1 for any. the status
+ * is what the child passed to exit, 128 plus the signal that ended it,
+ * or with WUNTRACED, WAIT_STOPPED plus the signal that stopped it, told
+ * once per stop. WNOHANG returns 0 rather than waiting when no child has
+ * anything to tell yet. -1 for no such child, or an interrupted wait
+ */
+#define WNOHANG      1
+#define WUNTRACED    2
+#define WAIT_STOPPED 0x100
 #define SYS_READDIR 11
 #define SYS_GETUID 12
 #define SYS_CREATE 13

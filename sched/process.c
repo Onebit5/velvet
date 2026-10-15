@@ -10,6 +10,8 @@
 #include <velvet/spinlock.h>
 #include <velvet/pipe.h>
 #include <velvet/string.h>
+#include <velvet/sched.h>
+#include <uapi/velvet/syscall.h>
 
 /* a fixed table rather than a linked list of allocations. */
 /* the process table and every descriptor in it. */
@@ -326,13 +328,50 @@ void process_interrupt(int pid)
     process_signal(pid, SIGINT);
 }
 
+/*
+ * stop and continue take effect when the signal is sent, not when the
+ * target next comes back from a call. a stopped thread never runs to
+ * come back from anything, so a SIGCONT left pending for it would wait
+ * forever, and a program busy in a loop makes no calls to come back
+ * from. a stop that is caught, ignored or blocked is left to delivery.
+ * returns what the thread should become: 1 stopped, -1 running, 0 as
+ * it is
+ */
+static int settle_now(struct process *p, int i_sig)
+{
+    uint32_t u_bit = 1u << i_sig;
+    enum signal_action e_act = signal_action_for(&p->sig, i_sig);
+    bool b_blocked = (p->sig.blocked & u_bit) != 0 && i_sig != SIGSTOP;
+
+    if (e_act == SIGNAL_ACTION_STOP && !b_blocked) {
+        p->sig.pending &= ~u_bit;       /* acted on, nothing to deliver */
+        p->i_stopped_by = i_sig;
+        p->b_stop_told = false;
+        return 1;
+    }
+
+    /* and a kill, which a stopped process has to be running to die of */
+    if (i_sig == SIGCONT || i_sig == SIGKILL) {
+        if (e_act == SIGNAL_ACTION_CONTINUE) {
+            p->sig.pending &= ~u_bit;   /* continuing was all it meant */
+        }
+        p->i_stopped_by = 0;
+        return -1;
+    }
+    return 0;
+}
+
 bool process_signal(int pid, int sig)
 {
     uint64_t flags = spin_lock_irq(&process_lock);
     struct process *p = slot_for(pid);
     bool ok = false;
+    int i_become = 0;
     if (p != NULL && !p->exited) {
         ok = signal_raise(&p->sig, sig);
+        if (ok) {
+            i_become = settle_now(p, sig);
+        }
 
         /* `interrupted` is now derived. */
         /*
@@ -345,7 +384,13 @@ bool process_signal(int pid, int sig)
          */
         p->interrupted = signal_deliverable(&p->sig);
     }
+    int i_thread = (p != NULL) ? p->thread_id : 0;
+    bool b_wake = ok && p != NULL && p->interrupted;
     spin_unlock_irq(&process_lock, flags);
+
+    if (i_become != 0 && i_thread > 0) {
+        sched_set_stopped(i_thread, i_become > 0);
+    }
 
     /*
      * and a thread asleep on a queue has to be woken, or a signal to a
@@ -354,10 +399,53 @@ bool process_signal(int pid, int sig)
      * this is the half the roadmap warned about: every blocking call
      * was written assuming it ends for one of two reasons
      */
-    if (ok && p != NULL && p->interrupted && p->thread_id > 0) {
-        sched_wake_thread(p->thread_id);
+    if (b_wake && i_thread > 0) {
+        sched_wake_thread(i_thread);
     }
     return ok;
+}
+
+void process_stopped(int i_pid, int i_sig)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    if (p != NULL) {
+        p->i_stopped_by = i_sig;
+        p->b_stop_told = false;
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+}
+
+int process_reportable(int i_parent, int i_pid, bool b_untraced,
+                       int *p_status, bool *p_ended)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    int i_found = -1;
+
+    for (size_t sz_at = 0; sz_at < MAX_PROCESSES; sz_at++) {
+        struct process *p = &table[sz_at];
+        if (p->pid == 0 || p->parent != i_parent
+            || (i_pid != -1 && p->pid != i_pid)) {
+            continue;
+        }
+        i_found = 0;
+        if (p->exited) {
+            *p_status = p->exit_code;
+            *p_ended = true;
+            i_found = p->pid;
+            break;
+        }
+        if (b_untraced && p->i_stopped_by != 0 && !p->b_stop_told) {
+            p->b_stop_told = true;
+            *p_status = WAIT_STOPPED | p->i_stopped_by;
+            *p_ended = false;
+            i_found = p->pid;
+            break;
+        }
+    }
+
+    spin_unlock_irq(&process_lock, u_flags);
+    return i_found;
 }
 
 bool process_signal_group(int pgid, int sig)

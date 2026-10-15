@@ -216,7 +216,9 @@ in the first ``len`` bytes of ``text``: between them, a check of what a
 file in ``/proc`` says.
 
 ``wait`` puts how the child ended in ``status``: what it passed to
-``exit``, or 128 plus the signal that ended it. any other call is made
+``exit``, or 128 plus the signal that ended it. ``waitpid(pid, &status,
+flags)`` is the same call with flags, ``WNOHANG`` and ``WUNTRACED``, and
+-1 for any child. any other call is made
 with ``ksft_syscall(nr, a0, a1, a2)`` and its number from
 ``<velvet/syscall.h>``, or ``ksft_syscall5`` for one that takes five.
 

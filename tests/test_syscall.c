@@ -686,6 +686,11 @@ bool user_exec(const char *str_path, int i_argc, const char *const pp_argv[],
     return true;
 }
 
+bool user_collect(int i_pid, int *p_code)
+{
+    return process_collect(i_pid, p_code);
+}
+
 static int wait_code = 5;
 bool user_wait(int pid, int *code)
 {
@@ -1170,12 +1175,37 @@ int main(void)
           "exit code would go to the wrong place");
 
     int mine = process_create("the test's", me.pid, 0, false, 0);
-    wait_code = 42;
     int codeout = 0;
     user_extra = (uint64_t)&codeout;
+    CHECK(syscall_dispatch(SYS_WAIT, (uint64_t)mine, (uint64_t)&codeout,
+                           WNOHANG, 0, 0, &caller_frame) == 0,
+          "WNOHANG on a child still running is 0, not a wait");
+    process_exited(mine, 42, 0);
     CHECK(call(SYS_WAIT, mine, (uint64_t)&codeout) == mine, "the test's works");
-    CHECK(codeout == 42, "and fills in how it went");
+    CHECK(codeout == 42 && process_find(mine) == NULL,
+          "and fills in how it went, and takes it off the table");
     CHECK(call(SYS_WAIT, 4242, 0) == -1, "waiting for nothing is refused");
+
+    /* -1 is any child, and a stop is told once to a wait that asks */
+    {
+        int i_a = process_create("a", me.pid, 0, false, 0);
+        int i_b = process_create("b", me.pid, 0, false, 0);
+        process_signal(i_b, SIGSTOP);
+        CHECK(syscall_dispatch(SYS_WAIT, (uint64_t)-1, (uint64_t)&codeout,
+                               WUNTRACED | WNOHANG, 0, 0, &caller_frame)
+              == i_b && codeout == (WAIT_STOPPED | SIGSTOP),
+              "wait(-1, WUNTRACED) tells of a stopped child");
+        CHECK(syscall_dispatch(SYS_WAIT, (uint64_t)-1, (uint64_t)&codeout,
+                               WUNTRACED | WNOHANG, 0, 0, &caller_frame)
+              == 0,
+              "once");
+        process_exited(i_a, 7, 0);
+        CHECK(call(SYS_WAIT, (uint64_t)-1, (uint64_t)&codeout) == i_a
+              && codeout == 7,
+              "and any child that ended is collected");
+        process_exited(i_b, 0, 0);
+        process_collect(i_b, NULL);
+    }
 
     /* the mode came out of the tar header and the uid off the process. */
     CHECK(call(SYS_GETUID, 0, 0) == 0, "getuid reports what the process runs as");

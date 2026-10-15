@@ -541,7 +541,7 @@ bool user_exec(const char *str_path, int i_argc, const char *const pp_argv[],
  * before the reaper comes round would otherwise take the slot, and the
  * only record of those ends, with it
  */
-static bool collect(int i_pid, int *p_code)
+bool user_collect(int i_pid, int *p_code)
 {
     pipe_release_for(i_pid);
     return process_collect(i_pid, p_code);
@@ -567,7 +567,7 @@ bool user_wait(int pid, int *code)
         }
         sleep_ms(20);
     }
-    return collect(pid, code);
+    return user_collect(pid, code);
 }
 
 /* let a spawned process actually begin. */
@@ -607,7 +607,7 @@ void user_job_collect(struct job *j)
             continue;
         }
         int code = 0;
-        if (collect(j->pids[i], &code)) {
+        if (user_collect(j->pids[i], &code)) {
             /* the last one's status is the job's. */
             if (i == j->count - 1) {
                 j->status = code;

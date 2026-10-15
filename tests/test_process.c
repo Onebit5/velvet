@@ -27,6 +27,7 @@ void panic(const char *fmt, ...)
 #include <stdbool.h>
 
 #include <velvet/process.h>
+#include <uapi/velvet/syscall.h>
 
 /* a pipe a forked child inherits gains a holder rather than being copied. */
 static int shared_pipes;
@@ -49,6 +50,15 @@ static int wakes;
 void sched_wake_thread(int id)
 {
     (void)id; wakes++;
+}
+
+/* which thread was last stopped or let go, and which way */
+static int s_i_stopped_id;
+static bool s_b_stopped;
+void sched_set_stopped(int i_id, bool b_stopped)
+{
+    s_i_stopped_id = i_id;
+    s_b_stopped = b_stopped;
 }
 
 int main(void)
@@ -207,6 +217,57 @@ int main(void)
               "and an unblocked SIGTERM is taken, to end it");
         process_exited(i_busy, 0, 610);
         process_collect(i_busy, NULL);
+    }
+
+    /*
+     * stop and continue act when sent, since a stopped thread never runs
+     * to take a pending SIGCONT, and a wait that asks is told of a stop
+     * once. a stop that is ignored or blocked does nothing here
+     */
+    {
+        int i_parent = process_create("sh", 0, 0, false, 500);
+        int i_job = process_create("job", i_parent, 0, false, 500);
+        int i_status = 0;
+        bool b_ended = true;
+
+        process_set_thread(i_job, 77);
+        process_signal(i_job, SIGSTOP);
+        CHECK(s_i_stopped_id == 77 && s_b_stopped,
+              "SIGSTOP stops the thread when it is sent");
+        CHECK(!(process_signal_state(i_job)->pending & (1u << SIGSTOP)),
+              "and leaves nothing pending to act on again");
+        CHECK(process_reportable(i_parent, -1, true, &i_status, &b_ended)
+              == i_job && !b_ended && i_status == (WAIT_STOPPED | SIGSTOP),
+              "a wait that asks about stops is told");
+        CHECK(process_reportable(i_parent, i_job, true, &i_status, &b_ended)
+              == 0, "once");
+        CHECK(process_reportable(i_parent, i_job, false, &i_status, &b_ended)
+              == 0, "and one that does not ask is not told at all");
+
+        process_signal(i_job, SIGCONT);
+        CHECK(s_i_stopped_id == 77 && !s_b_stopped,
+              "SIGCONT lets it go when it is sent");
+
+        s_i_stopped_id = 0;
+        signal_set_handler(process_signal_state(i_job), SIGTSTP, SIG_IGNORE);
+        process_signal(i_job, SIGTSTP);
+        CHECK(s_i_stopped_id == 0, "an ignored SIGTSTP stops nothing");
+        signal_set_handler(process_signal_state(i_job), SIGTSTP, SIG_DEFAULT);
+        process_signal_state(i_job)->blocked |= 1u << SIGTSTP;
+        process_signal(i_job, SIGTSTP);
+        CHECK(s_i_stopped_id == 0
+              && (process_signal_state(i_job)->pending & (1u << SIGTSTP)),
+              "and a blocked one waits, pending, for delivery");
+
+        CHECK(process_reportable(i_parent, 4040, true, &i_status, &b_ended)
+              == -1, "a pid that is not a child is -1");
+        process_exited(i_job, 3, 510);
+        CHECK(process_reportable(i_parent, -1, true, &i_status, &b_ended)
+              == i_job && b_ended && i_status == 3,
+              "and an ended child is told with its code");
+        process_collect(i_job, NULL);
+        process_exited(i_parent, 0, 510);
+        process_collect(i_parent, NULL);
     }
 
     int pid = process_create("bin/hello", 0, 0, false, 1000);

@@ -46,6 +46,12 @@ struct user_entry {
 bool user_exec(const char *str_path, int i_argc, const char *const pp_argv[],
                struct user_entry *p_out, const char **pp_error);
 
+/*
+ * take an ended process off the table, its pipes let go of first:
+ * whether there was one to take, and its status in `*p_code`
+ */
+bool user_collect(int i_pid, int *p_code);
+
 struct pipe;
 
 /* where a program's standard input and output go, before it starts. */

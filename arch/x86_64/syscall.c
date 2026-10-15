@@ -1674,24 +1674,46 @@ static int64_t sys_spawn(uint64_t ptr, uint64_t len)
  * collect another's child, and the exit code would go to the wrong
  * place entirely
  */
-static int64_t sys_wait(uint64_t pid, uint64_t code_ptr)
+static int64_t sys_wait(uint64_t u_pid, uint64_t u_status, uint64_t u_flags)
 {
-    const struct process *p = process_find((int)pid);
-    if (p == NULL || p->parent != caller_pid()) {
-        return -1;
-    }
-    if (code_ptr != 0 && !user_range_writable(code_ptr, sizeof(int))) {
+    int i_me = caller_pid();
+    int i_pid = (int)u_pid;
+
+    if (i_pid == 0 || i_pid < -1
+        || (u_status != 0 && !user_range_writable(u_status, sizeof(int)))) {
         return -1;
     }
 
-    int code = 0;
-    if (!user_wait((int)pid, &code)) {
-        return -1;
+    /*
+     * this polls every 20ms, as waiting always has here, which nobody
+     * will notice and which needs no queue for a child to wake
+     */
+    for (;;) {
+        int i_status = 0;
+        bool b_ended = false;
+        int i_who = process_reportable(i_me, i_pid,
+                                       (u_flags & WUNTRACED) != 0,
+                                       &i_status, &b_ended);
+        if (i_who < 0) {
+            return -1;
+        }
+        if (i_who > 0) {
+            if (b_ended) {
+                user_collect(i_who, NULL);
+            }
+            if (u_status != 0) {
+                *(int *)u_status = i_status;
+            }
+            return i_who;
+        }
+        if ((u_flags & WNOHANG) != 0) {
+            return 0;
+        }
+        if (process_take_interrupt(i_me)) {
+            return -1;
+        }
+        sleep_ms(20);
     }
-    if (code_ptr != 0) {
-        *(int *)code_ptr = code;
-    }
-    return (int64_t)pid;
 }
 
 /*
@@ -1959,7 +1981,10 @@ static void deliver_signals(struct user_regs *regs)
             continue;           /* and look for the next one */
 
         case SIGNAL_ACTION_STOP:
+            /* a stop that was blocked when sent, and is not any more */
+            process_stopped(pid, sig);
             sched_set_stopped(process_thread(pid), true);
+            sched_yield();
             continue;
 
         case SIGNAL_ACTION_CONTINUE:
@@ -2010,24 +2035,24 @@ static int64_t sys_sigsend(uint64_t u_pid, uint64_t u_sig)
 {
     int i_pid = (int)u_pid;
     int i_uid = process_uid(caller_pid());
+    bool b_any = false;
 
     if (i_pid >= 0) {
-        if (!may_signal(i_uid, i_pid)) {
-            return -1;
+        b_any = may_signal(i_uid, i_pid) && process_signal(i_pid, (int)u_sig);
+    } else if (i_pid != -1) {
+        int arr_pids[MAX_PROCESSES];
+        size_t sz_n = process_group_pids(-i_pid, arr_pids, MAX_PROCESSES);
+        for (size_t sz_at = 0; sz_at < sz_n; sz_at++) {
+            if (may_signal(i_uid, arr_pids[sz_at])) {
+                b_any |= process_signal(arr_pids[sz_at], (int)u_sig);
+            }
         }
-        return process_signal(i_pid, (int)u_sig) ? 0 : -1;
-    }
-    if (i_pid == -1) {
-        return -1;
     }
 
-    int arr_pids[MAX_PROCESSES];
-    size_t sz_n = process_group_pids(-i_pid, arr_pids, MAX_PROCESSES);
-    bool b_any = false;
-    for (size_t sz_at = 0; sz_at < sz_n; sz_at++) {
-        if (may_signal(i_uid, arr_pids[sz_at])) {
-            b_any |= process_signal(arr_pids[sz_at], (int)u_sig);
-        }
+    /* a sender that stopped itself stops here, not some instructions on */
+    struct thread *p_me = sched_current();
+    if (p_me != NULL && p_me->stopped) {
+        sched_yield();
     }
     return b_any ? 0 : -1;
 }
@@ -2204,7 +2229,7 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
     case SYS_SPAWN:
         return sys_spawn(a0, a1);
     case SYS_WAIT:
-        return sys_wait(a0, a1);
+        return sys_wait(a0, a1, a2);
     case SYS_READDIR:
         return sys_readdir(a0, a1, a2, a3, a4);
     case SYS_CREATE:
