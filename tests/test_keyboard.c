@@ -53,6 +53,19 @@ void waitq_wake_all(struct waitq *q)
     (void)q;
 }
 
+/* a reader, and whether its process has been interrupted */
+#include <velvet/thread.h>
+static struct thread s_reader = { .pid = 7 };
+static bool s_b_interrupted;
+struct thread *sched_current(void)
+{
+    return &s_reader;
+}
+bool process_interrupt_pending(int i_pid)
+{
+    return i_pid == s_reader.pid && s_b_interrupted;
+}
+
 /*
  * input_push offers every key to the tty first, so ctrl+c aimed at a
  * program becomes an interrupt rather than a character. nothing is in
@@ -244,6 +257,23 @@ int main(void)
 
         shown_console_n = 0;
         my_console_n = 0;
+    }
+
+    /*
+     * a reader waiting for a key is let go by an interrupt with nothing
+     * taken, and a key that is there is handed over, interrupt or not,
+     * rather than thrown away with it
+     */
+    {
+        while (input_getchar() >= 0) { }
+        s_b_interrupted = true;
+        CHECK(input_getchar_blocking() == -1,
+              "an interrupt with no key waiting ends the wait");
+        keyboard_feed(0x1e);
+        keyboard_feed(0x1e | 0x80);
+        CHECK(input_getchar_blocking() == 'a',
+              "and a key that is there is handed over all the same");
+        s_b_interrupted = false;
     }
 
     /* scancode 0x03 is the 2 key. */

@@ -52,6 +52,19 @@ void waitq_wake_all(struct waitq *q)
     (void)q;
 }
 
+/* a reader, and whether its process has been interrupted */
+#include <velvet/thread.h>
+static struct thread s_reader = { .pid = 7 };
+static bool s_b_interrupted;
+struct thread *sched_current(void)
+{
+    return &s_reader;
+}
+bool process_interrupt_pending(int i_pid)
+{
+    return i_pid == s_reader.pid && s_b_interrupted;
+}
+
 /*
  * input_push offers every key to the tty first, so ctrl+c aimed at a
  * program becomes an interrupt rather than a character. nothing is in

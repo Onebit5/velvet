@@ -11,6 +11,8 @@
 #include <velvet/sched.h>
 #include <velvet/tty.h>
 #include <velvet/console.h>
+#include <velvet/thread.h>
+#include <velvet/process.h>
 
 /*
  * one ring per console, and that is not tidiness, it is the only
@@ -120,6 +122,8 @@ bool input_haskey(void)
 int input_getchar_blocking(void)
 {
     struct ring *r = mine();
+    struct thread *p_me = sched_current();
+    int i_pid = (p_me != NULL) ? p_me->pid : 0;
 
     for (;;) {
         uint64_t flags = spin_lock_irq(&input_lock);
@@ -127,6 +131,17 @@ int input_getchar_blocking(void)
         if (c >= 0) {
             spin_unlock_irq(&input_lock, flags);
             return c;
+        }
+
+        /*
+         * nothing there and an interrupt waiting, which is what woke a
+         * reader that had no key: the wait ends with no key taken, so
+         * the next one typed is there for whoever reads next. a key that
+         * is there is always handed over, interrupt or not
+         */
+        if (i_pid != 0 && process_interrupt_pending(i_pid)) {
+            spin_unlock_irq(&input_lock, flags);
+            return -1;
         }
 
         /*

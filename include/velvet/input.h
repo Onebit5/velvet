@@ -39,7 +39,8 @@ int  input_peek(void);
 /*
  * wait for a key. the calling thread sleeps on a waitq and costs
  * nothing until an irq wakes it, which is how the shell can sit at a
- * prompt all day without burning a single cycle
+ * prompt all day without burning a single cycle. -1 instead when the
+ * caller's process is interrupted with no key waiting
  */
 int  input_getchar_blocking(void);
 

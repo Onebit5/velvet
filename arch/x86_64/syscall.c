@@ -935,25 +935,10 @@ static int64_t sys_getkey(void)
         return -1;
     }
 
-    /*
-     * FIXME: the check below never fires by itself. input_getchar_blocking
-     * only returns with a key in hand, so a thread woken by an interrupt
-     * finds the ring empty, queues itself up again and goes straight back
-     * to sleep: a program sitting in getkey cannot be interrupted at all.
-     * and when a key does arrive with an interrupt already pending, this
-     * returns -1 and drops the key that woke it. SYS_SLEEP below gets
-     * this right, because sleep_ms returns on any wake, and the read
-     * wants the same. the comment there describes what this code does
-     * not do.
-     */
+    /* -1 is the wait ended by an interrupt, with no key taken */
     int key = input_getchar_blocking();
-
-    /*
-     * an interrupt arrives by waking the thread, so the wake has to be
-     * checked for after the sleep as well as before it
-     */
-    if (process_take_interrupt(caller_pid())) {
-        return -1;
+    if (key < 0) {
+        process_take_interrupt(caller_pid());
     }
     return key;
 }

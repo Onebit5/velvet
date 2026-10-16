@@ -277,8 +277,9 @@ int64_t tty_read_line(int pid, char *buf, uint64_t len)
     for (;;) {
         int c = input_getchar_blocking();
 
-        /* the thing that woke the kernel may have been an interrupt rather than a key. */
-        if (process_take_interrupt(pid)) {
+        /* woken by an interrupt rather than a key, and nothing taken */
+        if (c < 0) {
+            process_take_interrupt(pid);
             kprintf("\n");
             return -1;
         }
