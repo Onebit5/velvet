@@ -6,7 +6,6 @@
  */
 
 #include <velvet/epoch.h>
-#include <velvet/pit.h>
 
 #define SECONDS_PER_DAY 86400u
 
@@ -93,27 +92,4 @@ void epoch_to_date(uint64_t seconds, struct rtc_time *out)
     }
     out->month = month;
     out->day   = (uint8_t)(days + 1);
-}
-
-
-
-static uint64_t boot_epoch;
-
-void epoch_start(uint64_t seconds_at_boot)
-{
-    boot_epoch = seconds_at_boot;
-}
-
-bool epoch_known(void)
-{
-    return boot_epoch != 0;
-}
-
-uint64_t epoch_now(void)
-{
-    if (boot_epoch == 0) {
-        /* nobody has said when boot was. */
-        return 0;
-    }
-    return boot_epoch + pit_uptime_ms() / 1000;
 }

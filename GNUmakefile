@@ -716,7 +716,7 @@ $(T)/ansi:     tests/test_ansi.c     drivers/ansi.c
 $(T)/termios:  tests/test_termios.c  drivers/termios.c
 # a date into a number. checked against the host's own timegm, which
 # is somebody else's implementation and the only opinion worth having
-$(T)/epoch:    tests/test_epoch.c    lib/epoch.c
+$(T)/epoch:    tests/test_epoch.c    lib/epoch.c lib/clock.c
 # who gets refused when memory runs out. a policy rather than a data
 # structure, and its interesting cases are all at the edges
 $(T)/pressure: tests/test_pressure.c mm/pressure.c

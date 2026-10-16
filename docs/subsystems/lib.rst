@@ -139,6 +139,12 @@ is that the conversion goes both ways and agrees with itself. turning a
 date into a number and back gives the same date, for every date, checkable
 by loop rather than by argument.
 
+``clock.c`` is the time now: when boot was, which the cmos chip said once,
+and how long the timer says it has been since. it is apart from
+``epoch.c`` because it needs the timer, which only the kernel has, while
+the arithmetic is compiled into velvetOS's programs as well, and a program
+that wants a date should not have to answer for a timer it never asks.
+
 symbols and backtraces
 ----------------------
 
@@ -218,7 +224,8 @@ goes up.
 
 ``uint64_t epoch_now(void)``
     the time as the kernel believes it, which comes from the clock rather
-    than from the chip that was read once at boot.
+    than from the chip that was read once at boot. in ``clock.c``, with
+    ``epoch_start`` and ``epoch_known``.
 
 
 the hash interface
