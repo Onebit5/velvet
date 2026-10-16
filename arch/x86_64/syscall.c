@@ -2305,6 +2305,8 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
         return tty_hand_to(caller_pid(), (int)a0) ? 0 : -1;
     case SYS_TCGETPGRP:
         return tty_foreground();
+    case SYS_LSEEK:
+        return process_fd_seek(caller_pid(), (int)a0, (int64_t)a1, (int)a2);
     case SYS_REBOOT:
         if (process_uid(caller_pid()) != 0
             || (a0 != REBOOT_RESTART && a0 != REBOOT_POWER_OFF)) {

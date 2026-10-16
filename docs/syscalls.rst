@@ -78,6 +78,7 @@ number  name          arguments                                         returns
 64      TCGETPGRP     ()                                                the pgid in front
 65      SETUID        (uid)                                             0, or -1
 66      REBOOT        (how)                                             does not return, or -1
+67      LSEEK         (fd, offset, whence)                              the position, or -1
 ======  ============  ================================================  ======================
 
 the kernel side
@@ -132,6 +133,8 @@ the terminal. ttyattach, root's alone, moves the caller onto console n and makes
 run as uid from now on. root may become anybody, which is how a login becomes the user it let in, and anyone else only who they already are, so nothing that is not root ever becomes root this way
 
 stop the machine: REBOOT_RESTART or REBOOT_POWER_OFF, and root's alone. on success it does not return. every program but init is asked to stop, then the kernel's own services, and the disk is written out and closed before the machine goes. -1 for anyone else, or for anything else asked
+
+move a file's position: to offset from its start, SEEK_SET, from where it is, SEEK_CUR, or from its end, SEEK_END, which is how a write goes on the end of a file rather than over its start. the new position, or -1 for a pipe, a terminal or a place outside the file
 
 who a datagram came from, filled in by recvfrom. a struct rather than two more registers because the syscall abi has six and recvfrom would otherwise want seven
 

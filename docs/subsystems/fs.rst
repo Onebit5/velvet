@@ -305,7 +305,9 @@ handle on what a second one holds, closing whatever the first held, so a
 shell forks, puts a pipe end on 0 or 1 in the child, and execs. a copied
 pipe end is one more holder, so the reader sees end of file only when
 every copy is closed or its holder has ended; a copied file keeps a
-position of its own, the same rule fork has always followed.
+position of its own, the same rule fork has always followed. ``lseek``
+moves a file's position, within the file and no further, and is how a
+shell puts ``>>`` on the end of what is there rather than over its start.
 
 making a filesystem
 -------------------

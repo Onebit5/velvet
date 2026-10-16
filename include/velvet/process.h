@@ -305,6 +305,13 @@ bool process_fd_get(int pid, int fd, struct fd *out);
 
 bool process_fd_install(int pid, int fd, const struct fd *src);
 
+/*
+ * move a file's position to `i_offset` from its start, from where it
+ * is, or from its end: where it lands, or -1 for a descriptor with no
+ * position or a place outside the file
+ */
+int64_t process_fd_seek(int i_pid, int i_fd, int64_t i_offset, int i_whence);
+
 /* into the lowest free slot past the standard three: which, or -1 */
 int process_fd_place(int i_pid, const struct fd *p_src);
 

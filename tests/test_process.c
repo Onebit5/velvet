@@ -310,6 +310,32 @@ int main(void)
         process_collect(i_parent, NULL);
     }
 
+    /* a file's position moves within the file and nowhere else */
+    {
+        struct fd file = { .kind = FD_MEMORY, .size = 100 };
+        struct fd end = { .kind = FD_PIPE, .writing = true };
+        int i_reader = process_create("reader", 0, 0, false, 800);
+
+        process_fd_install(i_reader, FD_FIRST_FILE, &file);
+        process_fd_install(i_reader, FD_FIRST_FILE + 1, &end);
+        CHECK(process_fd_seek(i_reader, FD_FIRST_FILE, 10, SEEK_SET) == 10
+              && process_fd_seek(i_reader, FD_FIRST_FILE, 5, SEEK_CUR) == 15
+              && process_fd_seek(i_reader, FD_FIRST_FILE, -4, SEEK_END) == 96,
+              "from the start, from where it is, and from the end");
+        CHECK(process_fd_seek(i_reader, FD_FIRST_FILE, 1, SEEK_END) == -1
+              && process_fd_seek(i_reader, FD_FIRST_FILE, -200, SEEK_CUR)
+                 == -1
+              && process_fd_seek(i_reader, FD_FIRST_FILE, 0, SEEK_CUR) == 96,
+              "a place outside the file is -1, and moves nothing");
+        CHECK(process_fd_seek(i_reader, FD_FIRST_FILE, 0, 7) == -1,
+              "and so is a whence it does not know");
+        CHECK(process_fd_seek(i_reader, FD_FIRST_FILE + 1, 0, SEEK_SET) == -1
+              && process_fd_seek(i_reader, FD_STDOUT, 0, SEEK_SET) == -1,
+              "a pipe and the console have no position to move");
+        process_exited(i_reader, 0, 810);
+        process_collect(i_reader, NULL);
+    }
+
     int pid = process_create("bin/hello", 0, 0, false, 1000);
     CHECK(pid > 0, "a process gets a pid");
     CHECK(process_count() == 1, "and occupies a slot");

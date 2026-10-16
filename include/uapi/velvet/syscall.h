@@ -259,7 +259,19 @@ struct user_stat {
 #define REBOOT_RESTART   1
 #define REBOOT_POWER_OFF 2
 
-#define SYSCALL_COUNT 67
+/*
+ * move a file's position: to offset from its start, SEEK_SET, from
+ * where it is, SEEK_CUR, or from its end, SEEK_END, which is how a write
+ * goes on the end of a file rather than over its start. the new position,
+ * or -1 for a pipe, a terminal or a place outside the file
+ */
+#define SYS_LSEEK     67
+
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+
+#define SYSCALL_COUNT 68
 
 /*
  * what SYS_SOURCE says: the archive on the medium, its files, bytes and

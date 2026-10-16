@@ -1056,6 +1056,34 @@ bool process_fd_get(int pid, int fd, struct fd *out)
     return ok;
 }
 
+int64_t process_fd_seek(int i_pid, int i_fd, int64_t i_offset, int i_whence)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    int64_t i_to = -1;
+
+    if (p != NULL && i_fd >= 0 && i_fd < MAX_FDS) {
+        struct fd *p_fd = &p->fds[i_fd];
+        bool b_seekable = p_fd->kind == FD_MEMORY || p_fd->kind == FD_DISK
+                          || p_fd->kind == FD_SOURCE;
+        int64_t i_from = (i_whence == SEEK_SET) ? 0
+                       : (i_whence == SEEK_CUR) ? (int64_t)p_fd->pos
+                       : (i_whence == SEEK_END) ? (int64_t)p_fd->size
+                       : -1;
+        if (b_seekable && i_from >= 0) {
+            i_to = i_from + i_offset;
+            if (i_to < 0 || (uint64_t)i_to > p_fd->size) {
+                i_to = -1;
+            } else {
+                p_fd->pos = (uint64_t)i_to;
+            }
+        }
+    }
+
+    spin_unlock_irq(&process_lock, u_flags);
+    return i_to;
+}
+
 int process_fd_place(int i_pid, const struct fd *p_src)
 {
     uint64_t u_flags = spin_lock_irq(&process_lock);
