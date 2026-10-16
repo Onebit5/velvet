@@ -138,6 +138,9 @@ const char *init_state_name(enum service_state s)
 #include <velvet/pipe.h>
 #include <velvet/kprintf.h>
 #include <velvet/pmm.h>
+#include <velvet/vfs.h>
+#include <velvet/usermode.h>
+#include <velvet/panic.h>
 
 /* how often init looks around. */
 #define INIT_TICK_MS   400
@@ -150,6 +153,16 @@ static struct spinlock init_lock = SPINLOCK("init", LOCK_RANK_DEVICE);
 static struct init_table services;
 
 static int init_tid;
+
+/*
+ * the medium's own init. when it carries one, that program is pid 1:
+ * the sessions, the consoles and the orphans are its business, and the
+ * kernel's thread here keeps only the kernel's own services and the road
+ * down. when it does not, this thread is pid 1 and does all of it
+ */
+#define INIT_PROGRAM "/init"
+
+static bool s_b_program;
 
 /*
  * a shutdown that has been asked for and not yet acted on, and where it
@@ -511,7 +524,7 @@ static void init_thread(void *arg)
     if (e1000_present()) {
         init_add(&services, "network", network_service, NULL, 0, true);
     }
-    for (unsigned c = 0; c < VCONSOLE_COUNT; c++) {
+    for (unsigned c = 0; c < VCONSOLE_COUNT && !s_b_program; c++) {
         char name[INIT_NAME_MAX];
         name[0] = 't'; name[1] = 't'; name[2] = 'y';
         name[3] = (char)('1' + c); name[4] = '\0';
@@ -521,7 +534,9 @@ static void init_thread(void *arg)
     spin_unlock_irq(&init_lock, flags);
 
     /* no line saying init came up. */
-    kprintf("boot complete, handing the screen to the shell\n\n");
+    kprintf(s_b_program ? "boot complete, handing the machine to "
+                          INIT_PROGRAM "\n\n"
+                        : "boot complete, handing the screen to the shell\n\n");
 
     for (size_t i = 0; i < count; i++) {
         if (!start_service(i)) {
@@ -539,11 +554,36 @@ static void init_thread(void *arg)
         }
     }
 
+    /*
+     * and only now, with the flusher there before anybody can write. in
+     * front of console 0, so what it says before it has taken a console
+     * of its own reaches the screen rather than nowhere
+     */
+    if (s_b_program) {
+        tty_set_foreground(INIT_PID);
+        user_start(INIT_PID);
+    }
+
     for (;;) {
         sleep_ms(INIT_TICK_MS);
 
         if (stop_pending) {
             take_the_machine_down();     /* which never comes back */
+        }
+
+        /*
+         * a program that is pid 1 and has ended leaves nothing to start
+         * a session, take an orphan, or bring the machine down when
+         * asked. saying so is better than a machine that looks alive
+         */
+        if (s_b_program) {
+            const struct process *p_init = process_find(INIT_PID);
+            if (p_init == NULL || p_init->exited) {
+                panic("%s ended, with %d, and there is no other init",
+                      INIT_PROGRAM, p_init != NULL ? p_init->exit_code : -1);
+            }
+            supervise();
+            continue;       /* orphans are its to collect, not this one's */
         }
 
         /* adopted children, collected. */
@@ -566,20 +606,43 @@ static void init_thread(void *arg)
 
 bool init_boot(void)
 {
-    /* first into the table, so it is pid 1. */
-    int pid = process_create("init", 0, 0, false, pit_uptime_ms());
-    if (pid != INIT_PID) {
-        return false;
+    /*
+     * whichever is pid 1 goes into the table first, which is what makes
+     * it 1. the program is made parked, and this thread lets it go once
+     * the kernel's services are up
+     */
+    struct vfs_file f;
+    s_b_program = vfs_open(INIT_PROGRAM, &f) && !f.is_dir;
+
+    int pid;
+    if (s_b_program) {
+        const char *arr_argv[1] = { INIT_PROGRAM };
+        const char *str_why = NULL;
+        pid = user_spawn(INIT_PROGRAM, 1, arr_argv, "/", 0, 0, true, NULL,
+                         &str_why);
+        if (pid != INIT_PID) {
+            kprintf("init: %s would not start: %s\n", INIT_PROGRAM,
+                    str_why != NULL ? str_why : "it was not pid 1");
+            return false;
+        }
+    } else {
+        pid = process_create("init", 0, 0, false, pit_uptime_ms());
+        if (pid != INIT_PID) {
+            return false;
+        }
     }
 
-    struct thread *t = thread_create_parked("init", init_thread, NULL);
+    struct thread *t = thread_create_parked(s_b_program ? "services" : "init",
+                                            init_thread, NULL);
     if (t == NULL) {
         return false;
     }
-    t->pid = INIT_PID;
     t->console = 0;
     init_tid = t->id;
-    process_set_thread(INIT_PID, t->id);
+    if (!s_b_program) {
+        t->pid = INIT_PID;
+        process_set_thread(INIT_PID, t->id);
+    }
 
     sched_wake_thread(t->id);
     return true;

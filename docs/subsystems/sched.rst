@@ -264,6 +264,20 @@ loses whatever had not reached the drive. everything has to be *stopped*
 before the sync, and it can only be stopped in an order if it was started in
 one.
 
+a medium may carry its own init, as the program ``/init``, and then that
+is pid 1. a kernel is not a system: which consoles get a login, what a
+session is, and what happens when one ends are the system's to decide,
+and the kernel's guesses at them are only a stand-in for when nothing on
+the medium has decided. with ``/init`` there, the kernel's thread, named
+``services``, keeps what is the kernel's: the flusher and the network,
+watched and restarted, and the road down. it starts no consoles and
+collects no orphans; those belong to ``/init``, which every orphan is
+handed to. ``/init`` is made first, parked, so that it is pid 1, and let
+go only once the flusher is up, in front of console 0 so that what it
+says before it takes a console of its own is seen. if it ever ends, the
+kernel panics: nothing is left to start a session or bring the machine
+down, and a machine that only looks alive is worse than one that says so.
+
 a program asks for that with ``reboot``, root's alone. it is the same road
 the shell's ``reboot`` and ``poweroff`` take, so a program stopping the
 machine stops it as tidily: every program but init first, then the
