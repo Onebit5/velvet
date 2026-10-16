@@ -43,19 +43,35 @@ emulated, and 0.8.x is a kernel that can say what it is doing.
 ## 0.4.x: the machine builds itself
 
 velvetOS's 0.4.x is a machine that can rebuild itself from its own disk,
-and its last step, velvetOS 0.4.3, has the machine build a kernel, install
-it and reboot into it. these are the kernel's half of that: a boot that
-can choose between two kernels, and one that cannot be lost to a kernel
-that does not come up.
+and its last step, velvetOS 0.4.4, has the machine build a kernel, install
+it and reboot into it. these are the kernel's half of that: first a kernel
+that leaves the system to the system, then a boot that can choose between
+two kernels, and one that cannot be lost to a kernel that does not come
+up.
 
-**0.4.1 a boot it can choose between.** philemon starts the kernel at one
+**0.4.2 the kernel steps back.** 0.4.1 gave a program every call the
+kernel's shell used to make for it, and let a medium's own `/init` be pid
+1, while a medium without one still gets the kernel's logins and shells.
+this takes them out of the kernel's hands. the kernel's shell becomes a
+monitor: no login, no jobs, entered on purpose from the keyboard when
+something has gone wrong, which is the one thing it was ever better at
+than a program. a medium with no `/init` is a panic rather than a
+fallback, since a kernel is not a system. the accounts and the greetings
+leave this kernel's image, which carries an `/init` of its own instead:
+one that runs the selftests as root, where the calls only root may make
+can be checked too, and powers the machine off. `make kselftest` and the
+boot test are rebuilt on it. *ends when this kernel's image has no
+account on it, the selftests run as pid 1, and velvetOS boots with
+nothing of the kernel's in its way.*
+
+**0.4.3 a boot it can choose between.** philemon starts the kernel at one
 fixed place, which is right while there is only one kernel and wrong the
 moment an install can write a second. it learns to read a small file
 naming which kernel to start, and to say so when the answer is missing.
 *ends when two kernels are on one disk, either can be chosen, and neither
 has to know the other exists.*
 
-**0.4.2 an update that goes wrong costs one reboot.** velvetOS 0.4.3
+**0.4.4 an update that goes wrong costs one reboot.** velvetOS 0.4.4
 without this is a machine that can brick itself with one bad build. a new
 kernel runs on probation: it has to reach a prompt and say so, and if it
 does not, the boot after it starts the kernel that was there before.
