@@ -702,9 +702,13 @@ ready, goes to sleep, or stops existing.
     the shell see the same table
 
 ``void sched_proc_init(void);``
-    registers ``/proc/threads``, for anyone, and ``/proc/stack``, for
-    root: the kernel's call trace of whoever reads it, which is the
-    walker a panic uses with nothing on fire, and which names functions
+    registers ``/proc/threads`` and ``/proc/environ``, for anyone, and
+    ``/proc/stack``, for root. ``environ`` is the reader's own
+    environment, each ``NAME=value`` ended by a NUL, which is how a
+    program learns which variables there are when it can only ask for
+    one by name. ``stack`` is the kernel's call trace of whoever reads
+    it, which is the walker a panic uses with nothing on fire, and which
+    names functions
     by where the kernel keeps them
 
 ``size_t sched_thread_count(void);``

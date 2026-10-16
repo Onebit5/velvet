@@ -559,10 +559,32 @@ static void sched_show_stack(void)
     kbacktrace(0, 0);
 }
 
+/*
+ * the reader's own environment, each NAME=value ended by a NUL, as the
+ * block is kept. a program can only ask for a variable it can name, and
+ * this is how it finds out which there are. the block's last string is
+ * empty, the end of the list rather than one more name, and stays out
+ */
+static void sched_show_environ(void)
+{
+    int i_pid = (current != NULL) ? current->pid : 0;
+    char *str_block = (i_pid != 0) ? kmalloc(PROC_ENV_MAX) : NULL;
+
+    if (str_block == NULL) {
+        return;
+    }
+    size_t sz_len = process_get_env(i_pid, str_block, PROC_ENV_MAX);
+    if (sz_len > 0) {
+        kwrite(str_block, sz_len - 1);
+    }
+    kfree(str_block);
+}
+
 void sched_proc_init(void)
 {
     proc_register("threads", PROC_PUBLIC, sched_show_threads);
     proc_register("stack", PROC_PRIVATE, sched_show_stack);
+    proc_register("environ", PROC_PUBLIC, sched_show_environ);
 }
 
 size_t sched_thread_count(void)
