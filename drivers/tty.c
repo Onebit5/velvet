@@ -63,18 +63,15 @@ bool tty_take_stopped(int *pgid)
 }
 
 /*
- * a process may read the keyboard only if it is at the front of its own
- * console *and* that console is the one on the screen. a shell on
- * console 3 is at the front of console 3 and is still not being typed
- * at, which is the whole point of there being more than one
+ * a process may read the keyboard when it is at the front of its own
+ * console, on the screen or not. a key goes into the ring of the console
+ * being looked at and a reader only takes from its own, so one on a
+ * hidden console waits for keys that arrive once somebody switches to
+ * it, and can never take another console's
  */
 bool tty_is_current(int pid)
 {
-    unsigned n = tty_my_console();
-    if (n != console_active()) {
-        return false;
-    }
-    return process_pgid(pid) == foreground[n];
+    return process_pgid(pid) == foreground[tty_my_console()];
 }
 
 int tty_foreground(void)

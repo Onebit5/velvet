@@ -112,6 +112,12 @@ console a caller means is not passed in: it is whichever the calling thread
 belongs to, because that is always the right answer and passing it would
 only be an opportunity to pass the wrong one.
 
+the group in front of a console may read the keyboard whether or not that
+console is on the screen. a key lands in the ring of the console being
+looked at, and a reader only takes from its own, so a read on a hidden
+console waits until somebody switches to it, and can never take what was
+typed at another.
+
 a console can also belong to a program. ``ttyattach``, which only root
 may call, moves the caller onto a console and makes it the program that
 console belongs to, with its group in front; its children are born on the

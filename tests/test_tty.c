@@ -280,24 +280,29 @@ int main(void)
         CHECK(tty_foreground() == b, "and console 2 has another");
 
         /*
-         * and only the console being *looked at* is the one the
-         * keyboard is talking to
+         * the front of each console may read, shown or not. keys only
+         * ever land in the ring of the console being looked at, so one
+         * nobody is looking at waits for its own rather than taking
+         * somebody else's
          */
         shown = 0;
         this_thread.console = 0;
         CHECK(tty_is_current(a), "the front of the shown console may read");
         this_thread.console = 1;
-        CHECK(!tty_is_current(b),
-              "and the front of a console nobody is looking at may not, "
-              "which is the whole point of there being more than one");
+        CHECK(tty_is_current(b),
+              "and so may the front of a console nobody is looking at");
 
+        static const int s_arr_typed[] = { 'h', 'i', '\n' };
         char buf[16];
-        CHECK(tty_read_line(b, buf, sizeof buf) == -1,
-              "so its read is refused rather than taking somebody else's "
-              "keys");
+        script = s_arr_typed; script_len = 3; script_at = 0;
+        CHECK(tty_read_line(b, buf, sizeof buf) == 3
+              && memcmp(buf, "hi\n", 3) == 0,
+              "its read waits for what is typed at its own console");
+        CHECK(!tty_is_current(a),
+              "while a process at the front of another console is not "
+              "at the front of this one");
 
         shown = 1;
-        CHECK(tty_is_current(b), "and it may once its console is shown");
 
         /*
          * ctrl+c goes to the console being looked at, not to whichever
