@@ -445,6 +445,12 @@ the table means.
 ``const char *process_name(int pid);``
     what it is called. a forked child takes its parent's name, since it is the same program
 
+``void process_inherit(int i_child, int i_parent);``
+    a forked child made its parent's copy: the group, the working
+    directory, the environment, the signal dispositions and mask, and the
+    trampoline its handlers return through. not what is pending: a child
+    is not born owing its parent's interrupts
+
 ``/* replace the whole environment. `len` counts the trailing empty string */ bool process_set_env(int pid, const char *block, size_t len);``
     these work on the block rather than on one variable at a time, because the block is what gets inherited and inheriting is most of what an environment is for
 

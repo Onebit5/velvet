@@ -650,12 +650,13 @@ static int64_t sys_fork(struct user_regs *regs)
     }
 
     /*
-     * a child is part of its parent's job. ctrl+c has to reach it, and
-     * the terminal has to count it as one of the things it is waiting
-     * for, otherwise a forked child is a process no key can reach
+     * a copy of the parent in everything a process holds: its job, so
+     * ctrl+c reaches the child too, where it stands, its environment,
+     * and what it does with each signal. a child that lost the
+     * environment lost PATH, and one that lost a handler died of the
+     * first ctrl+c its parent had arranged to survive
      */
-    process_set_pgid(pid, process_pgid(parent));
-    process_set_cwd(pid, process_cwd(parent));
+    process_inherit(pid, parent);
 
     /*
      * every descriptor, pointing at the same thing. a pipe learns it

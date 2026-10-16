@@ -270,6 +270,46 @@ int main(void)
         process_collect(i_parent, NULL);
     }
 
+    /*
+     * a forked child is its parent's copy in everything it holds, and
+     * owes nothing its parent had pending
+     */
+    {
+        static const char s_arr_env[] = "PATH=/bin\0HOME=/\0";
+        char arr_got[64];
+        int i_parent = process_create("sh", 0, 1000, false, 700);
+        int i_child = process_create("sh", i_parent, 1000, false, 700);
+        struct signal_state *p_parent = process_signal_state(i_parent);
+        struct signal_state *p_child = process_signal_state(i_child);
+
+        process_set_env(i_parent, s_arr_env, sizeof s_arr_env);
+        process_set_cwd(i_parent, "/work");
+        process_set_pgid(i_parent, 77);
+        process_set_trampoline(i_parent, 0x401234);
+        signal_set_handler(p_parent, SIGINT, SIG_IGNORE);
+        p_parent->blocked = 1u << SIGALRM;
+        process_signal(i_parent, SIGTERM);
+
+        process_inherit(i_child, i_parent);
+        CHECK(process_get_env(i_child, arr_got, sizeof arr_got)
+              == sizeof s_arr_env
+              && memcmp(arr_got, s_arr_env, sizeof s_arr_env) == 0,
+              "the environment comes with it");
+        CHECK(strcmp(process_cwd(i_child), "/work") == 0
+              && process_pgid(i_child) == 77,
+              "and where it stands, and the job it is part of");
+        CHECK(p_child->handler[SIGINT] == SIG_IGNORE
+              && p_child->blocked == (1u << SIGALRM)
+              && process_trampoline(i_child) == 0x401234,
+              "and what it does with each signal");
+        CHECK(p_child->pending == 0, "but nothing that was pending");
+
+        process_exited(i_child, 0, 710);
+        process_collect(i_child, NULL);
+        process_exited(i_parent, 0, 710);
+        process_collect(i_parent, NULL);
+    }
+
     int pid = process_create("bin/hello", 0, 0, false, 1000);
     CHECK(pid > 0, "a process gets a pid");
     CHECK(process_count() == 1, "and occupies a slot");

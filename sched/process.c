@@ -616,6 +616,23 @@ bool process_take_interrupt(int pid)
 
 
 
+void process_inherit(int i_child, int i_parent)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p_child = slot_for(i_child);
+    const struct process *p_parent = slot_for(i_parent);
+
+    if (p_child != NULL && p_parent != NULL) {
+        p_child->pgid = p_parent->pgid;
+        memcpy(p_child->cwd, p_parent->cwd, sizeof p_child->cwd);
+        memcpy(p_child->env, p_parent->env, sizeof p_child->env);
+        p_child->env_len = p_parent->env_len;
+        signal_inherit(&p_child->sig, &p_parent->sig);
+        p_child->sig_trampoline = p_parent->sig_trampoline;
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+}
+
 void process_set_uid(int i_pid, int i_uid)
 {
     uint64_t u_flags = spin_lock_irq(&process_lock);

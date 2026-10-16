@@ -158,6 +158,14 @@ int  process_uid(int pid);
 
 int  process_pgid(int pid);
 
+/*
+ * a forked child made its parent's copy: the group, the working
+ * directory, the environment, the signal dispositions and mask, and the
+ * trampoline its handlers return through. not what is pending: a child
+ * is not born owing its parent's interrupts
+ */
+void process_inherit(int i_child, int i_parent);
+
 /* who a process runs as from now on. whether it may is the caller's question */
 void process_set_uid(int i_pid, int i_uid);
 void process_set_pgid(int pid, int pgid);
