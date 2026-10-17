@@ -15,6 +15,63 @@ a kernel that booted.
 
 ---
 
+- **0.4.1**: a first program. everything velvetOS's boot test types
+  at the kernel's shell is now something a program can ask for, and a
+  medium can carry the program that asks: **when there is an `/init`, it
+  is pid 1.** the kernel's thread beside it, `services`, keeps the
+  flusher, the network and the road down, starts no consoles and collects
+  no orphans, which are `/init`'s, and if `/init` ever ends the kernel
+  panics rather than run on with nobody to start a session. without one,
+  nothing changes, and this kernel's own image is booted that way.
+
+  **`/proc`**, files the kernel writes when they are read. a show function
+  prints with kprintf, the way the shell's commands always printed, and a
+  capture held by the reading thread turns that text into the bytes of
+  the read, so the shell and a program are told the same words by the
+  same function. `version` (with the compiler and the build time),
+  `uptime`, `meminfo`, `slabinfo`, `threads`, `pci`, `cpuinfo`, `disk`,
+  `partitions` and `mounts` are anyone's, and so is `environ`, the
+  reader's own environment; `vmm` and `stack` say where the kernel keeps
+  things and are root's.
+
+  **fifteen calls, 53 to 67**: `syslog` for the kernel's log, `sync`,
+  `fsck` and `resize` naming a filesystem by where it is mounted and
+  answering in structs a program puts into words, `source` for the tree
+  on the medium and whether it hashes to the build's stamp, `execve`,
+  `pipe` and `dup2`, `setpgid`, `ttyattach`, `tcsetpgrp` and `tcgetpgrp`
+  for a program that owns a console and runs its jobs, `setuid` for a
+  login to become the person it let in, `reboot`, and `lseek`, without
+  which a shell could not put `>>` on the end of a file. `wait` takes
+  `WNOHANG` and `WUNTRACED` and -1 for any child, and `sigsend` takes
+  minus a pgid for a whole group.
+
+  and what asking from ring 3 turned up, each fixed in a commit of its
+  own: **a guest could signal anybody's programs, init among them**, and
+  now reaches only its own. **no pipe end was ever let go of when its
+  holder exited**, so a reader waited forever on a writer that was gone.
+  **SIGKILL could not end a program busy in a loop**, since signals were
+  only acted on as a call returned; one that ends the process is now
+  acted on as an interrupt returns to ring 3. **stop and continue waited
+  for a return that a stopped thread never makes**, and now act when
+  sent, and the process remembers it stopped, for `wait` to say. **a
+  resize longer than its partition** was refused only by the shell, and
+  is refused by `disk_resize` now that something else can call it.
+  **a forked child lost its parent's environment and signal
+  dispositions**, so a shell's child had no PATH; it is a copy now.
+  **a read on a console nobody was looking at failed at once** rather
+  than waiting, and **a wait for a key could not be interrupted**, and
+  dropped the key that finally woke it. a new thread and a reused
+  process slot both started out holding whatever their last occupant
+  left in any field nobody set; both are cleared first. and the date
+  arithmetic is apart from the clock, in `lib/clock.c`, so a program can
+  take the one without answering for the other.
+
+  and **`make kselftest`** is new: programs in `tools/testing/selftests/`,
+  built against the uapi headers alone, that check from ring 3 what the
+  kernel promises ring 3. they run on the booted image as guest, with a
+  fresh copy of `disk.img` as a second drive, and print TAP. there are 26,
+  and a change that makes one fail is the wrong change.
+
 - **0.4.0**: the kernel, as a project of its own. velvetOS 0.4.0's kernel,
   moved into a repository of its own, with nothing about what it does
   changed except what it calls itself: the boot banner, `top` and `arcana`

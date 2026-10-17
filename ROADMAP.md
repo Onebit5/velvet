@@ -124,10 +124,9 @@ separately by asking whether two boots differ. *ends when the pool is
 seeded from at least three independent sources, refuses to hand out bytes
 before it is, and writes no state to disk.*
 
-**0.5.1 credentials, groups, and real permissions.** a uid *and a gid* on
-every process, the supplementary groups beside them, and the calls that
-set them, which a login needs in order to become the person who logged
-in. ext4 has recorded a gid on every inode since 0.2.14 and nothing has
+**0.5.1 credentials, groups, and real permissions.** a gid beside the uid
+on every process, the supplementary groups beside that, and the calls that
+set them, as 0.4.1's `setuid` sets the uid a login becomes. ext4 has recorded a gid on every inode since 0.2.14 and nothing has
 ever set one to anything; the vfs starts consulting the group bits, and
 gains a `capable()` check so the kernel stops asking "is this uid 0",
 which it asks by name in the vfs, in the ramdisk driver and twice in the
@@ -135,8 +134,8 @@ shell, and starts asking "is this allowed to mount a disk". and `exec`
 honours the setuid bit, which nothing in this tree knows how to set
 today, for velvetOS's `grant` (0.5.3 there) to stand on. which uid is
 called what, and which groups exist, is velvetOS's to say (0.5.0 there).
-the kernel's own login, in its shell, goes once velvetOS's login is a
-program (0.5.1 there), and from then on the kernel deals in numbers.
+the kernel's own login goes in 0.4.2, and from then on the kernel deals in
+numbers.
 
 **0.5.2 the primitives, and the first thing here that a right answer does
 not prove.** sha-256, hmac, hkdf, aes with the two modes this machine
@@ -255,25 +254,20 @@ the first entries are the ones every unix needs and this one does not have
 yet, and they come first because they are the same work whichever numbers
 the calls end up with.
 
-and what is missing before any of it is not a list of features, it is one
-sentence: **a program on this machine cannot start another program.** the
-ring 3 `spawn` takes a path and nothing else, argv is assembled by the
-shell, the shell is a kernel thread, and the pipes in a pipeline are made
-in `sched/usermode.c`. everything below follows from taking that back out
-of the kernel, and then from answering the way linux answers.
+the sentence that stood in front of all of it, **a program on this
+machine cannot start another program**, went in 0.4.1: a program execs,
+builds its own pipelines, runs jobs and becomes a user, through calls
+numbered and shaped the way this kernel numbers and shapes them. what is
+left below is answering the way linux answers.
 
-**0.6.0 the process interface, from ring 3.** `exec`, a spawn that carries
-argv and envp, `pipe()`, `dup2`, and close-on-exec. the hard half of this
-has been done since 0.2.11: `fork` copies an address space and gets two
-returns out of one syscall. what it has never had is the other half: a
-fork that cannot exec is a process that can only ever be itself. `exec`
-lays out the stack the x86_64 psabi describes, argc, argv, envp and the
-auxiliary vector, since that is the first thing any program built
-elsewhere reads, before it has made a single call. the check is a ring 3
-program that builds and runs a pipeline the kernel never saw, and the
-kernel keeps its own pipeline builder, because once velvetOS has a shell
-in ring 3 (velvetOS 0.6.0) the kernel's stays as the rescue shell, and
-that one still needs it.
+**0.6.0 exec, the way a program built elsewhere expects it.** 0.4.1's
+`execve` carries argv and keeps the environment the kernel holds for the
+process. a program built elsewhere passes envp, and before it has made a
+single call it reads the stack the x86_64 psabi describes: argc, argv,
+envp and the auxiliary vector. this is that, and close-on-exec, without
+which a shell's child keeps the far end of its own pipe open and the
+pipeline never ends. *ends when a static program built on linux prints,
+here, the arguments and the environment it was started with.*
 
 **0.6.1 errno.** every syscall in this machine returns -1 and says nothing
 further. the kernel almost always knows more than that (the vfs knows the
@@ -343,15 +337,18 @@ reports `EINTR`.*
 **0.6.7 a terminal, the way linux asks for one.** termios through `ioctl`
 (`TCGETS`, `TCSETS`, `TIOCGWINSZ`) in place of 0.3.9's calls of its own,
 and then the layer 0.5.x was always missing: a pty, a terminal with
-nothing behind it but another program. it makes job control real for a
-ring 3 shell, it is what `script` and a multiplexer are, and it is the
-thing standing between this machine and anything remote.
+nothing behind it but another program. job control from ring 3 has been
+real since 0.4.1, on the consoles; a pty is what `script` and a
+multiplexer are, and it is the thing standing between this machine and
+anything remote.
 
-**0.6.8 `/proc`.** software written elsewhere expects to *read* the kernel
-rather than ask it. `ps` and `top` stop being kernel commands with private
-access and become programs reading files, which is also how this version
-finds out how much of the kernel's state was only ever reachable from
-inside the kernel.
+**0.6.8 `/proc`, laid out the way linux lays it out.** 0.4.1's `/proc` is
+the kernel's own reports, in the words its shell printed them, which is
+enough for velvetOS's `ps` and for nothing written elsewhere. software
+written elsewhere reads a directory per process, `/proc/self`, and files
+such as `stat` and `meminfo` in formats a great deal of code parses, and
+reading them is also how this version finds out how much of the kernel's
+state is still only reachable from inside the kernel.
 
 **0.6.9 a program that names its loader.** a dynamically linked program
 does not start at its own entry point: it names a loader in `PT_INTERP`,
