@@ -155,14 +155,11 @@ static struct init_table services;
 static int init_tid;
 
 /*
- * the medium's own init. when it carries one, that program is pid 1:
- * the sessions, the consoles and the orphans are its business, and the
- * kernel's thread here keeps only the kernel's own services and the road
- * down. when it does not, this thread is pid 1 and does all of it
+ * the medium's own init, which is pid 1: the sessions, the consoles and
+ * the orphans are its business, and the kernel's thread here keeps only
+ * the kernel's own services and the road down
  */
 #define INIT_PROGRAM "/init"
-
-static bool s_b_program;
 
 /*
  * a shutdown that has been asked for and not yet acted on, and where it
@@ -179,22 +176,6 @@ bool init_stopping(void)
 }
 
 
-
-/*
- * a console session. it returns when somebody logs out, and init starts
- * a fresh one, which is the point, and is a real difference rather
- * than a tidier way of writing the same thing. `logout` used to call
- * `login` from inside the running session, so the next person inherited
- * the last one's working directory, history, jobs and variables. a
- * session that *ends* leaves nothing behind, because there is nothing
- * left to leave it in
- */
-static void console_service(void *arg)
-{
-    (void)arg;
-    shell_run();
-    thread_exit(0);
-}
 
 static void monitor_service(void *arg)
 {
@@ -523,7 +504,7 @@ static void init_thread(void *arg)
      * the flusher first, because it is what stands between a
      * write-back cache and a machine that loses the last thing anybody
      * typed, and it should be there before there is anybody able to
-     * type. the sessions after it, so the last thing to appear on a
+     * type. the monitor after it, so the last thing to appear on its
      * screen is a prompt rather than a service report
      */
     uint64_t flags = spin_lock_irq(&init_lock);
@@ -532,21 +513,13 @@ static void init_thread(void *arg)
     if (e1000_present()) {
         init_add(&services, "network", network_service, NULL, 0, true);
     }
-    for (unsigned c = 0; c < VCONSOLE_MONITOR && !s_b_program; c++) {
-        char name[INIT_NAME_MAX];
-        name[0] = 't'; name[1] = 't'; name[2] = 'y';
-        name[3] = (char)('1' + c); name[4] = '\0';
-        init_add(&services, name, console_service, NULL, c, true);
-    }
     init_add(&services, "monitor", monitor_service, NULL, VCONSOLE_MONITOR,
              true);
     size_t count = services.count;
     spin_unlock_irq(&init_lock, flags);
 
     /* no line saying init came up. */
-    kprintf(s_b_program ? "boot complete, handing the machine to "
-                          INIT_PROGRAM "\n\n"
-                        : "boot complete, handing the screen to the shell\n\n");
+    kprintf("boot complete, handing the machine to " INIT_PROGRAM "\n\n");
 
     for (size_t i = 0; i < count; i++) {
         if (!start_service(i)) {
@@ -569,10 +542,8 @@ static void init_thread(void *arg)
      * front of console 0, so what it says before it has taken a console
      * of its own reaches the screen rather than nowhere
      */
-    if (s_b_program) {
-        tty_set_foreground(INIT_PID);
-        user_start(INIT_PID);
-    }
+    tty_set_foreground(INIT_PID);
+    user_start(INIT_PID);
 
     for (;;) {
         sleep_ms(INIT_TICK_MS);
@@ -582,34 +553,15 @@ static void init_thread(void *arg)
         }
 
         /*
-         * a program that is pid 1 and has ended leaves nothing to start
-         * a session, take an orphan, or bring the machine down when
-         * asked. saying so is better than a machine that looks alive
+         * pid 1 having ended leaves nothing to start a session, take an
+         * orphan, or bring the machine down when asked. saying so is
+         * better than a machine that looks alive
          */
-        if (s_b_program) {
-            const struct process *p_init = process_find(INIT_PID);
-            if (p_init == NULL || p_init->exited) {
-                panic("%s ended, with %d, and there is no other init",
-                      INIT_PROGRAM, p_init != NULL ? p_init->exit_code : -1);
-            }
-            supervise();
-            continue;       /* orphans are its to collect, not this one's */
+        const struct process *p_init = process_find(INIT_PID);
+        if (p_init == NULL || p_init->exited) {
+            panic("%s ended, with %d, and there is no other init",
+                  INIT_PROGRAM, p_init != NULL ? p_init->exit_code : -1);
         }
-
-        /* adopted children, collected. */
-        for (;;) {
-            int pid = process_orphan();
-            if (pid == 0) {
-                break;
-            }
-            /*
-             * before the slot goes, since afterwards there is nothing
-             * left to ask which pipes it was holding
-             */
-            pipe_release_for(pid);
-            process_collect(pid, NULL);
-        }
-
         supervise();
     }
 }
@@ -617,42 +569,34 @@ static void init_thread(void *arg)
 bool init_boot(void)
 {
     /*
-     * whichever is pid 1 goes into the table first, which is what makes
-     * it 1. the program is made parked, and this thread lets it go once
-     * the kernel's services are up
+     * the medium's /init goes into the table first, which is what makes
+     * it pid 1. it is made parked, and this thread lets it go once the
+     * kernel's services are up. a medium with no /init is not a system,
+     * and the kernel brings none of its own to stand in for one
      */
     struct vfs_file f;
-    s_b_program = vfs_open(INIT_PROGRAM, &f) && !f.is_dir;
-
-    int pid;
-    if (s_b_program) {
-        const char *arr_argv[1] = { INIT_PROGRAM };
-        const char *str_why = NULL;
-        pid = user_spawn(INIT_PROGRAM, 1, arr_argv, "/", 0, 0, true, NULL,
-                         &str_why);
-        if (pid != INIT_PID) {
-            kprintf("init: %s would not start: %s\n", INIT_PROGRAM,
-                    str_why != NULL ? str_why : "it was not pid 1");
-            return false;
-        }
-    } else {
-        pid = process_create("init", 0, 0, false, pit_uptime_ms());
-        if (pid != INIT_PID) {
-            return false;
-        }
+    if (!vfs_open(INIT_PROGRAM, &f) || f.is_dir) {
+        kprintf("init: the medium has no %s, and the kernel is not a "
+                "system\n", INIT_PROGRAM);
+        return false;
     }
 
-    struct thread *t = thread_create_parked(s_b_program ? "services" : "init",
-                                            init_thread, NULL);
+    const char *arr_argv[1] = { INIT_PROGRAM };
+    const char *str_why = NULL;
+    int pid = user_spawn(INIT_PROGRAM, 1, arr_argv, "/", 0, 0, true, NULL,
+                         &str_why);
+    if (pid != INIT_PID) {
+        kprintf("init: %s would not start: %s\n", INIT_PROGRAM,
+                str_why != NULL ? str_why : "it was not pid 1");
+        return false;
+    }
+
+    struct thread *t = thread_create_parked("services", init_thread, NULL);
     if (t == NULL) {
         return false;
     }
     t->console = 0;
     init_tid = t->id;
-    if (!s_b_program) {
-        t->pid = INIT_PID;
-        process_set_thread(INIT_PID, t->id);
-    }
 
     sched_wake_thread(t->id);
     return true;

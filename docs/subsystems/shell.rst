@@ -1,10 +1,10 @@
 the shell
 =========
 
-``shell/shell.c`` is the velvet room terminal: one session, from
-the greeting to whenever somebody logs out. one runs per virtual console,
-started by init, when the medium carries no ``/init`` of its own; and
-one, as the monitor, runs on the fifth console always.
+``shell/shell.c`` is the velvet room terminal, and it runs as one
+thing: the kernel's monitor, on the fifth console, started by the kernel's
+``services`` thread. the sessions somebody logs into on the other four are
+the system's, run by its ``/init``.
 
 it is a **kernel thread**, not a program in ring 3, which is why everything
 inside it is a builtin and why pid 0 (not a process) is what the process

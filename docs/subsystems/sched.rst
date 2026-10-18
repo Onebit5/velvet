@@ -255,45 +255,42 @@ until 0.2.19 ``kmain`` started the shells itself. that works exactly once,
 and gives the machine no answer to what order things come up in, what
 happens when one dies, who owns an orphan, or what "shut down" means.
 
-so there is a process 1. it brings the machine up in an order, restarts what
-dies, and stops restarting what dies too often. adopts processes whose
-parent has gone, and takes the machine down **in the reverse of the order it
-came up**. that last one is not ceremony: the disk has had a write-back
-cache since 0.2.13, so a machine that resets while anything can still write
-loses whatever had not reached the drive. everything has to be *stopped*
-before the sync, and it can only be stopped in an order if it was started in
-one.
+so there is a process 1, and it is the medium's: the program ``/init``. a
+kernel is not a system. which consoles get a login, what a session is, what
+happens when one ends and who collects an orphan are the system's to
+decide, and every orphan is handed to ``/init``. a medium with no ``/init``
+is refused at boot, with a panic that says why, rather than given a login
+the kernel made up.
 
-a medium may carry its own init, as the program ``/init``, and then that
-is pid 1. a kernel is not a system: which consoles get a login, what a
-session is, and what happens when one ends are the system's to decide,
-and the kernel's guesses at them are only a stand-in for when nothing on
-the medium has decided. with ``/init`` there, the kernel's thread, named
-``services``, keeps what is the kernel's: the flusher and the network,
-watched and restarted, the monitor on the fifth console, and the road
-down. it starts no sessions on the other four and collects no orphans;
-those belong to ``/init``, which every orphan is handed to. ``/init`` is
-made first, parked, so that it is pid 1, and let go only once the flusher
-is up, in front of console 0 so that what it says before it takes a
-console of its own is seen. if it ever ends, the kernel panics: nothing
-is left to start a session or bring the machine down, and a machine that
-only looks alive is worse than one that says so.
+the kernel keeps its own half in a thread named ``services``. it brings the
+kernel's services up in an order: the flusher, the network, and the monitor
+on the fifth console. it restarts what dies, stops restarting what dies too
+often, and takes the machine down **in the reverse of the order it came
+up**. that last one is not ceremony: the disk has had a write-back cache
+since 0.2.13, so a machine that resets while anything can still write loses
+whatever had not reached the drive. everything has to be *stopped* before
+the sync, and it can only be stopped in an order if it was started in one.
 
-a program asks for that with ``reboot``, root's alone. it is the same road
-the shell's ``reboot`` and ``poweroff`` take, so a program stopping the
-machine stops it as tidily: every program but init first, then the
-services in the reverse of their order, then the disk written out and its
-journal closed. init is left waiting in the call, which is where an init
-that asked is meant to be.
+``/init`` is made first, parked, so that it is pid 1, and let go only once
+the flusher is up, in front of console 0 so that what it says before it
+takes a console of its own is seen. if it ever ends, the kernel panics:
+nothing is left to start a session, take an orphan or bring the machine
+down, and a machine that only looks alive is worse than one that says so.
 
-a *service* is a kernel thread init is prepared to start again. the four
-console sessions are services, and so are the monitor and the disk
-flusher; everything else
-is a program somebody typed, and a program somebody typed should stay dead
-when it ends. the respawn rule: ``INIT_RESPAWN_MAX`` (5) deaths inside
-``INIT_RESPAWN_WINDOW_MS`` (10 s) and init gives up. the window matters as
-much as the count. five deaths in a second is a loop, five across an
-afternoon is five separate accidents.
+a program asks for the road down with ``reboot``, root's alone. it is the
+same road the monitor's ``reboot`` and ``poweroff`` take, so a program
+stopping the machine stops it as tidily: every program but init first,
+then the services in the reverse of their order, then the disk written out
+and its journal closed. init is left waiting in the call, which is where an
+init that asked is meant to be.
+
+a *service* is a kernel thread the ``services`` thread is prepared to start
+again: the flusher, the network and the monitor. everything else is a
+program, and a program is ``/init``'s to start again or not. the respawn
+rule: ``INIT_RESPAWN_MAX`` (5) deaths inside ``INIT_RESPAWN_WINDOW_MS``
+(10 s) and it gives up. the window matters as much as the count. five
+deaths in a second is a loop, five across an afternoon is five separate
+accidents.
 
 the *policy* is split from the thread that acts on it (``init_table_*``,
 ``init_should_restart()``) for the same reason the mouse decoder is split
