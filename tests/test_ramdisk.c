@@ -150,25 +150,23 @@ int main(void)
             ramdisk_mount(real, n);
 
             CHECK(ramdisk_present(), "the archive the build makes is readable");
-            CHECK(ramdisk_open("motd.txt", &f), "motd.txt is in there");
-            CHECK(f.size > 0 && memcmp(f.data, "\"Thou art I", 11) == 0,
+            CHECK(ramdisk_open("init", &f), "init is in there");
+            CHECK(f.size > 4 && memcmp(f.data, "\x7f" "ELF", 4) == 0,
                   "and its contents come back intact");
-            CHECK(ramdisk_open("arcana.txt", &f), "so is arcana.txt");
-            CHECK(ramdisk_open("README", &f), "and README");
+            CHECK(!ramdisk_open("passwd", &f) && !ramdisk_open("motd.txt", &f),
+                  "and no accounts or greetings, which are a system's");
 
             /*
-             * a name below the top, the way the shell asks for one. this
-             * medium carries no programs, a system built on the kernel
-             * brings those, so the nested name is the profile the shell
-             * reads at login
+             * a name below the top, the way /init asks for one: the
+             * selftests are the only nested names this medium has
              */
-            CHECK(ramdisk_open("etc/profile", &f),
-                  "etc/profile opens by the path the shell asks for");
-            CHECK(ramdisk_open("./etc/profile", &f),
+            CHECK(ramdisk_open("selftests/sched/wait", &f),
+                  "selftests/sched/wait opens by the path init asks for");
+            CHECK(ramdisk_open("./selftests/sched/wait", &f),
                   "and by the path tar actually stored");
-            CHECK(!ramdisk_open("profile", &f),
+            CHECK(!ramdisk_open("wait", &f),
                   "but not by the bare name, there is no path search");
-            CHECK(!ramdisk_open("etc", &f),
+            CHECK(!ramdisk_open("selftests/sched", &f),
                   "and a directory is not a file");
         }
     }

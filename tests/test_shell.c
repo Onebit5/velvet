@@ -2561,17 +2561,17 @@ int main(void)
               "and so does a shorter one");
 
         /* filenames after cat */
-        strcpy(line, "cat mo"); len = 6; pos = 6;
+        strcpy(line, "cat in"); len = 6; pos = 6;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat motd.txt") == 0 && pos == 12,
+        CHECK(strcmp(line, "cat init") == 0 && pos == 8,
               "cat completes a filename out of the ramdisk");
 
         /* completing mid-line keeps whatever followed */
-        strcpy(line, "cat mo done"); len = 11; pos = 6;
+        strcpy(line, "cat in done"); len = 11; pos = 6;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat motd.txt done") == 0,
+        CHECK(strcmp(line, "cat init done") == 0,
               "and the rest of the line survives the insert");
 
         strcpy(line, "zzz"); len = 3; pos = 3;
@@ -2581,24 +2581,24 @@ int main(void)
               "an unmatchable prefix is left in peace");
 
         /* a builtin that takes no filename offers none */
-        strcpy(line, "bt mo"); len = 5; pos = 5;
+        strcpy(line, "bt in"); len = 5; pos = 5;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "bt mo") == 0 && out_len == 0,
+        CHECK(strcmp(line, "bt in") == 0 && out_len == 0,
               "a builtin that takes no file completes nothing");
 
         /*
          * but a program does, since the shell cannot know what it takes
          * and most of them take a filename
          */
-        strcpy(line, "cat mo"); len = 6; pos = 6;
+        strcpy(line, "cat in"); len = 6; pos = 6;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat motd.txt") == 0,
+        CHECK(strcmp(line, "cat init") == 0,
               "and a program in bin/ completes filenames after it");
 
         /* an unknown command offers nothing after it either */
-        strcpy(line, "zzz mo"); len = 6; pos = 6;
+        strcpy(line, "zzz in"); len = 6; pos = 6;
         out_reset();
         complete(line, &len, &pos);
         CHECK(out_len == 0, "an unknown command has no filenames to offer");
@@ -2609,11 +2609,11 @@ int main(void)
          */
         memset(line, 'X', LINE_MAX);
         line[0]='c'; line[1]='a'; line[2]='t'; line[3]=' ';
-        line[4]='m'; line[5]='o';
+        line[4]='i'; line[5]='n';
         len = 6; pos = 6;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat motd.txt") == 0,
+        CHECK(strcmp(line, "cat init") == 0,
               "an unterminated buffer still completes correctly");
     }
 

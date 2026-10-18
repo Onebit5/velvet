@@ -194,9 +194,10 @@ everything generated comes back out with ``make clean``:
 ``disk.img``
    the data disk ``make run`` attaches.
 
-``base/ramdisk/`` and ``base/diskroot/`` are inputs, not output: the tar the
-loader hands the kernel is built from ``base/ramdisk/``, and the files that
-go onto the data disk in ``make run`` come from ``base/diskroot/``.
+``base/diskroot/`` is input, not output: the files that go onto the data
+disk in ``make run`` come from it. the tar the loader hands the kernel has
+no input directory of its own; it is ``bin/init`` and ``bin/selftests/``,
+packed.
 
 notes
 -----

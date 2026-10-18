@@ -19,8 +19,8 @@ the disk was bolted on at ``/disk``, which had it backwards. now:
     /proc      what the kernel says about itself, written as it is read
 
 the ramdisk keeps its own mount point rather than being deleted, because it
-is what makes the machine work when the disk does not. every program, and
-the ``passwd`` file, live on it. a kernel whose only filesystem needs a sata
+is what makes the machine work when the disk does not. a system's programs,
+and its accounts, live on it. a kernel whose only filesystem needs a sata
 controller to bring up is one that a missing cable turns into a brick.
 
 a name with no leading slash is looked for on the disk first and the ramdisk
@@ -85,8 +85,7 @@ two blocks of zeroes to finish. there is no writing, no directories to speak
 of, and no allocation. ``ramdisk_open()`` hands back a pointer straight
 into the archive.
 
-it is a filesystem in the sense that a filing cabinet is furniture. (see
-``base/ramdisk/README``, which says so with fewer words.)
+it is a filesystem in the sense that a filing cabinet is furniture.
 
 fat32
 -----
@@ -1001,7 +1000,7 @@ the ramdisk interface
 
 the tar philemon loaded into memory at boot: read-only, always there, and
 gone when the power goes. it is what makes the machine work when the disk
-does not, and every program, and the passwd file, live on it.
+does not, and a system's programs, and its accounts, live on it.
 
 ``struct ramdisk_file { const char *name;``
     a read-only filesystem that is just a tar file philemon handed the kernel at boot.

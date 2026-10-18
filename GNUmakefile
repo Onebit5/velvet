@@ -242,13 +242,11 @@ $(OBJDIR)/arch/x86_64/trampoline.c.o: $(OBJDIR)/arch/x86_64/trampoline.c
 # kernel knows how to read, and the flags after it keep the archive
 # byte-identical between builds so the image doesnt churn.
 #
-# this one carries no programs but the kernel's own selftests, below,
-# and an /init that runs them. it is the smallest medium the kernel can
-# be booted and checked on (the accounts, the profile the shell reads at
-# login, the files the boot test reads back, init and selftests/), and a
+# this one carries the kernel's own selftests, below, and an /init that
+# runs them, and nothing else: no accounts, no greetings, no profile. it
+# is the smallest medium the kernel can be booted and checked on, and a
 # system built on this kernel packs its own
 RAMDISK := $(BINDIR)/ramdisk.tar
-RAMDISK_FILES := $(shell find base/ramdisk -type f 2>/dev/null)
 
 #
 # the selftests: programs, in tools/testing/selftests/, that check from
@@ -313,15 +311,12 @@ $(SELFTEST_INIT): $(SELFTEST_DIR)/init.c $(SELFTEST_DIR)/kselftest.h \
 	@mkdir -p $(@D)
 	$(CC) $(SELFTEST_CFLAGS) $(SELFTEST_LDFLAGS) $< -o $@
 
-$(RAMDISK): $(RAMDISK_FILES) $(SELFTEST_INIT) $(SELFTEST_BINS) $(SELFTEST_LIST)
+# the makefile too, since what the archive is made from is written here,
+# and a change to that is a change make cannot otherwise see
+$(RAMDISK): $(SELFTEST_INIT) $(SELFTEST_BINS) $(SELFTEST_LIST) GNUmakefile
 	@mkdir -p $(@D)
-	@# git only tracks the execute bit, so the modes that matter are set
-	@# here rather than trusted to the checkout. velvet-room.txt is the
-	@# one the kernel refuses to a guest
-	@chmod 644 base/ramdisk/passwd base/ramdisk/*.txt 2>/dev/null || true
-	@chmod 600 base/ramdisk/velvet-room.txt
 	tar --format=ustar --sort=name --owner=0 --group=0 --numeric-owner \
-		--mtime=@0 -cf $@ -C base/ramdisk . \
+		--mtime=@0 -cf $@ \
 		-C $(abspath $(BINDIR)) --no-recursion $(SELFTEST_TAR)
 
 #
@@ -356,7 +351,7 @@ SOURCE_FILES := GNUmakefile sources.mk README.md CHANGELOG.md ROADMAP.md \
                 CONTRIBUTING.md CODE_OF_CONDUCT.md \
                 $(shell find .github $(KERNEL_PORTABLE) \
                         arch boot tests tools docs -type f | sort) \
-                $(shell find base/ramdisk base/diskroot -type f | sort)
+                $(shell find base/diskroot -type f | sort)
 
 # --sort=name and a fixed mtime for the same reason the ramdisk has
 # them: two builds of the same tree must produce the same bytes, or the
@@ -364,12 +359,11 @@ SOURCE_FILES := GNUmakefile sources.mk README.md CHANGELOG.md ROADMAP.md \
 # built.
 #
 # --mode is there for a subtler version of the same thing. git records
-# one bit of a mode, the ramdisk rule above sets others by hand, and the
-# result is that base/ramdisk/velvet-room.txt is 0600 after a build and
-# 0644 in a fresh checkout, so the archive, and therefore the stamp,
-# would depend on whether anybody had built anything yet. it states what
-# it wants instead: everyone may read, only the owner may write, and
-# whatever was executable stays executable
+# one bit of a mode, and the rest of a checkout's modes come from the
+# umask of whoever made it, so the archive, and therefore the stamp,
+# would depend on who checked the tree out. it states what it wants
+# instead: everyone may read, only the owner may write, and whatever was
+# executable stays executable
 $(OWN_SOURCE): $(SOURCE_FILES)
 	@mkdir -p $(@D)
 	@echo '  TAR     $@ ($(words $(SOURCE_FILES)) files)'

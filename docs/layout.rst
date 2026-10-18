@@ -39,7 +39,6 @@ at a glance
     init/              kmain, and the handoff philemon leaves behind
     sources.mk         which of the above the kernel is made of
     boot/              philemon, the bootloader
-    base/ramdisk/      the files packed into the boot tar (input)
     base/diskroot/     the files on the data disk in `make run` (input)
     tests/             the host suites, run by `make test`
     tools/             the checkers and image builders: the python ones, and
