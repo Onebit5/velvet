@@ -14,9 +14,14 @@
 #include <stddef.h>
 #include <velvet/philemon.h>
 
-/* framebuffer text consoles. */
+/*
+ * framebuffer text consoles: four for whatever the system runs on them,
+ * and a fifth the kernel keeps for its monitor, which no program may
+ * take as its own
+ */
 
-#define VCONSOLE_COUNT 4
+#define VCONSOLE_COUNT   5
+#define VCONSOLE_MONITOR 4
 
 void console_init(const struct ph_framebuffer *fb);
 bool console_ready(void);

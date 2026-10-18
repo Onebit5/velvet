@@ -113,12 +113,14 @@ void keyboard_feed(uint8_t sc)
     case 0x38: lalt   = !release; return;
 
     /* "show the kernel that console", two ways. */
-    case 0x3b: case 0x3c: case 0x3d: case 0x3e:     /* f1..f4 */
+    case 0x3b: case 0x3c: case 0x3d: case 0x3e:     /* f1..f5 */
+    case 0x3f:
         if (!release && alt()) {
             input_push(KEY_CONSOLE_1 + (code - 0x3b));
         }
         return;
-    case 0x02: case 0x03: case 0x04: case 0x05:     /* 1..4 */
+    case 0x02: case 0x03: case 0x04: case 0x05:     /* 1..5 */
+    case 0x06:
         if (!release && alt()) {
             input_push(KEY_CONSOLE_1 + (code - 0x02));
             return;

@@ -82,8 +82,9 @@ int tty_foreground(void)
 bool tty_attach(int i_pid, unsigned u_console)
 {
     struct thread *p_me = sched_current();
-    if (p_me == NULL || u_console >= VCONSOLE_COUNT) {
-        return false;
+    if (p_me == NULL || u_console >= VCONSOLE_COUNT
+        || u_console == VCONSOLE_MONITOR) {
+        return false;           /* the monitor's console is the kernel's */
     }
     int i_pgid = process_pgid(i_pid);
 

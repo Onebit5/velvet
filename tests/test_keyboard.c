@@ -75,6 +75,7 @@ bool process_interrupt_pending(int i_pid)
 
 #include <velvet/keyboard.h>
 #include <velvet/input.h>
+#include <velvet/console.h>
 
 /* which console the reader belongs to, and which is being looked at. */
 static unsigned my_console_n, shown_console_n;
@@ -306,6 +307,13 @@ int main(void)
         CHECK(intercepted == KEY_CONSOLE_1 + 2,
               "and so does alt+3, for machines whose host eats the "
               "function keys");
+        keyboard_feed(0x3f);            /* f5 */
+        CHECK(intercepted == KEY_CONSOLE_1 + VCONSOLE_MONITOR,
+              "alt+f5 asks for the fifth, the monitor's");
+        intercepted = -1;
+        keyboard_feed(0x06);            /* the digit 5 */
+        CHECK(intercepted == KEY_CONSOLE_1 + VCONSOLE_MONITOR,
+              "and so does alt+5");
         keyboard_feed(0x38 | 0x80);     /* alt up */
 
         /* without alt they are the keys they have always been */

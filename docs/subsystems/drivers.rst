@@ -21,7 +21,12 @@ character it was sitting on, and it turns out to be the whole of what an
 off-screen console is: a screen nobody is looking at is a shadow buffer
 nobody is painting.
 
-the rule that makes four consoles four consoles: **output goes to the
+there are five. four are for whatever the system runs on them, and the
+fifth, ``VCONSOLE_MONITOR``, is the kernel's own, kept for its monitor:
+no program may take it as its terminal. alt+f1..f5, or alt and the
+number row for a host that eats the function keys, shows each.
+
+the rule that makes five consoles five: **output goes to the
 console its writer belongs to, not to whichever is on the screen.** a shell
 on console 2 printing while console 1 is displayed must not scribble over
 console 1. so ``console.c`` asks a hook, the hook is set once at boot to
@@ -110,7 +115,7 @@ question the terminal asks has to be asked of the whole job. ``TTY_SHELL``
 (0) means the kernel shell, which is where the terminal goes back to
 whenever a program finishes.
 
-each of the four consoles has its own answer to all of this, and which
+each of the consoles has its own answer to all of this, and which
 console a caller means is not passed in: it is whichever the calling thread
 belongs to, because that is always the right answer and passing it would
 only be an opportunity to pass the wrong one.

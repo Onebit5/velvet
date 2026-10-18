@@ -524,7 +524,7 @@ static void init_thread(void *arg)
     if (e1000_present()) {
         init_add(&services, "network", network_service, NULL, 0, true);
     }
-    for (unsigned c = 0; c < VCONSOLE_COUNT && !s_b_program; c++) {
+    for (unsigned c = 0; c < VCONSOLE_MONITOR && !s_b_program; c++) {
         char name[INIT_NAME_MAX];
         name[0] = 't'; name[1] = 't'; name[2] = 'y';
         name[3] = (char)('1' + c); name[4] = '\0';

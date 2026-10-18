@@ -103,6 +103,7 @@ int input_getchar_blocking(void)
 
 #include <velvet/process.h>
 #include <velvet/tty.h>
+#include <velvet/console.h>
 
 /* a pipe a forked child inherits gains a holder rather than being copied. */
 struct pipe;
@@ -436,6 +437,9 @@ int main(void)
         int i_rootly = process_create("rootly", 0, 0, false, 0);
         process_set_thread(i_job, 41);
 
+        CHECK(!tty_attach(i_sh, VCONSOLE_MONITOR)
+              && this_thread.console == 0,
+              "the monitor's console is no program's to take");
         CHECK(tty_attach(i_sh, 1) && this_thread.console == 1
               && tty_foreground() == i_sh,
               "attaching puts the program's group in front of its console");
