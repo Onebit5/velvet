@@ -55,7 +55,6 @@
 #include <velvet/path.h>
 #include <velvet/ahci.h>
 #include <velvet/pipe.h>
-#include <velvet/auth.h>
 #include <velvet/init.h>
 
 /* and the four that only a pc has. */
@@ -136,9 +135,6 @@ struct shell_job {
 struct session {
     char cwd[PATH_MAX];
 
-    int  uid;
-    char user[AUTH_NAME_MAX];
-
     char history[HISTORY_SESSION_MAX][LINE_MAX];
     int  hist_count;
 
@@ -164,9 +160,6 @@ struct session {
     /* what the last thing exited with. `$?`, and what `if` looks at */
     int status;
 
-    /* somebody typed `logout`. */
-    bool leaving;
-
     /* the kernel's monitor: nobody logs into it, and it runs no programs */
     bool b_monitor;
 };
@@ -180,8 +173,6 @@ static struct session *me(void)
 }
 
 #define shell_cwd       (me()->cwd)
-#define current_uid     (me()->uid)
-#define current_user    (me()->user)
 #define history         (me()->history)
 #define hist_count      (me()->hist_count)
 #define jobs            (me()->jobs)
@@ -315,16 +306,11 @@ static void session_init(void)
     }
 
     /* and everything the last person left. */
-    me()->leaving = false;
     me()->b_monitor = false;
     me()->status  = 0;
     me()->env[0]  = '\0';
     me()->env_len = 1;
     typed_line[0] = '\0';
-    current_user[0] = '\0';
-
-    /* nobody, rather than the master. */
-    current_uid = -1;
 }
 static size_t common_prefix(const char *a, const char *b);
 
@@ -379,7 +365,7 @@ static void persona_thread(void *arg)
 static bool about_programs(const char *str_name)
 {
     static const char *const s_arr_names[] = {
-        "run", "jobs", "fg", "bg", "logout", NULL,
+        "run", "jobs", "fg", "bg", NULL,
     };
 
     for (const char *const *pp_name = s_arr_names; *pp_name; pp_name++) {
@@ -589,10 +575,6 @@ static void cmd_resize(int argc, char **argv)
     if (!disk_ready(which) || disk_which(which) != DISK_EXT4) {
         kprintf("there is no ext4 filesystem at %s to resize\n",
                 disk_mount_point(which));
-        return;
-    }
-    if (current_uid != 0) {
-        kprintf("only the master may change the size of a filesystem\n");
         return;
     }
 
@@ -1117,7 +1099,7 @@ static void launch(const char *path, int argc, char **argv, bool announce)
     struct job j;
     const char *why = NULL;
     if (!user_run(path, argc, (const char *const *)argv, shell_cwd,
-                  current_uid, background, announce, &j, &why)) {
+                  0, background, announce, &j, &why)) {
         if (why == USER_RUN_NO_SUCH_FILE) {
             missing("run", path);
         } else {
@@ -1330,16 +1312,9 @@ static void cmd_top(int argc, char **argv)
 static void cmd_whoami(int argc, char **argv)
 {
     (void)argc; (void)argv;
-    const struct account *a = auth_find(current_user);
-    kprintf("%s, uid %d%s%s\n", current_user, current_uid,
-            (a != NULL && a->description[0]) ? ", " : "",
-            (a != NULL) ? a->description : "");
-    if (current_uid == 0) {
-        kprintf("the velvet room answers to thee\n");
-    }
+    kprintf("monitor, uid 0\n");
+    kprintf("the velvet room answers to thee\n");
 }
-
-static void cmd_logout(int argc, char **argv);
 
 static void cmd_dmesg(int argc, char **argv)
 {
@@ -1617,13 +1592,6 @@ static void cmd_src(int argc, char **argv)
     }
 
     if (argc >= 2 && strcmp(argv[1], "unpack") == 0) {
-        /* four hundred files written wherever somebody points this is more rope than a guest gets. */
-        if (current_uid != 0) {
-            kprintf("only the master may write the source out. `cat "
-                    "%s/...` reads it\n", VFS_SRC);
-            return;
-        }
-
         /* TODO: the boot test unpacks the whole tree, so this third word is not exercised. */
         const char *to = (argc >= 3) ? argv[2] : "/src";
         char from[VFS_NAME_MAX];
@@ -1708,7 +1676,7 @@ static void cmd_src(int argc, char **argv)
 /* both of the ways this machine stops are asked of init now. */
 
 /* read_line is defined with the rest of the line editing, a long way below this. */
-static void read_line(char *buf, size_t max, bool echo);
+static void read_line(char *buf, size_t max);
 
 /* the installer talks to two drives by number. */
 struct install_context {
@@ -1825,10 +1793,6 @@ static void cmd_install(int argc, char **argv)
                 "onto it would overwrite what is being read\n");
         return;
     }
-    if (current_uid != 0) {
-        kprintf("only the master may rewrite a disk\n");
-        return;
-    }
 
     /* the cache is bound to the mounted drive and the installer talks to another one. */
     if (disk_dirty() && !disk_sync()) {
@@ -1842,7 +1806,7 @@ static void cmd_install(int argc, char **argv)
     kprintf("type the drive number again to go ahead: ");
 
     char confirm[8];
-    read_line(confirm, sizeof confirm, true);
+    read_line(confirm, sizeof confirm);
     if (strcmp(confirm, argv[1]) != 0) {
         kprintf("nothing was written\n");
         return;
@@ -1944,10 +1908,6 @@ static void cmd_ifconfig(int argc, char **argv)
     char text[32];
 
     if (argc >= 2) {
-        if (current_uid != 0) {
-            kprintf("only the master may set an address\n");
-            return;
-        }
         ipv4 addr;
         if (!ipv4_parse(argv[1], &addr)) {
             kprintf("'%s' is not an address\n", argv[1]);
@@ -2071,10 +2031,6 @@ static void cmd_dhcp(int argc, char **argv)
     }
 
     if (argc >= 2) {
-        if (current_uid != 0) {
-            kprintf("only the master may ask for an address\n");
-            return;
-        }
         if (strcmp(argv[1], "renew") == 0 || strcmp(argv[1], "start") == 0) {
             net_dhcp_start();
             kprintf("asking. `ifconfig` says how it went\n");
@@ -2176,10 +2132,6 @@ static void cmd_signal(int argc, char **argv)
     const struct process *p = process_find(pid);
     if (p == NULL) {
         kprintf("there is no process %d\n", pid);
-        return;
-    }
-    if (current_uid != 0 && p->uid != current_uid) {
-        kprintf("that one is not yours\n");
         return;
     }
 
@@ -3272,7 +3224,6 @@ static const struct command commands[] = {
     { "clear",  "wipe the screen clean",                cmd_clear, false, NULL },
     { "run",    "give a program the outer ring; & for background", cmd_run, true, "run <program> [args...] [&]" },
     { "whoami", "who thou art, and what that permits",  cmd_whoami, false, NULL },
-    { "logout", "leave, and let somebody else in",      cmd_logout, false, NULL },
     { "dmesg",  "everything boot said while you werent looking", cmd_dmesg, false, NULL },
     { "arcana", "the rank of this bond, and its making", cmd_arcana, false, NULL },
     { "persona","the face this machine wears",          cmd_persona, false, NULL },
@@ -3649,7 +3600,7 @@ static void run_pipeline(int argc, char **argv, bool background)
 
     struct job j;
     const char *why = "";
-    if (!user_pipeline(stages, count, shell_cwd, current_uid, background,
+    if (!user_pipeline(stages, count, shell_cwd, 0, background,
                        &j, &why)) {
         kprintf("cannot run it: %s\n", why);
         me()->status = 127;
@@ -3831,8 +3782,7 @@ static void prompt(void)
      * looking identical, knowing which one you are typing at is not a
      * thing to have to remember
      */
-    kprintf("%s@velvet[%u]:%s%s ", current_user, tty_my_console() + 1,
-            shell_cwd, current_uid == 0 ? "#" : "$");
+    kprintf("monitor@velvet[%u]:%s# ", tty_my_console() + 1, shell_cwd);
     console_set_colors(COLOR_TEXT, 0x101018);
 }
 
@@ -4364,7 +4314,7 @@ static void complete(char *line, size_t *len, size_t *pos)
 }
 
 /* read a line for the kernel's own prompts. */
-static void read_line(char *buf, size_t max, bool echo)
+static void read_line(char *buf, size_t max)
 {
     size_t len = 0;
     for (;;) {
@@ -4377,9 +4327,7 @@ static void read_line(char *buf, size_t max, bool echo)
         if (c == '\b') {
             if (len > 0) {
                 len--;
-                if (echo) {
-                    kprintf("\b \b");
-                }
+                kprintf("\b \b");
             }
             continue;
         }
@@ -4388,139 +4336,18 @@ static void read_line(char *buf, size_t max, bool echo)
         }
         if (len + 1 < max) {
             buf[len++] = (char)c;
-            if (echo) {
-                kprintf("%c", (char)c);
-            }
+            kprintf("%c", (char)c);
         }
     }
     buf[len] = '\0';
 }
 
-/* the door. it does not open until somebody names themselves */
-static void login(void)
-{
-    char name[AUTH_NAME_MAX];
-    char password[AUTH_NAME_MAX];
-
-    for (;;) {
-        console_set_colors(COLOR_PROMPT, 0x101018);
-        kprintf("\nname the guest: ");
-        console_set_colors(COLOR_TEXT, 0x101018);
-        read_line(name, sizeof name, true);
-
-        if (name[0] == '\0') {
-            continue;
-        }
-
-        console_set_colors(COLOR_PROMPT, 0x101018);
-        kprintf("and the word: ");
-        console_set_colors(COLOR_TEXT, 0x101018);
-        read_line(password, sizeof password, false);
-
-        int uid = auth_login(name, password);
-        if (uid < 0) {
-            /*
-             * one message for both, because saying which was wrong
-             * hands over half of it
-             */
-            kprintf("that is not a name and a word known here.\n");
-            continue;
-        }
-
-        current_uid = uid;
-        for (size_t i = 0; i < sizeof current_user; i++) {
-            current_user[i] = name[i];
-            if (name[i] == '\0') break;
-        }
-
-        console_set_colors(COLOR_PROMPT, 0x101018);
-        kprintf("\nwelcome, %s.\n", name);
-        if (uid != 0) {
-            kprintf("thou art a guest here, and the room knows it.\n");
-        }
-        console_set_colors(COLOR_TEXT, 0x101018);
-        return;
-    }
-}
-
-/* logging out ends the session rather than looping back to a login prompt inside it. */
-static void cmd_logout(int argc, char **argv)
-{
-    (void)argc; (void)argv;
-    kprintf("fare thee well, %s\n", current_user);
-    me()->leaving = true;
-}
-
-/* what a session reads before it starts. */
-static void read_profile(void)
-{
-    static const char *const places[] = {
-        "/etc/profile",         /* on the disk, if somebody has put one there */
-        "/boot/etc/profile",    /* and the one that ships with the machine */
-        NULL,
-    };
-    for (int i = 0; places[i] != NULL; i++) {
-        struct vfs_file f;
-        if (vfs_open(places[i], &f) && !f.is_dir) {
-            run_script(places[i]);
-            return;     /* the first one found, not both */
-        }
-    }
-}
-
-/*
- * what the user actually sees at the start of a session: the name, the
- * contract, and whatever /boot/welcome.txt has to say, named
- * absolutely on purpose, so that what the machine says about itself
- * cannot be changed by whatever happens to be sitting on the data disk.
- * everything the drivers had to report went to serial and is still there
- * under `dmesg`
- */
-static void greet(void)
-{
-    console_clear();
-
-    console_set_colors(0x45e653, 0x101018);
-    kprintf("velvet v%s\n\n", VELVET_VERSION);
-
-    console_set_colors(0x7b8ce0, 0x101018);
-    kprintf("Thou art I... And I am thou...\n");
-    kprintf("Thou hast established a new bond...\n\n");
-    kprintf("Thou shalt be blessed when creating\n");
-    kprintf("Personas of the Computer's Arcana...\n\n");
-
-    console_set_colors(0xc8c8d0, 0x101018);
-
-    struct ramdisk_file f;
-    if (ramdisk_open("welcome.txt", &f)) {
-        const char *p = f.data;
-        for (uint64_t i = 0; i < f.size; i++) {
-            kprintf("%c", p[i]);
-        }
-        kprintf("\n");
-    }
-}
-
 static void session_loop(void);
-
-/* a session, from the greeting to whenever somebody logs out. */
-void shell_run(void)
-{
-    session_init();
-
-    console_set_colors(COLOR_TEXT, 0x101018);
-    greet();
-    login();
-    read_profile();
-    session_loop();
-}
 
 void shell_monitor(void)
 {
     session_init();
     me()->b_monitor = true;
-    current_uid = 0;
-    strcpy(current_user, "monitor");
 
     console_set_colors(COLOR_TEXT, 0x101018);
     kprintf("velvet v%s, the monitor\n\n", VELVET_VERSION);
@@ -4530,12 +4357,12 @@ void shell_monitor(void)
     session_loop();
 }
 
-/* a session, from its first prompt to whenever somebody leaves it */
+/* the monitor's prompt, for as long as the machine is up */
 static void session_loop(void)
 {
     char line[LINE_MAX];
 
-    while (!me()->leaving) {
+    for (;;) {
         size_t len = 0;     /* characters in the line */
         size_t pos = 0;     /* where the cursor sits within them */
         int hist_pos = hist_count;

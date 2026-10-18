@@ -37,7 +37,6 @@
 #include <velvet/kmalloc.h>
 #include <velvet/addrspace.h>
 #include <velvet/vmm.h>
-#include <velvet/auth.h>
 #include <velvet/string.h>
 #include <uapi/velvet/tty.h>
 

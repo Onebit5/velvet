@@ -301,19 +301,11 @@ machine is a decision nobody ever checks.
 users
 -----
 
-``auth.c`` reads accounts out of a file in the ramdisk. the passwords are
-stored in the clear, and that is the honest shape of what a user means here:
-storing one properly needs somewhere to write, which this kernel does not
-have. the interesting half of an account is not how its password is kept but
-what its uid can and cannot reach, and that half is enforced by hardware:
-ring 3, an address space of its own, and a kernel that checks a uid before
-handing anything over.
-
-``auth_login()`` returns the uid, or -1 if the name *or* the password is
-wrong, and does not say which, because saying which tells an attacker half
-of it. ``auth_load()`` takes the text directly so the awkward cases.
-comments, blank lines, a line with a field missing. can be fed in
-deliberately rather than hoped about.
+a user is a uid, and the kernel knows nothing else about one. names,
+passwords and who may log in are the system's, kept wherever its login
+looks for them. what the kernel holds to is what a uid can and cannot
+reach, and that half is enforced by hardware: ring 3, an address space of
+its own, and a kernel that checks a uid before handing anything over.
 
 a login in ring 3 checks the password itself and then becomes the user
 with ``setuid``. root may become anybody and anyone else only who they
@@ -568,26 +560,6 @@ outside.
 
 ``bool signal_deliverable(const struct signal_state *s);``
     is there anything to deliver: the question the syscall return path asks, and the one a blocking call asks to decide whether to give up
-
-
-the auth interface
---------------------
-
-who may log in. the accounts are read out of a file in the ramdisk, and a
-name and a password are turned into a uid or a refusal. the shell asks at
-login and nothing else does.
-
-``#define AUTH_MAX_ACCOUNTS 8``
-    who is allowed in, read out of a file in the ramdisk.
-
-``void auth_init(void);``
-    read the accounts out of the ramdisk. safe to call with no ramdisk
-
-``void auth_load(const char *text, size_t len);``
-    the parser, given the text directly.
-
-``int auth_login(const char *name, const char *password);``
-    returns the uid, or -1 if the name or the password is wrong.
 
 
 the init interface

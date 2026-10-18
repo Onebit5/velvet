@@ -29,7 +29,6 @@
 #include <velvet/disk.h>
 #include <velvet/install.h>
 #include <velvet/vfs.h>
-#include <velvet/auth.h>
 #include <velvet/init.h>
 #include <velvet/sched.h>
 #include <velvet/thread.h>
@@ -229,8 +228,6 @@ void kmain(const struct ph_handoff *handoff)
      * further out: what the boot medium handed over, and what it kept
      */
     source_init();
-
-    auth_init();
     kprintf("\n");
 
     /* from here on this function is a thread like any other */

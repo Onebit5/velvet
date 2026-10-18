@@ -34,7 +34,7 @@ at a glance
                        epoch, ksyms, backtrace
     mm/                pmm, buddy, slab, kmalloc, vmm, addrspace, pressure
     sched/             threads, run queue, context switch, processes,
-                       signals, auth, init, locks
+                       signals, init, locks
     shell/             the velvet room terminal
     init/              kmain, and the handoff philemon leaves behind
     sources.mk         which of the above the kernel is made of

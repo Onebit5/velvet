@@ -796,15 +796,7 @@ void pipe_share(struct pipe *p, bool writing)
     (void)p; (void)writing;
 }
 
-#include <velvet/auth.h>
 const char *const USER_RUN_NO_SUCH_FILE = "no such file in the ramdisk";
-
-/* the accounts the shell reads at boot */
-static const char passwd_text[] =
-    "# a comment, and a blank line follow\n"
-    "\n"
-    "igor:velvet:0:master of the velvet room\n"
-    "guest:guest:1000:a visitor\n";
 static const char *run_error = "not an elf";
 static bool ran_background;
 static int ran_argc;
@@ -1117,7 +1109,6 @@ static void monitor_tests(void)
 
 int main(void)
 {
-    auth_load(passwd_text, sizeof passwd_text - 1);
     check_quotes();
 
     /*
@@ -1852,8 +1843,6 @@ int main(void)
 
     /* the shell's job is to turn a name into a number and to refuse what should be refused. */
     fake_proc_exists = true;
-    int uid_was = current_uid;
-    current_uid = 0;            /* the master, for the checks that send */
     fake_proc.uid = 0;
 
     signals_sent = 0;
@@ -1884,18 +1873,6 @@ int main(void)
     run("signal 99 int");
     CHECK(signals_sent == 0, "or one nobody holds");
     CHECK(strstr(out, "no process") != NULL, "which is said plainly");
-    fake_proc_exists = true;
-
-    /* somebody else's process is not yours to signal */
-    fake_proc.uid = 5;
-    current_uid = 1;
-    signals_sent = 0;
-    run("signal 7 kill");
-    CHECK(signals_sent == 0, "a process belonging to somebody else is safe");
-    CHECK(strstr(out, "not yours") != NULL, "and the refusal says why");
-    current_uid = uid_was;
-    fake_proc.uid = 0;
-    fake_proc_exists = false;
 
     card_there = false;
     card_up = false;

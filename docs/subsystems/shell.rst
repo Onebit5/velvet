@@ -12,11 +12,8 @@ table sees as its owner. that has a consequence the process table cares
 about: a process whose parent is 0 belongs to a shell that waits for its own
 and reads their exit codes, so init must not collect it.
 
-``shell_run()`` used to be marked ``noreturn``, because a shell was the last
-thing a thread ever did. it returns on ``logout`` now, and that is the point
-rather than a detail: a session that can *end* is one that leaves nothing
-behind for the next person, and something has to be there to start the next
-one. that something is init.
+``shell_monitor()`` does not return. the monitor is there for as long as
+the machine is, and if it dies the ``services`` thread starts it again.
 
 the monitor
 -----------
@@ -33,12 +30,12 @@ asking the broken thing for permission.
 
 **it runs no programs.** a name that is not one of its builtins is
 refused rather than looked up on the path, and so are ``run``, ``jobs``,
-``fg``, ``bg`` and ``logout``, a ``|`` and a redirection. ``help`` lists
-only what it has, and ``help <program>`` does not run the program to ask
-it. starting programs, and the sessions and jobs they belong to, is the
-system's work. the monitor is for looking at the kernel underneath it,
-``ps``, ``mem``, ``dmesg``, ``bt``, ``vmm``, ``hexdump``, and for taking
-the machine down with ``reboot`` or ``poweroff`` when nothing else will.
+``fg`` and ``bg``, a ``|`` and a redirection. ``help`` lists only what it
+has, and ``help <program>`` does not run the program to ask it. starting
+programs, and the sessions and jobs they belong to, is the system's work.
+the monitor is for looking at the kernel underneath it, ``ps``, ``mem``,
+``dmesg``, ``bt``, ``vmm``, ``hexdump``, and for taking the machine down
+with ``reboot`` or ``poweroff`` when nothing else will.
 
 builtins
 --------
@@ -172,12 +169,11 @@ is an example.
 shutting down
 -------------
 
-``logout`` ends the session and returns to init, which starts the next one
-if the service is set to respawn. ``reboot`` and ``poweroff`` go through
-init's ordered shutdown; everything stopped before the sync, in the reverse
-of the order it came up, because the disk has a write-back cache and a
-machine that resets while anything can still write loses whatever had not
-reached the drive. see `init <sched.rst>`_.
+``reboot`` and ``poweroff`` go through init's ordered shutdown;
+everything stopped before the sync, in the reverse of the order it came
+up, because the disk has a write-back cache and a machine that resets
+while anything can still write loses whatever had not reached the drive.
+see `init <sched.rst>`_.
 
 the shell interface
 ---------------------

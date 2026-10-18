@@ -74,10 +74,10 @@ the failing case. all of them:
    checksums, headers and sockets, checked against packets captured from the
    rfcs rather than invented here.
 
-``shell``, ``auth``, ``tty``, ``install``, ``philemon``, ``hash``, ``inflate``
-   the shell's parsing and dispatch, the account file and every malformed
-   line refused, the terminal discipline, the installer's ordering, the
-   loader's elf parsing, and the three checksums and deflate.
+``shell``, ``tty``, ``install``, ``philemon``, ``hash``, ``inflate``
+   the shell's parsing and dispatch, the terminal discipline, the
+   installer's ordering, the loader's elf parsing, and the three checksums
+   and deflate.
 
 the ``shell`` suite resolves names and completes them against a ``/bin``,
 and the kernel's medium carries no programs but init and the selftests. so

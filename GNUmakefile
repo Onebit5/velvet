@@ -499,7 +499,7 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/vmm $(T)/gdt \
              $(T)/ksyms $(T)/rtc $(T)/ramdisk $(T)/elf \
              $(T)/addrspace $(T)/process \
-             $(T)/syscall $(T)/tty $(T)/auth $(T)/acpi $(T)/pci \
+             $(T)/syscall $(T)/tty $(T)/acpi $(T)/pci \
              $(T)/keyboard $(T)/serial \
              $(T)/fat32 $(T)/vfs $(T)/philemon \
              $(T)/locks $(T)/path \
@@ -543,8 +543,6 @@ $(T)/process:  tests/test_process.c  sched/spinlock.c \
 $(T)/pci:      tests/test_pci.c      drivers/pci.c \
                lib/string.c
 $(T)/acpi:     tests/test_acpi.c     arch/x86_64/acpi.c \
-               lib/string.c
-$(T)/auth:     tests/test_auth.c     sched/auth.c \
                lib/string.c
 $(T)/tty:      tests/test_tty.c      sched/spinlock.c \
                drivers/tty.c drivers/termios.c \
@@ -751,7 +749,7 @@ $(T)/serial:   tests/test_serial.c   drivers/serial.c \
 # restating in a stub, and the real init policy for the same reason,
 # so that what `init` prints is what init would actually have decided
 $(T)/shell:    tests/test_shell.c    lib/string.c \
-               fs/ramdisk.c sched/auth.c \
+               fs/ramdisk.c \
                drivers/pci.c drivers/pciinfo.c fs/vfs.c \
                fs/proc.c fs/diskinfo.c mm/meminfo.c \
                fs/source.c \
@@ -766,7 +764,7 @@ $(T)/shell:    tests/test_shell.c    lib/string.c \
                net/http.c \
                shell/shell.c
 $(T)/shell:    SRCS = tests/test_shell.c lib/string.c \
-                      fs/ramdisk.c sched/auth.c \
+                      fs/ramdisk.c \
                       drivers/pci.c drivers/pciinfo.c fs/vfs.c \
                       fs/proc.c fs/diskinfo.c mm/meminfo.c \
                       fs/source.c \

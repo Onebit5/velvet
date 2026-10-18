@@ -2,17 +2,13 @@
 /*
  * include/velvet/shell.h
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * the velvet room terminal: one session, from the greeting to whenever
- * somebody logs out.
+ * the velvet room terminal, which is the kernel's monitor.
  */
 
-/* the design notes for shell.h are in docs/subsystems/mm.rst */
+/* the design notes for shell.h are in docs/subsystems/shell.rst */
 
 #ifndef VELVET_SHELL_H
 #define VELVET_SHELL_H
-
-/* the velvet room terminal: one session, from the greeting to whenever somebody logs out. */
-void shell_run(void);
 
 /*
  * the kernel's monitor, on VCONSOLE_MONITOR: the shell's own commands as
