@@ -7,8 +7,8 @@
 
 #include "../kselftest.h"
 
-#define FILE     "/boot/motd.txt"
-#define TEXT_MAX 4096
+/* room for the whole of the file read below, the test's own */
+#define TEXT_MAX (128 * 1024)
 
 static char s_arr_whole[TEXT_MAX];
 static char s_arr_again[TEXT_MAX];
@@ -23,11 +23,14 @@ int main(int i_argc, char **pp_argv)
     char arr_tail[5];
 
     (void)i_argc;
-    (void)pp_argv;
     ksft_print_header();
     ksft_set_plan(4);
 
-    int i_fd = open(FILE);
+    /*
+     * the test's own file, by the path it was started by: a file every
+     * medium that carries the test has, whatever else it carries
+     */
+    int i_fd = open(pp_argv[0]);
     int64_t i_len = read(i_fd, s_arr_whole, TEXT_MAX);
     ksft_test_result(i_len > 5 && lseek(i_fd, 0, SEEK_SET) == 0
                      && read(i_fd, s_arr_again, TEXT_MAX) == i_len
