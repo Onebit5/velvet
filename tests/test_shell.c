@@ -2543,6 +2543,23 @@ int main(void)
               "a builtin and a program sharing a prefix complete only as "
               "far as they agree");
 
+        /*
+         * a word that grows by less than what follows it: the rest of
+         * the line moves up over itself, and has to be moved from its
+         * far end or it overwrites what it has yet to move
+         */
+        strcpy(line, "cat mo done and more"); len = 20; pos = 6;
+        out_reset();
+        replace_word(line, &len, &pos, 4, "motd");
+        CHECK(strcmp(line, "cat motd done and more") == 0 && pos == 8
+              && len == 22,
+              "a longer word keeps all of the line after it");
+        strcpy(line, "cat motd.txt done and more"); len = 26; pos = 12;
+        out_reset();
+        replace_word(line, &len, &pos, 4, "mo");
+        CHECK(strcmp(line, "cat mo done and more") == 0 && pos == 6,
+              "and so does a shorter one");
+
         /* filenames after cat */
         strcpy(line, "cat mo"); len = 6; pos = 6;
         out_reset();

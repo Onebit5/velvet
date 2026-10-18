@@ -3982,10 +3982,12 @@ static void replace_word(char *line, size_t *len, size_t *pos,
         return;
     }
 
-    /* shuffle whatever came after the word out of the way */
-    for (size_t i = 0; i < tail_len; i++) {
-        line[start + new_word + i] = line[*pos + i];
-    }
+    /*
+     * shuffle whatever came after the word out of the way. it overlaps
+     * itself whenever the word changes by less than its length, which is
+     * what memmove is for
+     */
+    memmove(line + start + new_word, line + *pos, tail_len);
     for (size_t i = 0; i < new_word; i++) {
         line[start + i] = with[i];
     }
