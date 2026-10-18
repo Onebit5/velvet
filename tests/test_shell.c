@@ -1082,6 +1082,39 @@ static void run(const char *line)
     }
 }
 
+/*
+ * the monitor: the shell's commands with nobody logged in, and none of
+ * what is about programs, since running them is the system's
+ */
+static void monitor_tests(void)
+{
+    me()->b_monitor = true;
+
+    run("bin/hello");
+    CHECK(strstr(out, "runs no programs") != NULL && me()->status == 127,
+          "the monitor runs no program by name");
+    run("run bin/hello");
+    CHECK(strstr(out, "not the monitor's") != NULL,
+          "nor with run");
+    run("jobs");
+    CHECK(strstr(out, "not the monitor's") != NULL, "and has no jobs");
+    run("echo a | wc");
+    CHECK(strstr(out, "joins nothing") != NULL,
+          "and joins nothing with a pipe");
+    run("help");
+    CHECK(strstr(out, "dmesg") != NULL && strstr(out, " run ") == NULL
+          && strstr(out, "jobs") == NULL && strstr(out, "ring 3") == NULL,
+          "help lists the monitor's commands, and no programs");
+    run("help hello");
+    CHECK(strstr(out, "not something you can type") != NULL,
+          "and help for a program does not run the program to ask it");
+    run("pwd");
+    CHECK(strstr(out, "/") != NULL && strstr(out, "monitor") == NULL,
+          "while its own commands work as they always did");
+
+    me()->b_monitor = false;
+}
+
 int main(void)
 {
     auth_load(passwd_text, sizeof passwd_text - 1);
@@ -2700,6 +2733,8 @@ int main(void)
     CHECK(strstr(out, "Imaginary CPU") != NULL, "and reports the cpu");
     CHECK(strstr(out, "1280x800") != NULL, "and the resolution");
     CHECK(strstr(out, "4 threads") != NULL, "and the thread count");
+
+    monitor_tests();
 
     if (!failures) printf("all good\n");
     return failures;

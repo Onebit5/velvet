@@ -166,6 +166,9 @@ struct session {
 
     /* somebody typed `logout`. */
     bool leaving;
+
+    /* the kernel's monitor: nobody logs into it, and it runs no programs */
+    bool b_monitor;
 };
 
 static struct session sessions[VCONSOLE_COUNT];
@@ -313,6 +316,7 @@ static void session_init(void)
 
     /* and everything the last person left. */
     me()->leaving = false;
+    me()->b_monitor = false;
     me()->status  = 0;
     me()->env[0]  = '\0';
     me()->env_len = 1;
@@ -368,6 +372,24 @@ static void persona_thread(void *arg)
 
 
 
+/*
+ * the builtins that are about programs: starting one, and the jobs and
+ * the session it would run in. the monitor has none of those
+ */
+static bool about_programs(const char *str_name)
+{
+    static const char *const s_arr_names[] = {
+        "run", "jobs", "fg", "bg", "logout", NULL,
+    };
+
+    for (const char *const *pp_name = s_arr_names; *pp_name; pp_name++) {
+        if (strcmp(str_name, *pp_name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* `help <name>`. for a builtin, out of the table. */
 static void help_one(const char *name)
 {
@@ -383,7 +405,7 @@ static void help_one(const char *name)
     }
 
     char path[PATH_MAX];
-    if (find_program(name, path, sizeof path)) {
+    if (!me()->b_monitor && find_program(name, path, sizeof path)) {
         char *args[2];
         args[0] = (char *)name;
         args[1] = (char *)"--help";
@@ -412,6 +434,9 @@ static void cmd_help(int argc, char **argv)
     kprintf("built in\n ");
     size_t n = 0;
     for (const struct command *c = commands; c->name; c++) {
+        if (me()->b_monitor && about_programs(c->name)) {
+            continue;
+        }
         kprintf(" %s", c->name);
         for (size_t i = strlen(c->name); i < 11; i++) {
             kprintf(" ");
@@ -419,6 +444,10 @@ static void cmd_help(int argc, char **argv)
         if (++n % per_row == 0) {
             kprintf("\n ");
         }
+    }
+    if (me()->b_monitor) {
+        kprintf("\n\n`help <name>` for what one takes\n");
+        return;
     }
     kprintf("\n\nprograms, in ring 3 with memory of their own\n ");
     n = 0;
@@ -3389,10 +3418,24 @@ static void run_argv(int argc, char **argv)
     }
     {
         const struct command *c = builtin_named(argv[0]);
+        if (c != NULL && me()->b_monitor && about_programs(argv[0])) {
+            kprintf("%s is not the monitor's: it runs no programs\n",
+                    argv[0]);
+            me()->status = 2;
+            return;
+        }
         if (c != NULL) {
             c->fn(argc, argv);
             return;
         }
+    }
+
+    /* running programs is the system's, and the monitor is the kernel's */
+    if (me()->b_monitor) {
+        kprintf("%s: not one of the monitor's commands, and the monitor "
+                "runs no programs. `help` lists what it has\n", argv[0]);
+        me()->status = 127;
+        return;
     }
     /*
      * not a builtin. before deciding it is nothing, go and look for a
@@ -3753,6 +3796,11 @@ static void run_line(char *line)
 
     int argc = split(line, argv, ARGV_MAX);
 
+    if (me()->b_monitor && needs_wiring(argc, argv)) {
+        kprintf("the monitor joins nothing with | and redirects nothing\n");
+        me()->status = 2;
+        return;
+    }
     if (needs_wiring(argc, argv)) {
         /*
          * a trailing & belongs to the whole line rather than to the
@@ -4451,17 +4499,39 @@ static void greet(void)
     }
 }
 
+static void session_loop(void);
+
 /* a session, from the greeting to whenever somebody logs out. */
 void shell_run(void)
 {
     session_init();
 
-    char line[LINE_MAX];
-
     console_set_colors(COLOR_TEXT, 0x101018);
     greet();
     login();
     read_profile();
+    session_loop();
+}
+
+void shell_monitor(void)
+{
+    session_init();
+    me()->b_monitor = true;
+    current_uid = 0;
+    strcpy(current_user, "monitor");
+
+    console_set_colors(COLOR_TEXT, 0x101018);
+    kprintf("velvet v%s, the monitor\n\n", VELVET_VERSION);
+    kprintf("the kernel's own commands, with nobody logged in and no "
+            "programs run.\n`help` lists them. alt+1..4 go back to the "
+            "system\n");
+    session_loop();
+}
+
+/* a session, from its first prompt to whenever somebody leaves it */
+static void session_loop(void)
+{
+    char line[LINE_MAX];
 
     while (!me()->leaving) {
         size_t len = 0;     /* characters in the line */

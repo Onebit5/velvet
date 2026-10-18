@@ -196,6 +196,13 @@ static void console_service(void *arg)
     thread_exit(0);
 }
 
+static void monitor_service(void *arg)
+{
+    (void)arg;
+    shell_monitor();
+    thread_exit(0);
+}
+
 /* the disk, kept roughly honest. */
 #define FLUSH_EVERY_MS 3000
 
@@ -503,10 +510,11 @@ static void init_thread(void *arg)
     uint64_t gained = pmm_reclaim_bootloader();
     kprintf("reclaimed %lu KiB of bootloader memory (%lu MiB usable now)\n",
             gained / 1024, pmm_total_bytes() / (1024 * 1024));
-    kprintf("four consoles: alt+1..4 (or alt+f1..f4, if your host does "
-            "not eat them),\n");
-    kprintf("             ctrl+\\ then a digit on serial, or `chvt`. "
-            "shift+pageup looks back\n");
+    kprintf("five consoles: alt+1..4 for the system, alt+5 for the "
+            "kernel's monitor\n");
+    kprintf("             (or alt+f1..f5, if your host does not eat them), "
+            "ctrl+\\ then a digit\n");
+    kprintf("             on serial, or `chvt`. shift+pageup looks back\n");
 
     /*
      * the order below is the order the machine comes up in, and it is
@@ -530,6 +538,8 @@ static void init_thread(void *arg)
         name[3] = (char)('1' + c); name[4] = '\0';
         init_add(&services, name, console_service, NULL, c, true);
     }
+    init_add(&services, "monitor", monitor_service, NULL, VCONSOLE_MONITOR,
+             true);
     size_t count = services.count;
     spin_unlock_irq(&init_lock, flags);
 

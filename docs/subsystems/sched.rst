@@ -270,13 +270,14 @@ session is, and what happens when one ends are the system's to decide,
 and the kernel's guesses at them are only a stand-in for when nothing on
 the medium has decided. with ``/init`` there, the kernel's thread, named
 ``services``, keeps what is the kernel's: the flusher and the network,
-watched and restarted, and the road down. it starts no consoles and
-collects no orphans; those belong to ``/init``, which every orphan is
-handed to. ``/init`` is made first, parked, so that it is pid 1, and let
-go only once the flusher is up, in front of console 0 so that what it
-says before it takes a console of its own is seen. if it ever ends, the
-kernel panics: nothing is left to start a session or bring the machine
-down, and a machine that only looks alive is worse than one that says so.
+watched and restarted, the monitor on the fifth console, and the road
+down. it starts no sessions on the other four and collects no orphans;
+those belong to ``/init``, which every orphan is handed to. ``/init`` is
+made first, parked, so that it is pid 1, and let go only once the flusher
+is up, in front of console 0 so that what it says before it takes a
+console of its own is seen. if it ever ends, the kernel panics: nothing
+is left to start a session or bring the machine down, and a machine that
+only looks alive is worse than one that says so.
 
 a program asks for that with ``reboot``, root's alone. it is the same road
 the shell's ``reboot`` and ``poweroff`` take, so a program stopping the
@@ -286,7 +287,8 @@ journal closed. init is left waiting in the call, which is where an init
 that asked is meant to be.
 
 a *service* is a kernel thread init is prepared to start again. the four
-console sessions are services, and so is the disk flusher; everything else
+console sessions are services, and so are the monitor and the disk
+flusher; everything else
 is a program somebody typed, and a program somebody typed should stay dead
 when it ends. the respawn rule: ``INIT_RESPAWN_MAX`` (5) deaths inside
 ``INIT_RESPAWN_WINDOW_MS`` (10 s) and init gives up. the window matters as

@@ -14,4 +14,11 @@
 /* the velvet room terminal: one session, from the greeting to whenever somebody logs out. */
 void shell_run(void);
 
+/*
+ * the kernel's monitor, on VCONSOLE_MONITOR: the shell's own commands as
+ * root, with nobody logged in and no programs run, for looking into the
+ * kernel when something has gone wrong
+ */
+void shell_monitor(void);
+
 #endif

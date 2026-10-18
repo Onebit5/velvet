@@ -3,7 +3,8 @@ the shell
 
 ``shell/shell.c`` is the velvet room terminal: one session, from
 the greeting to whenever somebody logs out. one runs per virtual console,
-started by init.
+started by init, when the medium carries no ``/init`` of its own; and
+one, as the monitor, runs on the fifth console always.
 
 it is a **kernel thread**, not a program in ring 3, which is why everything
 inside it is a builtin and why pid 0 (not a process) is what the process
@@ -16,6 +17,28 @@ thing a thread ever did. it returns on ``logout`` now, and that is the point
 rather than a detail: a session that can *end* is one that leaves nothing
 behind for the next person, and something has to be there to start the next
 one. that something is init.
+
+the monitor
+-----------
+
+the fifth console is the kernel's, and what runs on it is this shell as
+a *monitor*, ``shell_monitor()``. it is there whatever the medium
+carries, and it is entered on purpose, with alt+5, or ``ctrl+\`` then 5
+on serial, rather than being where boot lands.
+
+nobody logs into it. it has root's powers under the name ``monitor``,
+because a monitor is for when the system above the kernel is what has
+gone wrong, and a login checked against the system's accounts would be
+asking the broken thing for permission.
+
+**it runs no programs.** a name that is not one of its builtins is
+refused rather than looked up on the path, and so are ``run``, ``jobs``,
+``fg``, ``bg`` and ``logout``, a ``|`` and a redirection. ``help`` lists
+only what it has, and ``help <program>`` does not run the program to ask
+it. starting programs, and the sessions and jobs they belong to, is the
+system's work. the monitor is for looking at the kernel underneath it,
+``ps``, ``mem``, ``dmesg``, ``bt``, ``vmm``, ``hexdump``, and for taking
+the machine down with ``reboot`` or ``poweroff`` when nothing else will.
 
 builtins
 --------
