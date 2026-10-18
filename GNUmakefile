@@ -13,7 +13,7 @@ KERNELRELEASE = $(VERSION).$(PATCHLEVEL).$(SUBLEVEL)
 #   make tools      -> the C build tools, bin/tests/
 #   make run        -> boot it in qemu (CPUS=4, MEM=2G, QEMU_EXTRA=...)
 #   make test       -> the host suites and every checker
-#   make boottest   -> boot it headless and drive the shell over serial
+#   make boottest   -> boot it headless and drive the monitor over serial
 #   make kernelrelease -> print the version
 #   make clean
 #
@@ -242,11 +242,11 @@ $(OBJDIR)/arch/x86_64/trampoline.c.o: $(OBJDIR)/arch/x86_64/trampoline.c
 # kernel knows how to read, and the flags after it keep the archive
 # byte-identical between builds so the image doesnt churn.
 #
-# this one carries no programs but the kernel's own selftests, below. it
-# is the smallest medium the kernel can be booted and checked on (the
-# accounts, the profile the shell reads at login, the files the boot test
-# reads back, and selftests/), and a system built on this kernel packs
-# its own
+# this one carries no programs but the kernel's own selftests, below,
+# and an /init that runs them. it is the smallest medium the kernel can
+# be booted and checked on (the accounts, the profile the shell reads at
+# login, the files the boot test reads back, init and selftests/), and a
+# system built on this kernel packs its own
 RAMDISK := $(BINDIR)/ramdisk.tar
 RAMDISK_FILES := $(shell find base/ramdisk -type f 2>/dev/null)
 
@@ -266,10 +266,15 @@ SELFTESTS     := $(sort $(patsubst $(SELFTEST_DIR)/%.c,%, \
                            2>/dev/null)))
 SELFTEST_BINS := $(addprefix $(BINDIR)/selftests/,$(SELFTESTS))
 
-# what goes on the medium: those tests and the directories they are in,
-# named one by one rather than the whole of bin/selftests/, so a binary
-# left behind by a test that has since gone does not ship
-SELFTEST_TAR := $(sort ./selftests \
+# the image's /init: asks which tests to run, runs each as a guest and
+# powers the machine off. built the way a test is, since it is a program
+# that sees the kernel only from where they do
+SELFTEST_INIT := $(BINDIR)/init
+
+# what goes on the medium: init, those tests and the directories they are
+# in, named one by one rather than the whole of bin/selftests/, so a
+# binary left behind by a test that has since gone does not ship
+SELFTEST_TAR := $(sort ./init ./selftests \
                   $(patsubst $(BINDIR)/%/,./%,$(dir $(SELFTEST_BINS))) \
                   $(patsubst $(BINDIR)/%,./%,$(SELFTEST_BINS)))
 
@@ -302,7 +307,13 @@ $(BINDIR)/selftests/%: $(SELFTEST_DIR)/%.c $(SELFTEST_DIR)/kselftest.h \
 	@mkdir -p $(@D)
 	$(CC) $(SELFTEST_CFLAGS) $(SELFTEST_LDFLAGS) $< -o $@
 
-$(RAMDISK): $(RAMDISK_FILES) $(SELFTEST_BINS) $(SELFTEST_LIST)
+$(SELFTEST_INIT): $(SELFTEST_DIR)/init.c $(SELFTEST_DIR)/kselftest.h \
+                  $(SELFTEST_DIR)/selftest.ld \
+                  $(wildcard include/uapi/velvet/*.h)
+	@mkdir -p $(@D)
+	$(CC) $(SELFTEST_CFLAGS) $(SELFTEST_LDFLAGS) $< -o $@
+
+$(RAMDISK): $(RAMDISK_FILES) $(SELFTEST_INIT) $(SELFTEST_BINS) $(SELFTEST_LIST)
 	@mkdir -p $(@D)
 	@# git only tracks the execute bit, so the modes that matter are set
 	@# here rather than trusted to the checkout. velvet-room.txt is the
@@ -1081,8 +1092,8 @@ boottest: $(BOOTIMG) $(T)/mkext4
 	./tools/boottest.sh $(BOOTIMG)
 
 # the selftests, run where a program is run: the image booted headless
-# with a fresh copy of the disk `make run` boots, logged in as guest, one
-# `run` each, and every result read back as TAP. needs qemu.
+# with a fresh copy of the disk `make run` boots, its /init told which to
+# run, each run as guest, and every result read back as TAP. needs qemu.
 #
 #   make kselftest                  every test
 #   make kselftest TARGETS=sched    the tests of one subsystem

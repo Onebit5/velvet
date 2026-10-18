@@ -148,21 +148,23 @@ the one that needs a machine:
 
    make boottest
 
-it builds the image, boots it headless in qemu, and **types commands at
-the shell over the serial port**, checking the answers. that is only
-possible because com1 feeds the same input queue the keyboard does. the
-serial log is left in ``bin/*-boottest.log``, and CI uploads it, with the
-boot image, when a run fails.
+it builds the image, boots it headless in qemu, tells its ``/init`` to
+run no selftests, and **types commands at the kernel's monitor over the
+serial port**, checking the answers. that is only possible because com1
+feeds the same input queue the keyboard does. the serial log is left in
+``bin/*-boottest.log``, and CI uploads it, with the boot image, when a
+run fails.
 
-what it checks is what the kernel can show with no programs on its medium:
+what it checks is what the kernel can show with no system on its medium:
 the boot itself, the memory map and the allocators, both cores, the
-scheduler, the login and a guest, every builtin it types, both disks
-mounted, the journal started, a ``resize`` that grows the work filesystem
-into its partition, ``fsck`` finding nothing twice running, and the source
-on the medium verified against the stamp and unpacked onto the disk. ring
-3 is the other half of the machine: the selftests below check what the
-kernel promises it, and velvetOS's boot test checks the programs it ships,
-on top of whatever kernel velvetOS has pinned.
+scheduler, ``/init`` asking and the monitor answering, every builtin it
+types, both disks mounted, the journal started, a ``resize`` that grows
+the work filesystem into its partition, ``fsck`` finding nothing twice
+running, and the source on the medium verified against the stamp and
+unpacked onto the disk. ring 3 is the other half of the machine: the
+selftests below check what the kernel promises it, and velvetOS's boot
+test checks the programs it ships, on top of whatever kernel velvetOS has
+pinned.
 
 ``kselftest``
 -------------

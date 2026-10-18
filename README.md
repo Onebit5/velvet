@@ -63,16 +63,18 @@ make lint            # the style guide, checked (whole tree, or FILES=fs/ext4.c)
 make                 # the bootable disk image, velvet.img
 make run             # boot it in qemu (CPUS=4, MEM=2G)
 make test            # the host test suites and the checkers (no qemu needed)
-make boottest        # boot it and drive the shell over serial
+make boottest        # boot it and drive the kernel's monitor over serial
 make kselftest       # run the selftests in ring 3, as guest (TARGETS=sched for one subsystem)
 make kernelrelease   # print the version
 ```
 
-`make run` gives you a qemu window *and* a serial console in your terminal, and since com1 is wired into the input queue, you can type at either one. the shell cannot tell the difference.
+`make run` gives you a qemu window *and* a serial console in your terminal, and since com1 is wired into the input queue, you can type at either one. the kernel cannot tell the difference.
 
-the image this tree builds carries no programs but its selftests, so what you get is the
-kernel and its shell: the builtins all work, and `ls` answers that it is not something you
-can type. for the machine with programs on it, build velvetOS.
+the image this tree builds carries no programs but its selftests and an `/init` that runs
+them, so what you get is a question: which selftests to run. name some, or `all`, and it
+runs them as guest and powers off. `none` leaves the machine up, and alt+5 (ctrl+\ then 5
+on serial) is the kernel's monitor, where its builtins all work. for the machine with
+programs on it, build velvetOS.
 
 another tree builds the kernel with `make -C path/to/velvet BINDIR=... OBJROOT=...
 SOURCE=... kernel philemon tools`; [docs/building.rst](docs/building.rst) says what each

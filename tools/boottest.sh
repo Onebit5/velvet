@@ -1,17 +1,18 @@
 #!/bin/sh
-# boot the image headless and actually use the thing: type commands at
-# the shell over the serial line and check the answers come back.
+# boot the image headless and actually use the thing: tell its /init to
+# run no selftests, go to the kernel's monitor on the fifth console, type
+# commands at it over the serial line and check the answers come back.
 #
 # this is only possible because com1 is wired to the input queue, so the
-# shell cant tell the difference between a keyboard and a pipe.
+# monitor cant tell the difference between a keyboard and a pipe.
 #
 # what is checked is the kernel and nothing else. the medium this image
-# carries has no programs on it, so every command below is one the
-# kernel answers itself: the boot, the memory, the scheduler, the
-# login, the disks, the journal, a resize, fsck, and the source on the
-# medium. ring 3 is checked by the selftests, `make kselftest`, and by
-# whatever system ships this kernel with programs on it, velvetOS's boot
-# test being the first of those.
+# carries has no programs on it but init and the selftests, so every
+# command below is one the kernel answers itself: the boot, /init, the
+# memory, the scheduler, the disks, the journal, a resize, fsck, and the
+# source on the medium. ring 3 is checked by the selftests, `make
+# kselftest`, and by whatever system ships this kernel with programs on
+# it, velvetOS's boot test being the first of those.
 #
 #   usage: tools/boottest.sh [velvet.img]
 
@@ -57,14 +58,15 @@ if [ ! -f "$BOOTIMG" ]; then
     exit 1
 fi
 
-echo "booting $BOOTIMG and driving the shell over serial..."
+echo "booting $BOOTIMG and driving the monitor over serial..."
 
-# the sleeps matter: the kernel has to get all the way to a prompt
-# before it can hear me, and each command needs a beat to answer
+# the sleeps matter: the kernel has to get all the way to /init's
+# question before it can hear me, and each command needs a beat to
+# answer. ctrl+\ then a digit is a console, on serial
 {
     sleep 8
-    printf 'igor\r';   sleep 1
-    printf 'velvet\r'; sleep 2
+    printf 'none\r';   sleep 1
+    printf '\0345';    sleep 1
     printf 'help\r';   sleep 1
     printf 'mem\r';    sleep 1
     printf 'ps\r';     sleep 1
@@ -79,16 +81,9 @@ echo "booting $BOOTIMG and driving the shell over serial..."
     printf 'slabs\r';   sleep 2
     printf 'disk\r';    sleep 2
     printf 'mount\r';   sleep 2
-    printf 'logout\r';  sleep 1
-    printf 'guest\r';   sleep 1
-    printf 'guest\r';   sleep 2
-    printf 'whoami\r';  sleep 1
     printf 'arcana\r';  sleep 1
     printf 'persona\r'; sleep 2
     printf 'dmesg\r';   sleep 2
-    printf 'logout\r';  sleep 1
-    printf 'igor\r';    sleep 1
-    printf 'velvet\r';  sleep 2
     printf 'sync\r';    sleep 2
     printf 'fsck\r';    sleep 5
     printf 'fsck\r';    sleep 5
@@ -139,24 +134,25 @@ check 'tss loaded'         'tss loaded'
 check 'boot thread left'   '[boot] hath returned'
 check 'memory reclaimed'   'reclaimed'
 check 'scheduler started'  'the wheel turns'
-check 'login prompt'       'name the guest'
-check 'login works'        'welcome, igor'
-check 'reached the prompt' 'igor@velvet[1]:/#'
+check '/init started'      'handing the machine to /init'
+check '/init asks'         'run which selftests?'
+check '/init runs none'    'no selftests. the machine stays up'
+check 'reached the monitor' 'monitor@velvet[5]:/#'
 
 # and then use it
-check 'help works'    'comes from the program itself'
+check 'help works'    'for what one takes'
 check 'mem works'     'physical frames'
 check 'ps works'      'idle'
 check 'summon works'  'has answered thy call'
 check 'thread ran'    '[pixie]'
 check 'vmm works'     'pml4 at'
 check 'bt works'      'call trace:'
-check 'symbols work'  'shell_run+'
+check 'symbols work'  'shell_monitor+'
 check 'date works'    ':'
 # numbered, because the typed command is echoed back too: a check for
 # the words alone passes whether or not history printed anything
 check 'history works' '4  summon pixie'
-check 'whoami works'  'igor, uid 0'
+check 'whoami works'  'monitor, uid 0'
 check 'ramdisk mounted' 'ramdisk    :'
 check 'cpu accounted'    '% '
 check 'peak memory'      'ever in use at once'
@@ -198,8 +194,6 @@ check 'source unpacks'   'they are yours to edit'
 check 'fsck runs'        'inodes,'
 check 'fsck is happy'    'nothing wrong with it'
 check 'mount table'      'a module the bootloader handed the kernel'
-check 'logout works'     'fare thee well'
-check 'guest logs in'    'thou art a guest'
 check 'arcana works'     'COMPUTER ARCANA'
 check 'persona works'    'velvet@velvetOS'
 check 'dmesg works'      "cr3 is the kernel's"

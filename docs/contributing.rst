@@ -74,7 +74,7 @@ sees it:
 
    make            # the boot image, velvet.img
    make test       # the host suites; no qemu, about a second
-   make boottest   # boot in qemu and drive the shell over serial
+   make boottest   # boot in qemu and drive the monitor over serial
    make kselftest  # run the selftests in ring 3, as guest
 
 `building`_ has the toolchain and every target. if ``make test`` does not
@@ -312,14 +312,15 @@ the second job, ``build-and-test``, installs the toolchain and then, in order:
    the kernel and the boot image, with the machine's gcc, nasm and ld.
 
 ``make boottest``
-   boot the image headless in qemu, and type commands at the shell over the
-   serial port, checking the answers.
+   boot the image headless in qemu, tell its ``/init`` to run nothing, and
+   type commands at the kernel's monitor over the serial port, checking the
+   answers.
 
 ``make kselftest``
-   boot it again and run the selftests in ring 3, logged in as guest. a
-   selftest that fails is a promise to programs broken, and the change that
-   broke it is what gets fixed: the kernel does not break userspace. `kernel
-   selftests <dev-tools/kselftest.rst>`_ has the rest.
+   boot it again and have its ``/init`` run the selftests in ring 3, as guest.
+   a selftest that fails is a promise to programs broken, and the change
+   that broke it is what gets fixed: the kernel does not break userspace.
+   `kernel selftests <dev-tools/kselftest.rst>`_ has the rest.
 
 what this CI cannot see is the programs velvetOS ships and the kernel built
 by velvetOS's own tools, because both are velvetOS's. velvetOS's CI runs

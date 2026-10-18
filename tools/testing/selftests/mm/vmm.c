@@ -25,10 +25,7 @@ int main(int i_argc, char **pp_argv)
     }
     ksft_test_result(b_listed, "/proc/vmm is there to be seen\n");
 
-    /*
-     * the runner logs in as guest, and where the kernel keeps things is
-     * root's
-     */
+    /* the tests run as guest, and where the kernel keeps things is root's */
     ksft_test_result(open("/proc/vmm") < 0,
                      "but a guest may not read the page tables\n");
     ksft_finished();

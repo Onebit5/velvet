@@ -22,10 +22,12 @@ to build the tests and run them:
    make kselftest
 
 there is nothing to install. the tests are built with the image, which
-carries them under ``selftests/``, so ``make kselftest`` builds whatever is
-out of date, boots the image headless in qemu, logs in as guest, runs each
-test with ``run``, and reads the results back off the serial port. qemu is
-the one thing it needs beyond the build.
+carries them under ``selftests/``, and its ``/init`` is what runs them. so
+``make kselftest`` builds whatever is out of date, boots the image headless
+in qemu, answers the question ``/init`` asks with the tests to run, and
+reads the results back off the serial port. ``/init`` says when each test
+starts and how it ended, and powers the machine off after the last. qemu
+is the one thing it needs beyond the build.
 
 the results are one TAP 13 stream, each test's own TAP under it as ``#``
 lines:
@@ -49,9 +51,11 @@ lines:
 run, everything the kernel printed included, is kept in
 ``bin/velvet-kselftest.log``.
 
-the tests run as guest, the account the kernel does the least for. a test
-can do only what any logged-in user could, and a promise the kernel keeps
-to a guest it keeps to everybody.
+the tests run as guest, uid 1000, the account the kernel does the least
+for. ``/init`` puts each in a group of its own, in front of the console,
+and becomes guest in it before the test starts. a test can do only what
+any logged-in user could, and a promise the kernel keeps to a guest it
+keeps to everybody.
 
 the machine has a second drive: a copy of ``disk.img``, the disk ``make
 run`` boots, with the system mounted at ``/`` and a work filesystem at
@@ -73,8 +77,8 @@ running a subset of selftests
 without it every directory under ``tools/testing/selftests/`` is a target,
 so the directories there are the list of targets.
 
-the runner can also be called on its own, on any image, with the tests
-named one by one:
+the runner can also be called on its own, on an image this tree built,
+with the tests named one by one:
 
 .. code-block:: sh
 
@@ -90,16 +94,18 @@ the machine has 2 cpus unless ``CPUS`` says otherwise:
 running a test by hand
 ----------------------
 
-a selftest is an ordinary program on the medium, so it can be run at the
-shell like any other. boot with ``make run``, log in, and:
+a selftest is an ordinary program on the medium. boot with ``make run``
+and answer ``/init`` with its name:
 
 .. code-block:: text
 
-   run selftests/sched/wait
+   run which selftests? sched/wait
 
+``all`` is every test, and ``timeout=SECONDS`` gives each longer than 30.
 its TAP goes to the screen between whatever the kernel prints while it
-runs, which is often the part worth reading. with ``&`` it runs in the
-background, and ``ps`` and ``signal`` can look at it while it does.
+runs, which is often the part worth reading, and the kernel's monitor,
+alt+5, can look at it with ``ps`` while it does. ``none`` runs nothing and
+leaves the machine up.
 
 timeouts and panics
 -------------------
@@ -111,9 +117,9 @@ selftests are meant to be quick, a few seconds each, and every test gets
 
    not ok 1 selftests: x86_64: fault # TIMEOUT 30 seconds
 
-and the run ends there: the shell is still waiting on that test, so
-nothing after it can be run. ``--timeout`` gives the runner another limit
-while a test is being worked on; for the tests in the tree it is 30.
+``/init`` kills it, and its whole group with it, and goes on to the next.
+``--timeout`` gives the runner another limit while a test is being worked
+on; for the tests in the tree it is 30.
 
 a test that takes the kernel down is reported as ``# kernel panic``, with
 the first lines of the panic under it, and every test after it as not run,
@@ -127,7 +133,7 @@ in general, the rules for selftests are:
 - test what a program can see. a test includes ``kselftest.h`` and the
   uapi headers, the ``<velvet/...>`` ones under ``include/uapi/``, and
   nothing from inside the kernel.
-- do everything as guest. the runner never logs in as anybody else.
+- do everything as guest. ``/init`` never runs a test as anybody else.
 - don't take long: a few seconds, and never near the 30.
 - leave nothing behind: wait for every child the test forks, and end with
   ``ksft_finished()``.
@@ -146,6 +152,8 @@ contributing new tests (details)
   build finds every ``.c`` there, compiles it to
   ``bin/selftests/<subsystem>/<test>``, and packs it on the medium as
   ``selftests/<subsystem>/<test>``. a new directory is a new target.
+  ``init.c``, above the directories, is not a test but the ``/init`` that
+  runs them, built the same way.
 - a test defines ``main`` and includes ``../kselftest.h``, which brings
   ``_start``. what ``main`` returns is the exit status, though a test ends
   with ``ksft_finished()``, which exits with the right one.
