@@ -130,13 +130,12 @@ account is in `the architecture boundary <subsystems/arch.rst>`_ and in
 inputs and outputs
 ------------------
 
-``base/ramdisk/`` and ``base/diskroot/`` are *inputs*: the first is packed
-into the boot tar the loader hands the kernel, the second is copied onto the
-data disk by ``make run``. the ramdisk here carries no programs but the
-selftests, under ``selftests/``. it is the smallest medium the kernel can be
-booted and tested on: the accounts, the profile the shell reads at login,
-the files the boot test reads back, and the selftests. a system built on the
-kernel packs its own.
+``base/diskroot/`` is an *input*, copied onto the data disk by ``make
+run``. the boot tar the loader hands the kernel has no input directory: it
+is ``/init`` and the selftests under ``selftests/``, built from
+``tools/testing/selftests/``, and nothing else. it is the smallest medium
+the kernel can be booted and tested on, and a system built on the kernel
+packs its own.
 
 everything under ``bin/`` and ``obj/`` is generated and comes back out with
 ``make clean``. the boot image, ``velvet.img``, is written by
