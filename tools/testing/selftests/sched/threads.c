@@ -24,10 +24,15 @@ int main(int i_argc, char **pp_argv)
                      "/proc/threads is the thread table\n");
     ksft_test_result(ksft_contains(arr_text, i_len, "idle0"),
                      "with the kernel's own threads in it\n");
-    ksft_test_result(ksft_contains(arr_text, i_len, "selftests/sched"),
+    /*
+     * a program's thread is named after the path it was started by, cut
+     * to 15 characters: /selftests/sche once execve has resolved it, or
+     * selftests/sched as a shell typed it
+     */
+    ksft_test_result(ksft_contains(arr_text, i_len, "selftests/sche"),
                      "and the program reading it\n");
 
-    /* the runner logs in as guest, and a call trace is root's */
+    /* the tests run as guest, and a call trace is root's */
     ksft_test_result(open("/proc/stack") < 0,
                      "a guest may not read the kernel's call trace\n");
     ksft_finished();
