@@ -505,11 +505,12 @@ debugging the kernel itself possible, which 0.8.2 deliberately does not
 attempt.
 
 **0.8.4 tracing.** 0.1.6 counted syscalls by kind; this makes them a
-stream: which call, with which arguments, from whom, and what came back.
-the counting was the easy part and is already done; the decoding is the
-version. a path is a string, a flags word is a set of names, a descriptor
-is a file somebody opened, and a number left undecoded is a number nobody
-reads twice.
+stream: which call, from whom, its arguments as the registers held them,
+and what came back, with every string a call was handed copied out as the
+call read it, since by the time anybody reads the stream the program may
+have written over it. that is the kernel's half, and it is all numbers.
+turning them into words, a path, a set of flag names, the file a
+descriptor is, is a program's work, velvetOS's tracer (0.8.1 there).
 
 **0.8.5 a profiler.** sampling on the lapic timer, which has been per-cpu
 since 0.2.2, and unwinding from wherever the interrupt happened to land,
