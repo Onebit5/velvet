@@ -201,13 +201,13 @@ compile in the background, which after 0.4.x is a real and long-running
 thing, should not make the editor lag.
 
 **0.5.6 a log nobody can rewrite.** `kprintf` keeps a ring of everything
-it prints, and only the kernel shell can read it; programs get a way to
-write to the kernel's log and to read it back, which is the orderly
-version of the serial-port logging this project has leaned on since
-0.1.x. and a file can be made append-only to everybody but the kernel,
-with the kernel holding to it, because a log the logged-in can edit is
-not a log. velvetOS's auditing (0.5.5 there) is what keeps its record of
-logins and `grant` in such a file.
+it prints, and since 0.4.1 a program can read it with `syslog`. what is
+left is the other direction: a program writing to the kernel's log, which
+is the orderly version of the serial-port logging this project has leaned
+on since 0.1.x. and a file can be made append-only to everybody but the
+kernel, with the kernel holding to it, because a log the logged-in can
+edit is not a log. velvetOS's auditing (0.5.5 there) is what keeps its
+record of logins and `grant` in such a file.
 
 **what this series deliberately does not reach.** no acls and no
 mandatory access control, because owner-group-other with a `capable()`
@@ -263,12 +263,13 @@ printing the same word for the same mistake. the numbers are linux's,
 way linux's calls return them, so there is one table of them and not a
 third.
 
-**0.6.2 seek.** there is no `lseek` in fifty-three syscalls. `less` and
-`diff` read forward because forward is all there is, and everything that
-revisits a file (an archive reader, a database, a linker reading back what
-it wrote) cannot be written at all. `pread` and `pwrite` come with it
-rather than after it, since a descriptor with a position that two threads
-share is a race, and 0.2.11 made sharing descriptors the normal case.
+**0.6.2 reading and writing at a place.** 0.4.1's `lseek` moves a
+descriptor's position, which is what let a shell put `>>` on the end of a
+file. what it left is `pread` and `pwrite`, a read or a write at an offset
+that moves nothing, since a position two threads share is a race the
+moment either of them seeks, and 0.2.11 made sharing descriptors the
+normal case. an archive reader, a database and a linker reading back what
+it wrote all want the offset in the call rather than in the descriptor.
 
 **0.6.3 floating point in ring 3.** this kernel is built `-mno-80387
 -mno-sse` because there is **no fpu state in the context switch**, and a
