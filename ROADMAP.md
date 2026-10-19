@@ -121,13 +121,14 @@ called what, and which groups exist, is velvetOS's to say (0.5.0 there).
 the kernel's own login went in 0.4.2, and the kernel deals in numbers.
 
 **0.5.2 the primitives, and the first thing here that a right answer does
-not prove.** sha-256, hmac, hkdf, aes with the two modes this machine
-needs, xts for vaults (0.5.3) and gcm for velvetOS's tls (0.5.4 there),
-and x25519. they go in `lib/`, beside `hash.c` and for the same reason:
-the kernel needs them for vaults, velvetOS's libc compiles the same files
-for everything else, and there is one copy of each to check. checked in
-isolation and against everybody: published vectors, and python's
-`hashlib` and `cryptography` over the same inputs, which is
+not prove.** the ones the kernel itself uses: aes-xts, the cipher a vault
+(0.5.3) is written in, and sha-256 and hmac for the verifier in a vault's
+header. they go in `lib/`, beside `hash.c`. tls's are not here: aes-gcm,
+hkdf and x25519 are what velvetOS's tls (0.5.4 there) is made of, nothing
+in the kernel speaks tls, and arithmetic the kernel does not use is
+velvetOS's to keep, beside the argon2 its shadow file already wants.
+checked in isolation and against everybody: published vectors, and
+python's `hashlib` and `cryptography` over the same inputs, which is
 `hashcheck.py` doing again what it did for sha-1 in 0.3.17.
 
 and then the part that is new to this project. every test written here so
