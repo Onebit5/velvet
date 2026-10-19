@@ -44,25 +44,9 @@ emulated, and 0.8.x is a kernel that can say what it is doing.
 
 velvetOS's 0.4.x is a machine that can rebuild itself from its own disk,
 and its last step, velvetOS 0.4.4, has the machine build a kernel, install
-it and reboot into it. these are the kernel's half of that: first a kernel
-that leaves the system to the system, then a boot that can choose between
-two kernels, and one that cannot be lost to a kernel that does not come
-up.
-
-**0.4.2 the kernel steps back.** 0.4.1 gave a program every call the
-kernel's shell used to make for it, and let a medium's own `/init` be pid
-1, while a medium without one still gets the kernel's logins and shells.
-this takes them out of the kernel's hands. the kernel's shell becomes a
-monitor: no login, no jobs, entered on purpose from the keyboard when
-something has gone wrong, which is the one thing it was ever better at
-than a program. a medium with no `/init` is a panic rather than a
-fallback, since a kernel is not a system. the accounts and the greetings
-leave this kernel's image, which carries an `/init` of its own instead:
-one that runs the selftests as root, where the calls only root may make
-can be checked too, and powers the machine off. `make kselftest` and the
-boot test are rebuilt on it. *ends when this kernel's image has no
-account on it, the selftests run as pid 1, and velvetOS boots with
-nothing of the kernel's in its way.*
+it and reboot into it. these are the kernel's half of that: a boot that
+can choose between two kernels, and one that cannot be lost to a kernel
+that does not come up.
 
 **0.4.3 a boot it can choose between.** philemon starts the kernel at one
 fixed place, which is right while there is only one kernel and wrong the
@@ -129,13 +113,12 @@ on every process, the supplementary groups beside that, and the calls that
 set them, as 0.4.1's `setuid` sets the uid a login becomes. ext4 has recorded a gid on every inode since 0.2.14 and nothing has
 ever set one to anything; the vfs starts consulting the group bits, and
 gains a `capable()` check so the kernel stops asking "is this uid 0",
-which it asks by name in the vfs, in the ramdisk driver and twice in the
-shell, and starts asking "is this allowed to mount a disk". and `exec`
+which it asks by name in the vfs and in the ramdisk driver, and starts
+asking "is this allowed to mount a disk". and `exec`
 honours the setuid bit, which nothing in this tree knows how to set
 today, for velvetOS's `grant` (0.5.3 there) to stand on. which uid is
 called what, and which groups exist, is velvetOS's to say (0.5.0 there).
-the kernel's own login goes in 0.4.2, and from then on the kernel deals in
-numbers.
+the kernel's own login went in 0.4.2, and the kernel deals in numbers.
 
 **0.5.2 the primitives, and the first thing here that a right answer does
 not prove.** sha-256, hmac, hkdf, aes with the two modes this machine

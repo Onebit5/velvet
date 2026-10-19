@@ -15,6 +15,40 @@ a kernel that booted.
 
 ---
 
+- **0.4.2**: the kernel steps back. **a medium with no `/init` is a
+  panic**, saying why, rather than a set of logins the kernel made up:
+  which consoles get a login and what a session is are the system's to
+  decide, and every orphan names `/init` as its parent. the kernel's
+  login, its accounts, its greeting and profile, `logout`, `run`, `jobs`,
+  `fg`, `bg`, pipelines and the path search are gone, and so is what ran
+  jobs for them, `user_run`, `user_pipeline` and the `user_job` calls.
+
+  **the kernel's shell is a monitor**, on a fifth console of its own:
+  alt+5, or `ctrl+\` then 5 on serial. nobody logs into it, it has root's
+  powers under the name `monitor`, and it runs no programs, since that is
+  the system's work. it is for looking at the kernel when the system above
+  it has gone wrong: `ps`, `mem`, `dmesg`, `bt`, `vmm`, `hexdump`, and
+  `reboot` when nothing else will. with a program in front of a console,
+  ctrl+c and ctrl+z are SIGINT and SIGTSTP to its group, wherever it is.
+
+  **this kernel's image carries an `/init` of its own** and nothing else
+  but the selftests: no account and no greeting. it asks on the first
+  console which selftests to run, runs each in a group of its own, in
+  front of the console and as guest, kills one that outlives its timeout
+  and goes on, and powers the machine off after the last. `none` leaves
+  the machine up for the monitor. `make kselftest` answers it, and a test
+  that times out no longer ends the run; the boot test answers `none` and
+  types its commands at the monitor. the selftests run as guest still,
+  since each of them checks a promise made to anybody; a selftest of what
+  only root may do is not here yet.
+
+  and what moving them turned up: **completing a word in the middle of a
+  line** overwrote the rest of it whenever the word grew by less than what
+  followed; **a child made after its parent had ended** kept naming that
+  parent, and nobody would have collected it, so it is init's from birth.
+  `sched/threads` had looked for its own name as the kernel's `run` gave
+  it, and `fs/lseek` had read a motd that was only there by accident.
+
 - **0.4.1**: a first program. everything velvetOS's boot test types
   at the kernel's shell is now something a program can ask for, and a
   medium can carry the program that asks: **when there is an `/init`, it
