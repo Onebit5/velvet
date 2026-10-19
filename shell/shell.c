@@ -2,16 +2,10 @@
 /*
  * shell/shell.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * the velvet room terminal: the shell.
+ * the velvet room terminal: the kernel's monitor.
  */
 
 #include <velvet/shell.h>
-/*
- * struct job, which used to arrive by way of one of the x86 headers
- * below, a transitive include is a dependency you find out about the
- * first time somebody stops including something else
- */
-#include <velvet/usermode.h>
 #include <velvet/input.h>
 #include <velvet/console.h>
 #include <velvet/tty.h>
@@ -104,30 +98,9 @@ struct command {
 static const struct command commands[];    /* defined below, after the handlers */
 static void run_argv(int argc, char **argv);
 
-/* where the shell is standing. */
-#define JOBS_MAX 8
-
-enum job_state { JOB_FREE = 0, JOB_RUNNING, JOB_STOPPED };
-
-struct shell_job {
-    int             number;         /* what you type after fg */
-    enum job_state  state;
-    struct job      j;
-    char            line[LINE_MAX];
-};
-
 /*
- * there are four consoles now, and a console with a shell on it is a
- * session: somebody logged in, standing somewhere, with their own
- * history and their own jobs. all of that used to be file-static, which
- * was correct while there was one of them and became a bug the moment
- * there were four, four shells sharing one working directory is one
- * shell with four windows onto it.
- *
- * so it is a struct, one per console, and every shell function reaches
- * it through me(). which one is *not* passed in: it is whichever
- * console the calling thread is on, because that is always the right
- * answer and an argument would only be a chance to pass the wrong one
+ * what the monitor keeps between one line and the next: where it is
+ * standing, what was typed, its variables and how the last command went
  */
 
 #define HISTORY_SESSION_MAX 16
@@ -138,179 +111,38 @@ struct session {
     char history[HISTORY_SESSION_MAX][LINE_MAX];
     int  hist_count;
 
-    struct shell_job jobs[JOBS_MAX];
-    int  next_job_number;
-    int  current_job;
-
-    /* the line as it was typed, kept so a job can be named later */
-    char typed_line[LINE_MAX];
-
     /*
      * the shell is a kernel thread with no process entry of its own, so
-     * its environment lives here rather than in the process table,
-     * and is copied into everything it starts, which is what makes it
-     * an environment rather than four variables in a struct.
-     *
-     * one per session, deliberately: two consoles are two people as far
-     * as this is concerned, and a `cd` on one does not move the other
+     * its variables live here, in an environment block like a program's
      */
     char env[PROC_ENV_MAX];
     size_t env_len;
 
     /* what the last thing exited with. `$?`, and what `if` looks at */
     int status;
-
-    /* the kernel's monitor: nobody logs into it, and it runs no programs */
-    bool b_monitor;
 };
 
-static struct session sessions[VCONSOLE_COUNT];
+static struct session s_session;
 
 static struct session *me(void)
 {
-    unsigned n = tty_my_console();
-    return &sessions[n < VCONSOLE_COUNT ? n : 0];
+    return &s_session;
 }
 
 #define shell_cwd       (me()->cwd)
 #define history         (me()->history)
 #define hist_count      (me()->hist_count)
-#define jobs            (me()->jobs)
-#define next_job_number (me()->next_job_number)
-#define current_job     (me()->current_job)
-#define typed_line      (me()->typed_line)
 
-/* where a bare command name is looked for, in order. */
-/* completion walks the same PATH execution does. */
-static const char *const default_path = "/bin:/boot/bin";
 
-static const char *search_path(void)
-{
-    static char buf[ENV_VALUE_MAX];
-    if (env_block_get(me()->env, me()->env_len, "PATH", buf, sizeof buf)
-        && buf[0] != '\0') {
-        return buf;
-    }
-    return default_path;
-}
-
-/* the nth directory in PATH, or false once there are no more. */
-static bool path_dir(size_t n, char *out, size_t size)
-{
-    const char *path = search_path();
-    size_t which = 0;
-
-    while (*path != '\0') {
-        size_t len = 0;
-        const char *start = path;
-        while (*path != '\0' && *path != ':') {
-            path++;
-            len++;
-        }
-        while (*path == ':') {
-            path++;
-        }
-        if (len == 0) {
-            continue;       /* an empty element, which names nothing */
-        }
-        if (which++ == n) {
-            if (len >= size) {
-                return false;
-            }
-            memcpy(out, start, len);
-            out[len] = '\0';
-            return true;
-        }
-    }
-    return false;
-}
-
-/* what to look through for a bare command name. */
-/* turn a typed word into a program to run. */
-static bool find_program(const char *word, char *out, size_t size)
-{
-    bool has_slash = false;
-    for (const char *p = word; *p != '\0'; p++) {
-        if (*p == '/') {
-            has_slash = true;
-            break;
-        }
-    }
-
-    struct vfs_file f;
-
-    /*
-     * a path is a path: taken literally, read from where the kernel is standing,
-     * and not searched for anywhere else
-     */
-    if (has_slash) {
-        if (!path_resolve(shell_cwd, word, out, size)) {
-            return false;
-        }
-        return vfs_open(out, &f) && !f.is_dir;
-    }
-
-    /*
-     * every directory in PATH, in the order it is written, which is
-     * the whole reason PATH is a list rather than a set. a name earlier
-     * in it hides one later, and that is a feature people rely on
-     */
-    const char *path = search_path();
-    while (*path != '\0') {
-        char joined[PATH_MAX];
-        size_t n = 0;
-        while (*path != '\0' && *path != ':' && n < sizeof joined - 2) {
-            joined[n++] = *path++;
-        }
-        while (*path == ':') {
-            path++;
-        }
-        if (n == 0) {
-            continue;       /* an empty element, which names nothing */
-        }
-
-        joined[n++] = '/';
-        for (const char *p = word; *p != '\0' && n < sizeof joined - 1; p++) {
-            joined[n++] = *p;
-        }
-        joined[n] = '\0';
-
-        if (!path_resolve("/", joined, out, size)) {
-            continue;
-        }
-        if (vfs_open(out, &f) && !f.is_dir) {
-            return true;
-        }
-    }
-    return false;
-}
-static void launch(const char *path, int argc, char **argv, bool announce);
-
-/* who is at the keyboard. */
-
-/*
- * it is a kernel thread rather than a process, so it keeps its own,
- * and hands it to everything it starts, which is what makes `cd`
- * somewhere and then running something mean what anybody would expect
- */
 /* a session starts here rather than in a static initialiser. */
 static void session_init(void)
 {
     shell_cwd[0] = '/';
     shell_cwd[1] = '\0';
-    next_job_number = 1;
-    current_job = 0;
     hist_count = 0;
-    for (int i = 0; i < JOBS_MAX; i++) {
-        jobs[i].state = JOB_FREE;
-    }
-
-    /* and everything the last person left. */
-    me()->b_monitor = false;
     me()->status  = 0;
     me()->env[0]  = '\0';
     me()->env_len = 1;
-    typed_line[0] = '\0';
 }
 static size_t common_prefix(const char *a, const char *b);
 
@@ -358,24 +190,6 @@ static void persona_thread(void *arg)
 
 
 
-/*
- * the builtins that are about programs: starting one, and the jobs and
- * the session it would run in. the monitor has none of those
- */
-static bool about_programs(const char *str_name)
-{
-    static const char *const s_arr_names[] = {
-        "run", "jobs", "fg", "bg", NULL,
-    };
-
-    for (const char *const *pp_name = s_arr_names; *pp_name; pp_name++) {
-        if (strcmp(str_name, *pp_name) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
 /* `help <name>`. for a builtin, out of the table. */
 static void help_one(const char *name)
 {
@@ -385,17 +199,6 @@ static void help_one(const char *name)
         }
         kprintf("%s\n", c->usage != NULL ? c->usage : c->name);
         kprintf("  %s\n", c->help);
-        kprintf("\n  built into the kernel, so it can change the shell "
-                "itself, which is\n  why `cd` is one and `cat` is not\n");
-        return;
-    }
-
-    char path[PATH_MAX];
-    if (!me()->b_monitor && find_program(name, path, sizeof path)) {
-        char *args[2];
-        args[0] = (char *)name;
-        args[1] = (char *)"--help";
-        launch(path, 2, args, false);
         return;
     }
 
@@ -420,9 +223,6 @@ static void cmd_help(int argc, char **argv)
     kprintf("built in\n ");
     size_t n = 0;
     for (const struct command *c = commands; c->name; c++) {
-        if (me()->b_monitor && about_programs(c->name)) {
-            continue;
-        }
         kprintf(" %s", c->name);
         for (size_t i = strlen(c->name); i < 11; i++) {
             kprintf(" ");
@@ -431,69 +231,7 @@ static void cmd_help(int argc, char **argv)
             kprintf("\n ");
         }
     }
-    if (me()->b_monitor) {
-        kprintf("\n\n`help <name>` for what one takes\n");
-        return;
-    }
-    kprintf("\n\nprograms, in ring 3 with memory of their own\n ");
-    n = 0;
-
-    /*
-     * the path in order, and a name seen once is not shown again: a
-     * program earlier on the path hides one later, exactly as running
-     * it would, and saying it twice would suggest otherwise
-     */
-    char shown[32][24];
-    size_t count = 0;
-
-    char dir[PATH_MAX];
-    for (size_t d = 0; path_dir(d, dir, sizeof dir); d++) {
-        struct vfs_file f;
-        for (size_t i = 0; vfs_readdir(dir, i, &f); i++) {
-            if (f.is_dir || f.name[0] == '\0') {
-                continue;
-            }
-            bool already = false;
-            for (size_t k = 0; k < count; k++) {
-                if (strcmp(shown[k], f.name) == 0) {
-                    already = true;
-                    break;
-                }
-            }
-            if (already) {
-                continue;
-            }
-            if (count < 32) {
-                size_t w = 0;
-                while (f.name[w] != '\0' && w < sizeof shown[0] - 1) {
-                    shown[count][w] = f.name[w];
-                    w++;
-                }
-                shown[count][w] = '\0';
-                count++;
-            }
-            kprintf(" %s", f.name);
-            for (size_t i = strlen(f.name); i < 11; i++) {
-                kprintf(" ");
-            }
-            if (++n % per_row == 0) {
-                kprintf("\n ");
-            }
-        }
-    }
-
-    kprintf("\n\n`help <name>` for what one takes, and for a program "
-            "that answer\ncomes from the program itself, so it cannot be "
-            "out of date.\n");
-    kprintf("looked for in");
-    {
-        char dir[PATH_MAX];
-        for (size_t d = 0; path_dir(d, dir, sizeof dir); d++) {
-            kprintf(" %s", dir);
-        }
-    }
-    kprintf(", in that order; a name with a slash is a path.\n");
-    kprintf("that list is $PATH, and `set PATH ...` changes it.\n");
+    kprintf("\n\n`help <name>` for what one takes\n");
 }
 
 static void cmd_clear(int argc, char **argv)
@@ -514,10 +252,6 @@ static void cmd_disk(int argc, char **argv)
 {
     (void)argc; (void)argv;
     disk_show();
-    if (disk_ready(DISK_ROOT)) {
-        kprintf("\ntry: ls, cat welcome.txt, echo something worth keeping "
-                "> /notes.txt\n");
-    }
 }
 
 /* what a drive says it holds. */
@@ -950,281 +684,6 @@ static void cmd_bt(int argc, char **argv)
     kbacktrace(0, 0);
 }
 
-/*
- * the archive is a flat list of paths and do not search it, so
- * `hello` will not find `bin/hello`. rather than add a path search,
- * which is magic that surprises you later, say what they probably
- * meant, if exactly one file ends that way
- */
-static const char *suggest_path(const char *name)
-{
-    struct ramdisk_file f;
-    const char *found = NULL;
-    int matches = 0;
-
-    for (size_t i = 0; ramdisk_stat(i, &f); i++) {
-        const char *p = f.name;
-        if (p[0] == '.' && p[1] == '/') {
-            p += 2;
-        }
-        /* the part after the last slash */
-        const char *base = p;
-        for (const char *q = p; *q; q++) {
-            if (*q == '/') {
-                base = q + 1;
-            }
-        }
-        if (*base != '\0' && strcmp(base, name) == 0) {
-            found = p;
-            matches++;
-        }
-    }
-    return matches == 1 ? found : NULL;
-}
-
-static void missing(const char *what, const char *name)
-{
-    const char *did = suggest_path(name);
-    if (did != NULL) {
-        kprintf("%s: no such file '%s'. didst thou mean '%s'?\n",
-                what, name, did);
-    } else {
-        kprintf("%s: no such file '%s'. `ls` shows what there is, "
-                "and tab completes it\n", what, name);
-    }
-}
-
-/* a job is one typed line, however many processes that turned out to be. */
-
-
-
-/* the last one referred to, which is what a bare `fg` means. */
-
-static struct shell_job *job_slot(int number)
-{
-    for (int i = 0; i < JOBS_MAX; i++) {
-        if (jobs[i].state != JOB_FREE && jobs[i].number == number) {
-            return &jobs[i];
-        }
-    }
-    return NULL;
-}
-
-static struct shell_job *job_remember(const struct job *j, const char *line,
-                                      enum job_state state)
-{
-    for (int i = 0; i < JOBS_MAX; i++) {
-        if (jobs[i].state != JOB_FREE) {
-            continue;
-        }
-        jobs[i].state = state;
-        jobs[i].number = next_job_number++;
-        jobs[i].j = *j;
-        size_t n = 0;
-        while (line[n] != '\0' && n < LINE_MAX - 1) {
-            jobs[i].line[n] = line[n];
-            n++;
-        }
-        jobs[i].line[n] = '\0';
-        current_job = jobs[i].number;
-        return &jobs[i];
-    }
-    kprintf("that is more jobs than the kernel can keep track of\n");
-    return NULL;
-}
-
-static void job_forget(struct shell_job *s)
-{
-    s->state = JOB_FREE;
-    if (current_job == s->number) {
-        current_job = 0;
-        /* whatever is left, most recently started */
-        for (int i = 0; i < JOBS_MAX; i++) {
-            if (jobs[i].state != JOB_FREE && jobs[i].number > current_job) {
-                current_job = jobs[i].number;
-            }
-        }
-    }
-}
-
-static void job_print(const struct shell_job *s, const char *what)
-{
-    kprintf("[%d]%c %-8s %s\n", s->number,
-            s->number == current_job ? '+' : ' ', what, s->line);
-}
-
-/* anything that finished while nobody was looking. */
-static void jobs_reap(void)
-{
-    for (int i = 0; i < JOBS_MAX; i++) {
-        struct shell_job *s = &jobs[i];
-        if (s->state != JOB_RUNNING) {
-            continue;
-        }
-        if (user_job_alive(&s->j)) {
-            continue;
-        }
-        user_job_collect(&s->j);
-        job_print(s, "done");
-        job_forget(s);
-    }
-}
-
-/* the line as it was typed, kept so a job can be named later. */
-
-/* what to do with a job that came back from the foreground. */
-static void job_returned(const struct job *j)
-{
-    if (!j->stopped) {
-        return;
-    }
-    struct shell_job *s = job_remember(j, typed_line, JOB_STOPPED);
-    if (s != NULL) {
-        job_print(s, "stopped");
-    }
-}
-
-/* start a program, handing it everything after the command name as its arguments. */
-static void launch(const char *path, int argc, char **argv, bool announce)
-{
-    bool background = (argc > 0 && strcmp(argv[argc - 1], "&") == 0);
-    if (background) {
-        argc--;
-    }
-
-    /* what it is born holding. */
-    struct spawn_env env = { me()->env, me()->env_len };
-    user_spawn_env(&env);
-
-    struct job j;
-    const char *why = NULL;
-    if (!user_run(path, argc, (const char *const *)argv, shell_cwd,
-                  0, background, announce, &j, &why)) {
-        if (why == USER_RUN_NO_SUCH_FILE) {
-            missing("run", path);
-        } else {
-            kprintf("cannot run %s: %s\n", path, why);
-        }
-        me()->status = 127;     /* what every shell says for "no such" */
-        return;
-    }
-
-    if (background) {
-        struct shell_job *s = job_remember(&j, typed_line, JOB_RUNNING);
-        if (s != NULL) {
-            job_print(s, "running");
-        }
-        return;
-    }
-    if (!j.stopped) {
-        me()->status = j.status;
-    }
-    job_returned(&j);
-}
-
-
-
-static void cmd_jobs(int argc, char **argv)
-{
-    (void)argc; (void)argv;
-
-    int shown = 0;
-    for (int i = 0; i < JOBS_MAX; i++) {
-        if (jobs[i].state == JOB_FREE) {
-            continue;
-        }
-        job_print(&jobs[i],
-                  jobs[i].state == JOB_STOPPED ? "stopped" : "running");
-        shown++;
-    }
-    if (shown == 0) {
-        kprintf("nothing is waiting\n");
-    }
-}
-
-/* which job a command like `fg 2` means. */
-static struct shell_job *job_named(int argc, char **argv, const char *who)
-{
-    int number = current_job;
-
-    if (argc > 1) {
-        number = 0;
-        const char *p = argv[1];
-        if (*p == '%') {
-            p++;               /* `%1` is how everybody else spells it */
-        }
-        for (; *p != '\0'; p++) {
-            if (*p < '0' || *p > '9') {
-                kprintf("%s <number>, `jobs` lists them\n", who);
-                return NULL;
-            }
-            number = number * 10 + (*p - '0');
-        }
-    }
-
-    if (number == 0) {
-        kprintf("nothing is waiting\n");
-        return NULL;
-    }
-
-    struct shell_job *s = job_slot(number);
-    if (s == NULL) {
-        kprintf("there is no job %d\n", number);
-    }
-    return s;
-}
-
-static void cmd_fg(int argc, char **argv)
-{
-    struct shell_job *s = job_named(argc, argv, "fg");
-    if (s == NULL) {
-        return;
-    }
-
-    kprintf("%s\n", s->line);       /* say what is coming back */
-    current_job = s->number;
-
-    user_job_continue(&s->j, true);
-    if (user_job_wait(&s->j)) {
-        job_forget(s);              /* it finished this time */
-        return;
-    }
-
-    /*
-     * stopped again. it keeps its number, which is what makes ctrl+z,
-     * fg, ctrl+z, fg work without the numbers wandering
-     */
-    s->state = JOB_STOPPED;
-    job_print(s, "stopped");
-}
-
-static void cmd_bg(int argc, char **argv)
-{
-    struct shell_job *s = job_named(argc, argv, "bg");
-    if (s == NULL) {
-        return;
-    }
-    if (s->state == JOB_RUNNING) {
-        kprintf("[%d] is already running\n", s->number);
-        return;
-    }
-
-    current_job = s->number;
-    s->state = JOB_RUNNING;
-    user_job_continue(&s->j, false);
-    job_print(s, "running");
-
-    /* it runs, but the keyboard is not its any more. */
-}
-
-static void cmd_run(int argc, char **argv)
-{
-    if (argc < 2) {
-        kprintf("run <program> [args...] [&], try `run bin/hello`\n");
-        return;
-    }
-    launch(argv[1], argc - 1, argv + 1, true);
-}
 
 /* a live picture, redrawn until somebody presses a key. */
 /*
@@ -3222,16 +2681,12 @@ static void cmd_source(int argc, char **argv)
 static const struct command commands[] = {
     { "help",   "list what thou may command",           cmd_help, false, "help [name]" },
     { "clear",  "wipe the screen clean",                cmd_clear, false, NULL },
-    { "run",    "give a program the outer ring; & for background", cmd_run, true, "run <program> [args...] [&]" },
     { "whoami", "who thou art, and what that permits",  cmd_whoami, false, NULL },
     { "dmesg",  "everything boot said while you werent looking", cmd_dmesg, false, NULL },
     { "arcana", "the rank of this bond, and its making", cmd_arcana, false, NULL },
     { "persona","the face this machine wears",          cmd_persona, false, NULL },
     { "mem",    "frames and heap, honestly counted",    cmd_mem, false, NULL },
     { "ps",     "the threads that walk this realm",     cmd_ps, false, NULL },
-    { "jobs",   "what thou hast set aside",             cmd_jobs, false, NULL },
-    { "fg",     "bring one back to the front",          cmd_fg, false, "fg [number]" },
-    { "bg",     "let one carry on without the keyboard", cmd_bg, false, "bg [number]" },
     { "top",    "the same, but watched rather than asked", cmd_top, false, NULL },
     { "lspci",  "what is plugged into this machine",    cmd_lspci, false, NULL },
     { "slabs",  "the object caches, and what they hold", cmd_slabs, false, NULL },
@@ -3241,11 +2696,11 @@ static const struct command commands[] = {
     { "resize", "grow a filesystem into the partition it sits in", cmd_resize, false, "resize [work] [blocks]" },
     { "mount",  "which filesystem is where; mount <n> moves it", cmd_mount, false, "mount [number]" },
     { "parts",  "what each drive says it holds",        cmd_parts, false, NULL },
-    { "chvt",   "show another console; alt+f1..f4 too", cmd_chvt, false, "chvt [1-4]" },
+    { "chvt",   "show another console; alt+f1..f5 too", cmd_chvt, false, "chvt [1-5]" },
     { "mouse",  "the pointer, and whether it is well",  cmd_mouse, false, NULL },
     { "set",    "a variable, or all of them",           cmd_set, false, "set [NAME [value...]]" },
     { "unset",  "forget one",                           cmd_unset, false, "unset <name>" },
-    { "env",    "what is set, and inherited by what the kernel starts", cmd_set, false, NULL },
+    { "env",    "what is set", cmd_set, false, NULL },
     { "test",   "answer a question in $?, for `if`",    cmd_test, false, "test <words...>" },
     { "source", "run a file of commands in this shell", cmd_source, true, "source <file>" },
     { "cpus",   "the processors, and which are awake",  cmd_cpus, false, NULL },
@@ -3367,52 +2822,10 @@ static void run_argv(int argc, char **argv)
     if (argc == 0) {
         return;
     }
-    {
-        const struct command *c = builtin_named(argv[0]);
-        if (c != NULL && me()->b_monitor && about_programs(argv[0])) {
-            kprintf("%s is not the monitor's: it runs no programs\n",
-                    argv[0]);
-            me()->status = 2;
-            return;
-        }
-        if (c != NULL) {
-            c->fn(argc, argv);
-            return;
-        }
-    }
-
-    /* running programs is the system's, and the monitor is the kernel's */
-    if (me()->b_monitor) {
-        kprintf("%s: not one of the monitor's commands, and the monitor "
-                "runs no programs. `help` lists what it has\n", argv[0]);
-        me()->status = 127;
+    const struct command *c = builtin_named(argv[0]);
+    if (c != NULL) {
+        c->fn(argc, argv);
         return;
-    }
-    /*
-     * not a builtin. before deciding it is nothing, go and look for a
-     * program of that name, on the search path if it is a bare word,
-     * or exactly where it says if it has a slash in it
-     */
-    {
-        char path[PATH_MAX];
-        if (find_program(argv[0], path, sizeof path)) {
-            /* a file beginning with #! */
-            char first[2] = { 0, 0 };
-            struct vfs_file f;
-            if (vfs_open(path, &f) && !f.is_dir && f.size >= 2
-                && vfs_read(&f, 0, first, 2) == 2
-                && first[0] == '#' && first[1] == '!') {
-                run_script(path);
-                return;
-            }
-
-            /*
-             * typed by name rather than through `run`: they want the
-             * program's output, not a commentary on it
-             */
-            launch(path, argc, argv, false);
-            return;
-        }
     }
 
     /* before giving up, see if they nearly typed something real. */
@@ -3441,186 +2854,17 @@ static void run_argv(int argc, char **argv)
         kprintf("'%s' means nothing here. didst thou mean '%s'?\n",
                 argv[0], near->name);
     } else {
-        kprintf("'%s' means nothing here. try 'help'\n", argv[0]);
+        /* running programs is the system's, and the monitor is the kernel's */
+        kprintf("'%s' is not one of the monitor's commands, and the monitor "
+                "runs no programs. `help` lists what it has\n", argv[0]);
     }
 }
 
 /*
- * a bar separates two commands and joins them at the same time; an
- * arrow moves one end of one command somewhere else. the shell's whole
- * job is the wiring: resolve each name to a program, take the arrows
- * out of the arguments, and hand the list to user_pipeline.
- *
- * builtins cannot be in any of it. `ps > out.txt` would want the
- * shell's own output to go somewhere other than the console, and the
- * shell is a kernel thread with no stdout to redirect, it prints with
- * kprintf, straight at the screen. that is a real limitation and it is
- * worth saying out loud rather than failing strangely.
+ * a bar or an arrow: what a shell that runs programs joins them with.
+ * the monitor has nothing to join, and its builtins print straight at
+ * the screen, with no output to hand anybody
  */
-
-/*
- * pull `< name`, `> name` and `>> name` out of one stage's words,
- * leaving the words that are really arguments.
- *
- * they are removed rather than passed on, because a program has no
- * business seeing them: `sort < a.txt` should look to sort exactly like
- * `sort` with something on its standard input, which is the whole idea.
- *
- * returns false, with something to say, if an arrow has no name after
- * it, `cat >` is a sentence that stops halfway through.
- */
-static bool take_redirects(struct stage *st, const char **error)
-{
-    int kept = 0;
-
-    for (int i = 0; i < st->argc; i++) {
-        const char *w = st->argv[i];
-        bool in = (strcmp(w, "<") == 0);
-        bool out = (strcmp(w, ">") == 0);
-        bool app = (strcmp(w, ">>") == 0);
-
-        if (!in && !out && !app) {
-            st->argv[kept++] = st->argv[i];
-            continue;
-        }
-        if (i + 1 >= st->argc) {
-            *error = "there is nothing after that arrow to name a file";
-            return false;
-        }
-
-        if (in) {
-            st->in_path = st->argv[i + 1];
-        } else {
-            st->out_path = st->argv[i + 1];
-            st->append = app;
-        }
-        i++;        /* the filename went with the arrow */
-    }
-
-    st->argc = kept;
-    if (st->argc == 0) {
-        *error = "that is a file with no command to put in it";
-        return false;
-    }
-    return true;
-}
-
-/* chop an already-split argv at every bare `|`, in place. */
-static int split_pipeline(int argc, char **argv, struct stage *out, int max)
-{
-    int count = 0;
-    int start = 0;
-
-    for (int i = 0; i <= argc; i++) {
-        bool bar = (i < argc && strcmp(argv[i], "|") == 0);
-        if (i != argc && !bar) {
-            continue;
-        }
-        if (i == start) {
-            /*
-             * `| x`, `x |`, or `x || y`, an empty command either side
-             * of a bar, which means nothing at all
-             */
-            return -1;
-        }
-        if (count == max) {
-            return -1;
-        }
-        memset(&out[count], 0, sizeof out[count]);
-        out[count].argc = i - start;
-        out[count].argv = &argv[start];
-        count++;
-        start = i + 1;
-    }
-    return count;
-}
-
-static void run_pipeline(int argc, char **argv, bool background)
-{
-    struct stage stages[PIPELINE_MAX];
-    int count = split_pipeline(argc, argv, stages, PIPELINE_MAX);
-
-    if (count < 0) {
-        kprintf("a bar joins two commands, so it wants one on either side "
-                "of it\n");
-        kprintf("(and the shell can join at most %d)\n", PIPELINE_MAX);
-        return;
-    }
-
-    for (int i = 0; i < count; i++) {
-        const char *why = NULL;
-        if (!take_redirects(&stages[i], &why)) {
-            kprintf("%s\n", why);
-            return;
-        }
-    }
-
-    /*
-     * the middle of a pipeline already has both ends spoken for, so
-     * redirecting one is asking for two different things in the same
-     * slot. saying which one would win is worse than refusing
-     */
-    for (int i = 0; i < count; i++) {
-        if (i > 0 && stages[i].in_path != NULL) {
-            kprintf("'%s' already takes its input from the command before "
-                    "it\n", stages[i].argv[0]);
-            return;
-        }
-        if (i < count - 1 && stages[i].out_path != NULL) {
-            kprintf("'%s' already sends its output to the command after "
-                    "it\n", stages[i].argv[0]);
-            return;
-        }
-    }
-
-    /* every stage has to be a program before any of them starts. */
-    static char paths[PIPELINE_MAX][PATH_MAX];
-    for (int i = 0; i < count; i++) {
-        const char *name = stages[i].argv[0];
-
-        const struct command *b = builtin_named(name);
-        if (b != NULL) {
-            kprintf("'%s' is a builtin, and builtins cannot go in a "
-                    "pipeline:\n", name);
-            kprintf("the shell is a kernel thread and prints straight at the "
-                    "screen, so it\n");
-            kprintf("has no output to hand anybody. only programs can be "
-                    "joined up.\n");
-            return;
-        }
-        if (!find_program(name, paths[i], sizeof paths[i])) {
-            missing("run", name);
-            return;
-        }
-        stages[i].path = paths[i];
-    }
-
-    struct spawn_env env = { me()->env, me()->env_len };
-    user_spawn_env(&env);
-
-    struct job j;
-    const char *why = "";
-    if (!user_pipeline(stages, count, shell_cwd, 0, background,
-                       &j, &why)) {
-        kprintf("cannot run it: %s\n", why);
-        me()->status = 127;
-        return;
-    }
-
-    if (background) {
-        struct shell_job *s = job_remember(&j, typed_line, JOB_RUNNING);
-        if (s != NULL) {
-            job_print(s, "running");
-        }
-        return;
-    }
-    if (!j.stopped) {
-        me()->status = j.status;
-    }
-    job_returned(&j);
-}
-
-/* does this line need the pipeline machinery? */
 static bool needs_wiring(int argc, char **argv)
 {
     for (int i = 0; i < argc; i++) {
@@ -3724,14 +2968,6 @@ static void run_line(char *line)
 {
     char *argv[ARGV_MAX];
 
-    /* kept before anything is done to it, which the split and the expansion both are. */
-    size_t n = 0;
-    while (line[n] != '\0' && n < LINE_MAX - 1) {
-        typed_line[n] = line[n];
-        n++;
-    }
-    typed_line[n] = '\0';
-
     /* a comment is the rest of the line, and a line that is only a comment is nothing at all. */
     for (size_t i = 0; line[i] != '\0'; i++) {
         if (line[i] == '#' && (i == 0 || line[i - 1] == ' ')) {
@@ -3747,21 +2983,9 @@ static void run_line(char *line)
 
     int argc = split(line, argv, ARGV_MAX);
 
-    if (me()->b_monitor && needs_wiring(argc, argv)) {
+    if (needs_wiring(argc, argv)) {
         kprintf("the monitor joins nothing with | and redirects nothing\n");
         me()->status = 2;
-        return;
-    }
-    if (needs_wiring(argc, argv)) {
-        /*
-         * a trailing & belongs to the whole line rather than to the
-         * last stage, so it comes off before anything is chopped up
-         */
-        bool background = (argc > 0 && strcmp(argv[argc - 1], "&") == 0);
-        if (background) {
-            argc--;
-        }
-        run_pipeline(argc, argv, background);
         return;
     }
     run_argv(argc, argv);   /* argc 0 just means they pressed enter */
@@ -3769,19 +2993,7 @@ static void run_line(char *line)
 
 static void prompt(void)
 {
-    /*
-     * anything that finished while nobody was looking gets reported
-     * here rather than the instant it happens, saying it immediately
-     * would scribble over whatever is half-typed
-     */
-    jobs_reap();
-
     console_set_colors(COLOR_PROMPT, 0x101018);
-    /*
-     * the console number is in the prompt because with four of them
-     * looking identical, knowing which one you are typing at is not a
-     * thing to have to remember
-     */
     kprintf("monitor@velvet[%u]:%s# ", tty_my_console() + 1, shell_cwd);
     console_set_colors(COLOR_TEXT, 0x101018);
 }
@@ -3892,26 +3104,18 @@ static size_t common_prefix(const char *a, const char *b)
 
 /*
  * the word the cursor is sitting in, and whether it is in command
- * position, meaning a program name is what belongs there, rather than
+ * position, meaning a builtin's name is what belongs there, rather than
  * a filename. returns where that word starts.
- *
- * a bar resets that, and has to: in `cat x | he` the `he` is a command,
- * not a file, and completing it against the working directory would
- * offer exactly the wrong list. so the search backwards stops at the
- * most recent bar as well as at the start of the line.
  */
 static size_t word_start(const char *line, size_t pos, bool *first_word)
 {
     size_t start = pos;
-    while (start > 0 && line[start - 1] != ' ' && line[start - 1] != '|') {
+    while (start > 0 && line[start - 1] != ' ') {
         start--;
     }
 
     *first_word = true;
     for (size_t i = start; i-- > 0; ) {
-        if (line[i] == '|') {
-            break;              /* everything back to the bar was space */
-        }
         if (line[i] != ' ') {
             *first_word = false;
             break;
@@ -3957,29 +3161,6 @@ static void replace_word(char *line, size_t *len, size_t *pos,
     move_left((*len > was ? *len : was) - *pos);
 }
 
-/* does the line start with the name of a program? */
-static bool first_word_is_program(const char *line)
-{
-    size_t i = 0;
-    while (line[i] == ' ') i++;
-    size_t start = i;
-    while (line[i] != '\0' && line[i] != ' ') i++;
-
-    size_t n = i - start;
-    if (n == 0 || n >= PATH_MAX) {
-        return false;
-    }
-
-    char word[PATH_MAX];
-    for (size_t k = 0; k < n; k++) {
-        word[k] = line[start + k];
-    }
-    word[n] = '\0';
-
-    char path[PATH_MAX];
-    return find_program(word, path, sizeof path);
-}
-
 /* which command the line begins with, or NULL if it is not one the kernel knows. */
 static const struct command *command_for_line(const char *line)
 {
@@ -4003,7 +3184,7 @@ static const struct command *command_for_line(const char *line)
 
 /*
  * candidates come from one of three places depending on where you are:
- * command names in the first word, ramdisk filenames after a command
+ * builtin names in the first word, ramdisk filenames after a builtin
  * that takes one, and, once a word starts looking like a path, the
  * disk, which unlike the ramdisk is a real tree and has to be walked a
  * directory at a time.
@@ -4114,80 +3295,15 @@ static void gather(struct candidates *c, const char *line, size_t start,
             }
         }
 
-        /*
-         * and tests, because they are commands too now, a
-         * completion that offered only the builtins would be drawing a
-         * line the rest of this version just spent its time rubbing out
-         */
-        char dir[PATH_MAX];
-        for (size_t d = 0; path_dir(d, dir, sizeof dir); d++) {
-            struct vfs_file f;
-            for (size_t i = 0; vfs_readdir(dir, i, &f); i++) {
-                if (f.is_dir || f.name[0] == '\0') {
-                    continue;
-                }
-                size_t n = strlen(f.name);
-                if (n < plen || common_prefix(f.name, prefix) < plen) {
-                    continue;
-                }
-                bool already = false;
-                for (int k = 0; k < c->count; k++) {
-                    if (strcmp(c->items[k], f.name) == 0) {
-                        already = true;
-                        break;
-                    }
-                }
-                if (!already) {
-                    add_candidate(c, f.name, NULL, false);
-                }
-            }
-        }
         return;
     }
 
-    /* a program with subcommands is a thing tab cannot guess at. */
-    if (!first_word) {
-        static const char *git_words[] = {
-            "init", "hash-object", "cat-file", "write-tree", "commit",
-            "log", "diff", "branch", "checkout", NULL
-        };
-        const char *p = line;
-        while (*p == ' ') {
-            p++;
-        }
-        if (p[0] == 'g' && p[1] == 'i' && p[2] == 't'
-            && (p[3] == ' ' || p[3] == '\0')) {
-            /* only the word straight after it. */
-            const char *q = p + 3;
-            while (*q == ' ') {
-                q++;
-            }
-            if ((size_t)(q - line) == start) {
-                for (int i = 0; git_words[i] != NULL; i++) {
-                    if (strlen(git_words[i]) >= plen
-                        && common_prefix(git_words[i], prefix) >= plen) {
-                        add_candidate(c, git_words[i], NULL, false);
-                    }
-                }
-                if (c->count > 0) {
-                    return;
-                }
-            }
-        }
-    }
-
     /*
-     * offer filenames after a command that takes one, and after any
-     * program, most of them take a filename, and the shell has no way
-     * to know which. a builtin that does not is left alone, since
-     * completing `echo mo<tab>` into a filename would be surprising
+     * filenames only after a command that takes one: completing `bt
+     * in<tab>` into a filename would be surprising
      */
     const struct command *cmd = command_for_line(line);
-    if (cmd != NULL) {
-        if (!cmd->takes_file) {
-            return;
-        }
-    } else if (!first_word_is_program(line)) {
+    if (cmd == NULL || !cmd->takes_file) {
         return;
     }
 
@@ -4224,8 +3340,8 @@ static void gather(struct candidates *c, const char *line, size_t start,
 
     /*
      * and the ramdisk's own names, which are whole paths carrying no
-     * leading slash, `bin/h` completes to `bin/hello` out of this and
-     * out of nothing else
+     * leading slash, `selftests/s` completes to `selftests/sched/...`
+     * out of this and out of nothing else
      */
     struct ramdisk_file f;
     for (size_t i = 0; ramdisk_stat(i, &f) && c->count < MAX_CANDIDATES; i++) {
@@ -4347,7 +3463,6 @@ static void session_loop(void);
 void shell_monitor(void)
 {
     session_init();
-    me()->b_monitor = true;
 
     console_set_colors(COLOR_TEXT, 0x101018);
     kprintf("velvet v%s, the monitor\n\n", VELVET_VERSION);

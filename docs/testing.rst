@@ -79,11 +79,8 @@ the failing case. all of them:
    installer's ordering, the loader's elf parsing, and the three checksums
    and deflate.
 
-the ``shell`` suite resolves names and completes them against a ``/bin``,
-and the kernel's medium carries no programs but init and the selftests. so
-it mounts ``bin/tests/shell.tar``, the medium with empty files named after
-the programs velvetOS shipped when the two were split. nothing reads them:
-resolving a name opens a file, and completion lists names.
+the ``shell`` suite mounts ``bin/ramdisk.tar``, the medium the build just
+made, and completes names against what is really on it.
 
 the foreign-implementation checks
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

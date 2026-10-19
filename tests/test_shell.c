@@ -785,126 +785,6 @@ void klog_dump(void)
 {
     kprintf("<DMESG>");
 }
-static bool run_ok = true;
-static const char *ran_path;
-#include <velvet/usermode.h>
-
-/* a pipe a forked child inherits gains a holder rather than being copied. */
-struct pipe;
-void pipe_share(struct pipe *p, bool writing)
-{
-    (void)p; (void)writing;
-}
-
-const char *const USER_RUN_NO_SUCH_FILE = "no such file in the ramdisk";
-static const char *run_error = "not an elf";
-static bool ran_background;
-static int ran_argc;
-static const char *ran_arg1;
-static int ran_uid = -1;
-static bool ran_announce;
-/*
- * what the fake job comes back as: finished, or suspended by a ctrl+z
- * that the test says happened
- */
-static bool run_stops;
-static int run_status;      /* what the fake program exits with */
-
-bool user_run(const char *path, int argc, const char *const argv[],
-              const char *cwd,
-              int uid, bool background, bool announce, struct job *out,
-              const char **error)
-{
-    (void)cwd;
-    ran_uid = uid;
-    ran_announce = announce;
-    ran_path = path;
-    ran_argc = argc;
-    ran_arg1 = (argc > 1) ? argv[1] : NULL;
-    ran_background = background;
-
-    memset(out, 0, sizeof *out);
-    out->pgid = 42;
-    out->pids[0] = 42;
-    out->count = 1;
-    out->stopped = run_stops && !background;
-    out->status = run_status;
-
-    if (run_ok) return true;
-    *error = run_error;
-    return false;
-}
-
-/* a job the test can decide is still going or not */
-static bool job_is_alive;
-static int  continued_pgid, continued_foreground;
-static int  waits;
-
-/* what the shell handed the next thing it starts. */
-static const struct spawn_env *handed_env;
-void user_spawn_env(const struct spawn_env *env)
-{
-    handed_env = env;
-}
-
-bool user_job_alive(const struct job *j)
-{
-    (void)j; return job_is_alive;
-}
-void user_job_collect(struct job *j)
-{
-    (void)j;
-}
-
-bool user_job_wait(struct job *j)
-{
-    waits++;
-    j->stopped = run_stops;
-    return !run_stops;
-}
-
-void user_job_continue(struct job *j, bool foreground)
-{
-    continued_pgid = j->pgid;
-    continued_foreground = foreground ? 1 : 0;
-}
-/*
- * what the shell handed to the pipeline, so a test can say the line was
- * chopped where the bars were and each piece resolved to a program
- */
-static int pipe_count_seen;
-static const char *pipe_paths[PIPELINE_MAX];
-static int pipe_argcs[PIPELINE_MAX];
-static const char *pipe_in[PIPELINE_MAX], *pipe_out[PIPELINE_MAX];
-static bool pipe_append[PIPELINE_MAX];
-static bool pipe_background;
-static bool pipeline_ok = true;
-
-bool user_pipeline(const struct stage *stages, int count, const char *cwd,
-                   int uid, bool background, struct job *out,
-                   const char **error)
-{
-    (void)cwd; (void)uid;
-    memset(out, 0, sizeof *out);
-    out->pgid = 7;
-    out->pids[0] = 7;
-    out->count = count;
-    out->stopped = run_stops && !background;
-    out->status = run_status;
-    pipe_count_seen = count;
-    pipe_background = background;
-    for (int i = 0; i < count && i < PIPELINE_MAX; i++) {
-        pipe_paths[i] = stages[i].path;
-        pipe_argcs[i] = stages[i].argc;
-        pipe_in[i] = stages[i].in_path;
-        pipe_out[i] = stages[i].out_path;
-        pipe_append[i] = stages[i].append;
-    }
-    if (pipeline_ok) return true;
-    *error = "no";
-    return false;
-}
-
 size_t pipe_count(void)
 {
     return 0;
@@ -1074,22 +954,30 @@ static void run(const char *line)
     }
 }
 
+/* a variable's value in the session, or "" when it is not set */
+static const char *var(const char *name)
+{
+    static char value[ENV_VALUE_MAX];
+    if (!env_block_get(me()->env, me()->env_len, name, value, sizeof value)) {
+        value[0] = '\0';
+    }
+    return value;
+}
+
 /*
  * the monitor: the shell's commands with nobody logged in, and none of
  * what is about programs, since running them is the system's
  */
 static void monitor_tests(void)
 {
-    me()->b_monitor = true;
 
     run("bin/hello");
     CHECK(strstr(out, "runs no programs") != NULL && me()->status == 127,
           "the monitor runs no program by name");
     run("run bin/hello");
-    CHECK(strstr(out, "not the monitor's") != NULL,
-          "nor with run");
+    CHECK(strstr(out, "runs no programs") != NULL, "nor with run");
     run("jobs");
-    CHECK(strstr(out, "not the monitor's") != NULL, "and has no jobs");
+    CHECK(strstr(out, "runs no programs") != NULL, "and has no jobs");
     run("echo a | wc");
     CHECK(strstr(out, "joins nothing") != NULL,
           "and joins nothing with a pipe");
@@ -1104,7 +992,6 @@ static void monitor_tests(void)
     CHECK(strstr(out, "/") != NULL && strstr(out, "monitor") == NULL,
           "while its own commands work as they always did");
 
-    me()->b_monitor = false;
 }
 
 int main(void)
@@ -1119,16 +1006,13 @@ int main(void)
     session_init();
 
     /*
-     * mount the medium the build just made, with a /bin beside it, so
-     * resolution and completion are exercised against names the kernel
-     * really looks up. the medium carries no programs of its own, so the
-     * makefile adds the names a system ships, see SHELL_FIXTURE_PROGS
+     * mount the medium the build just made, so completion is exercised
+     * against names the kernel really looks up
      */
     {
-        FILE *fp = fopen("bin/tests/shell.tar", "rb");
+        FILE *fp = fopen("bin/ramdisk.tar", "rb");
         if (fp == NULL) {
-            printf("FAIL: no bin/tests/shell.tar, "
-                   "run `make bin/tests/shell.tar`\n");
+            printf("FAIL: no bin/ramdisk.tar, run `make bin/ramdisk.tar`\n");
             return 1;
         }
         static uint8_t tarbytes[1024 * 1024];
@@ -1175,64 +1059,6 @@ int main(void)
               && strcmp(argv[2], "b") == 0,
               "a bar with no spaces round it still separates the two sides");
     }
-
-    /*
-     * what the shell owes a pipeline is the chopping and the resolving:
-     * every stage has to be a real program *before* any of them starts,
-     * because finding out halfway through leaves the earlier ones
-     * already running and writing into a pipe with nobody at the end
-     */
-
-    pipe_count_seen = 0;
-    run("cat motd.txt | head");
-    CHECK(pipe_count_seen == 2, "a bar makes two stages");
-    CHECK(pipe_paths[0] && strcmp(pipe_paths[0], "/bin/cat") == 0,
-          "the first resolved to a program");
-    CHECK(pipe_paths[1] && strcmp(pipe_paths[1], "/bin/head") == 0,
-          "and so did the second");
-    CHECK(pipe_argcs[0] == 2 && pipe_argcs[1] == 1,
-          "with each stage keeping its own arguments and none of the "
-          "other's");
-
-    pipe_count_seen = 0;
-    run("cat motd.txt | grep hee | wc -l");
-    CHECK(pipe_count_seen == 3, "three commands make three stages");
-    CHECK(pipe_argcs[1] == 2, "and the one in the middle keeps its argument");
-
-    /* a bar joins two things, so there has to be something either side */
-    pipe_count_seen = 0;
-    run("| head");
-    CHECK(pipe_count_seen == 0, "a pipeline starting with a bar runs nothing");
-    CHECK(strstr(out, "either side") != NULL, "and says why");
-
-    pipe_count_seen = 0;
-    run("cat motd.txt |");
-    CHECK(pipe_count_seen == 0, "and neither does one ending with a bar");
-
-    pipe_count_seen = 0;
-    run("cat motd.txt | | head");
-    CHECK(pipe_count_seen == 0, "nor one with a gap in the middle");
-
-    /*
-     * a name that is not a program stops the whole thing before any of
-     * it starts
-     */
-    pipe_count_seen = 0;
-    run("cat motd.txt | nonsuch");
-    CHECK(pipe_count_seen == 0,
-          "a stage that is not a program stops the pipeline before it "
-          "begins");
-
-    /*
-     * the shell prints with kprintf, straight at the screen, it has
-     * no stdout to hand anybody, so a builtin in a pipeline has to be
-     * refused rather than quietly printing to the console while the
-     * next stage waits for input that is never coming
-     */
-    pipe_count_seen = 0;
-    run("ps | grep hello");
-    CHECK(pipe_count_seen == 0, "a builtin in a pipeline runs nothing");
-    CHECK(strstr(out, "builtin") != NULL, "and is told it is a builtin");
 
     /*
      * an environment is a thing inherited rather than asked for, which
@@ -1287,55 +1113,45 @@ int main(void)
 
 
 
+    /* what a variable expanded to, caught by setting another to it */
     run("set NAME velvet");
-    ran_arg1 = NULL;
-    run("echo $NAME");
-    CHECK(ran_arg1 && strcmp(ran_arg1, "velvet") == 0, "$NAME expands");
+    run("set OUT $NAME");
+    CHECK(strcmp(var("OUT"), "velvet") == 0, "$NAME expands");
 
-    ran_arg1 = NULL;
-    run("echo ${NAME}room");
-    CHECK(ran_arg1 && strcmp(ran_arg1, "velvetroom") == 0,
+    run("set OUT ${NAME}room");
+    CHECK(strcmp(var("OUT"), "velvetroom") == 0,
           "and braces say where the name stops");
 
-    ran_argc = 0;
-    run("echo $NOTHING");
-    CHECK(ran_argc == 1,
-          "a name nobody set expands to nothing at all, which is what "
-          "lets `cat $MAYBE` mean `cat` rather than fail");
+    run("set OUT x$NOTHING");
+    CHECK(strcmp(var("OUT"), "x") == 0,
+          "a name nobody set expands to nothing at all");
 
     /* expansion happens before the split, so a value with a space in it becomes two words. */
-    ran_argc = 0;
-    run("echo $PHRASE");
-    CHECK(ran_argc == 4, "a value with spaces becomes several words");
+    {
+        char expanded[LINE_MAX];
+        char *words[ARGV_MAX];
+        expand("x $PHRASE", expanded, sizeof expanded);
+        CHECK(split(expanded, words, ARGV_MAX) == 4,
+              "a value with spaces becomes several words");
+    }
 
-    ran_arg1 = NULL;
-    run("echo $");
-    CHECK(ran_arg1 && strcmp(ran_arg1, "$") == 0,
+    run("set OUT $");
+    CHECK(strcmp(var("OUT"), "$") == 0,
           "and a lone dollar is a dollar rather than eating what follows");
 
-
-
-    run_status = 0;
-    run("echo hello");
-    ran_arg1 = NULL;
-    run("echo $?");
-    CHECK(ran_arg1 && strcmp(ran_arg1, "0") == 0,
+    run("test a = a");
+    run("set OUT $?");
+    CHECK(strcmp(var("OUT"), "0") == 0,
           "$? is what the last thing exited with");
 
-    run_status = 3;
-    run("echo hello");
-    ran_arg1 = NULL;
-    run("echo $?");
-    CHECK(ran_arg1 && strcmp(ran_arg1, "3") == 0, "whatever that was");
-    run_status = 0;
+    run("test a = b");
+    run("set OUT $?");
+    CHECK(strcmp(var("OUT"), "1") == 0, "whatever that was");
 
     run("nosuchcommand");
-    ran_arg1 = NULL;
-    run("echo $?");
-    CHECK(ran_arg1 && strcmp(ran_arg1, "127") == 0,
+    run("set OUT $?");
+    CHECK(strcmp(var("OUT"), "127") == 0,
           "and 127 for a name that is not a command, as everywhere else");
-
-
 
     run("test a = a");
     CHECK(me()->status == 0, "test says yes by exiting zero");
@@ -1354,35 +1170,6 @@ int main(void)
     CHECK(me()->status == 0, "and a directory");
 
 
-
-    run("set PATH /boot/bin");
-    ran_path = NULL;
-    run("echo hi");
-    CHECK(ran_path && strcmp(ran_path, "/boot/bin/echo") == 0,
-          "a program is found through PATH");
-
-    run("set PATH /nowhere");
-    run("echo hi");
-    CHECK(strstr(out, "means nothing here") != NULL,
-          "and a PATH with nothing in it finds nothing, which is the "
-          "point of it being a variable rather than a decree");
-
-    run("unset PATH");
-    ran_path = NULL;
-    run("echo hi");
-    CHECK(ran_path != NULL,
-          "with no PATH at all it falls back, so a machine whose PATH is "
-          "empty can still run `ls` and be told how to fix it");
-
-    /*
-     * the environment is handed to whatever is started, because that is
-     * the whole of what an environment is
-     */
-    run("set NAME velvet");
-    handed_env = NULL;
-    run("echo hi");
-    CHECK(handed_env != NULL && handed_env->len > 0,
-          "and the session's environment goes with what it starts");
 
     /* the interpreter is where the real logic is, so it is driven directly rather than through a file. */
     {
@@ -1461,23 +1248,21 @@ int main(void)
         CHECK(strstr(out, "yes") != NULL, "and a true one inside a true one does");
 
         /* and the condition itself must not run either. */
-        ran_arg1 = NULL;
+        run("unset SKIPPED");
         SCRIPT("if test 1 -eq 2\n"
-               "  if echo shouldnotrun\n"
+               "  if set SKIPPED yes\n"
                "  end\n"
                "end\n");
-        CHECK(ran_arg1 == NULL || strcmp(ran_arg1, "shouldnotrun") != 0,
+        CHECK(var("SKIPPED")[0] == '\0',
               "a condition inside a block that is not running is not even "
               "evaluated, a command is a command, and one in a skipped "
               "branch would still have done whatever it does");
 
-        ran_arg1 = NULL;
         SCRIPT("if test 1 -eq 2\n"
-               "  while echo shouldnotrun\n"
+               "  while set SKIPPED yes\n"
                "  end\n"
                "end\n");
-        CHECK(ran_arg1 == NULL || strcmp(ran_arg1, "shouldnotrun") != 0,
-              "and neither is a while's");
+        CHECK(var("SKIPPED")[0] == '\0', "and neither is a while's");
 
 
 
@@ -1562,64 +1347,14 @@ int main(void)
           "and that it is not a problem");
     have_mouse = true;
 
-    /*
-     * the shell's state used to be file-static, which was correct while
-     * there was one shell and became a bug the moment there were four:
-     * four shells sharing one working directory is one shell with four
-     * windows onto it
-     */
-
-    my_console = 0;
-    session_init();
-    run("cd /notes");
-    CHECK(strcmp(shell_cwd, "/notes") == 0, "console 1 goes somewhere");
-
-    my_console = 1;
-    session_init();
-    CHECK(strcmp(shell_cwd, "/") == 0,
-          "and console 2 is still at the root, a separate session, not "
-          "a separate window onto the same one");
-    run("cd /notes");
-    run("cd ..");
-    CHECK(strcmp(shell_cwd, "/") == 0, "and can move on its own");
-
-    my_console = 0;
-    CHECK(strcmp(shell_cwd, "/notes") == 0,
-          "with console 1 exactly where it was left, having been nowhere "
-          "near any of that");
-
-    /* jobs are per session too, and so are their numbers */
-    my_console = 0;
-    run_stops = true;
-    job_is_alive = true;
-    run("cat");
-    CHECK(strstr(out, "[1]") != NULL, "console 1's first job is job 1");
-
-    my_console = 1;
-    run("cat");
-    CHECK(strstr(out, "[1]") != NULL,
-          "and so is console 2's, the numbering starts again per "
-          "session, the way the history and the prompt do");
-
-    my_console = 0;
-    run("jobs");
-    CHECK(strstr(out, "[1]") != NULL, "console 1 still has its own");
-    run_stops = false;
-
-    /*
-     * and the prompt says which seat you are in, because four consoles
-     * that look identical is four chances to type in the wrong one
-     */
-    my_console = 2;
-    session_init();
+    /* the prompt says whose it is, and which console that is */
+    my_console = 4;
     out_reset();
     prompt();
-    CHECK(strstr(out, "[3]") != NULL, "the prompt says which console it is");
-
+    CHECK(strstr(out, "monitor@velvet[5]") != NULL,
+          "the prompt says it is the monitor, on the fifth console");
     my_console = 0;
     session_init();
-
-
 
     shown = 0;
     switches = 0;
@@ -1928,181 +1663,20 @@ int main(void)
     CHECK(strstr(out, "no '") != NULL,
           "and asking for one that does not exist is a plain no");
 
-    /* a job is one typed line, however many processes that turned out to be. */
-
-    run("jobs");
-    CHECK(strstr(out, "nothing is waiting") != NULL,
-          "with nothing set aside, jobs says so");
-
-    /*
-     * something put in the background is remembered, because it is
-     * still there and you will want to name it later
-     */
-    run_stops = false;
-    job_is_alive = true;
-    run("counter &");
-    CHECK(ran_background, "an & backgrounds it");
-    CHECK(strstr(out, "[1]") != NULL, "and it gets a number");
-    CHECK(strstr(out, "running") != NULL, "and is listed as running");
-    CHECK(strstr(out, "counter &") != NULL,
-          "under the line that was typed, which is the only reason the "
-          "shell keeps jobs at all");
-
-    run("jobs");
-    CHECK(strstr(out, "[1]") && strstr(out, "counter"),
-          "and `jobs` lists it afterwards");
-
-    /* a foreground command that finishes is *not* remembered. */
-    run("echo hello");
-    run("jobs");
-    CHECK(strstr(out, "echo hello") == NULL,
-          "something that ran and finished leaves no job behind");
-
-    /* ctrl+z. the stub says the job came back stopped rather than done */
-    run_stops = true;
-    run("cat");
-    CHECK(strstr(out, "stopped") != NULL, "a suspended job says so");
-    CHECK(strstr(out, "[2]") != NULL, "and gets the next number");
-
-    run("jobs");
-    CHECK(strstr(out, "[1]") && strstr(out, "[2]"),
-          "both are listed");
-    CHECK(strstr(out, "[2]+") != NULL,
-          "with a + on the one last touched, which is what a bare fg means");
-
-    /* fg with no number means that one */
-    continued_pgid = 0;
-    continued_foreground = -1;
-    run_stops = false;
-    run("fg");
-    CHECK(continued_pgid != 0, "a bare fg continues the marked job");
-    CHECK(continued_foreground == 1, "and hands it the terminal");
-
-    run("jobs");
-    CHECK(strstr(out, "[2]") == NULL,
-          "and a job that finished in the foreground is gone from the list");
-
-    /* bg continues without the terminal, which is the whole difference */
-    run_stops = true;
-    run("cat");
-    continued_foreground = -1;
-    run("bg");
-    CHECK(continued_foreground == 0,
-          "bg continues it and does *not* hand over the terminal");
-    run("jobs");
-    CHECK(strstr(out, "running") != NULL, "and it is running again");
-
-    /* a job number that was never handed out */
-    run("fg 99");
-    CHECK(strstr(out, "no job 99") != NULL, "an unknown job is refused by name");
-    run("fg x");
-    CHECK(strstr(out, "jobs") != NULL, "and so is something that is not a number");
-
-    /* %1 is how everybody else spells it, so it works here too */
-    continued_pgid = 0;
-    run_stops = false;
-    run("fg %1");
-    CHECK(continued_pgid != 0, "%1 names a job the way it does everywhere");
-
-    /* the ones still on the table finished while nobody was looking. */
-    job_is_alive = false;
-    out_reset();
-    prompt();
-    CHECK(strstr(out, "done") != NULL,
-          "a background job that finished is reported at the next prompt");
-    run("jobs");
-    CHECK(strstr(out, "nothing is waiting") != NULL, "and then it is gone");
-
-    /* the arrows are taken *out* of the arguments, not passed on. */
-
-    pipe_count_seen = 0;
-    run("echo hello > out.txt");
-    CHECK(pipe_count_seen == 1, "a redirect on its own is a one-stage pipeline");
-    CHECK(pipe_out[0] && strcmp(pipe_out[0], "out.txt") == 0,
-          "with the file taken off the line");
-    CHECK(!pipe_append[0], "and a single arrow does not append");
-    CHECK(pipe_argcs[0] == 2,
-          "and the arrow and its filename gone from the arguments");
-
-    pipe_count_seen = 0;
-    run("echo hello >> out.txt");
-    CHECK(pipe_append[0], "two arrows keeps what is already there");
-
-    pipe_count_seen = 0;
-    run("sort < in.txt > out.txt");
-    CHECK(pipe_in[0] && strcmp(pipe_in[0], "in.txt") == 0, "both ends can move");
-    CHECK(pipe_out[0] && strcmp(pipe_out[0], "out.txt") == 0, "at once");
-    CHECK(pipe_argcs[0] == 1, "leaving just the command");
-
-    /* an arrow with nothing after it is a sentence that stops halfway */
-    pipe_count_seen = 0;
-    run("cat >");
-    CHECK(pipe_count_seen == 0, "an arrow with no filename runs nothing");
-    CHECK(strstr(out, "nothing after") != NULL, "and says so");
-
-    pipe_count_seen = 0;
-    run("> out.txt");
-    CHECK(pipe_count_seen == 0, "and a file with no command runs nothing");
-
-    /* the middle of a pipeline already has both ends spoken for. */
-    pipe_count_seen = 0;
-    run("cat motd.txt | head > out.txt");
-    CHECK(pipe_count_seen == 2, "the last stage may still redirect its output");
-    CHECK(pipe_out[1] && strcmp(pipe_out[1], "out.txt") == 0, "to a file");
-
-    pipe_count_seen = 0;
-    run("cat motd.txt > out.txt | head");
-    CHECK(pipe_count_seen == 0,
-          "but a stage that already feeds another may not also redirect");
-    CHECK(strstr(out, "already sends") != NULL, "and is told which it was");
-
-    pipe_count_seen = 0;
-    run("cat motd.txt | head < in.txt");
-    CHECK(pipe_count_seen == 0,
-          "nor may one that is already fed take its input from a file");
-
-    /* & belongs to the line rather than to the last stage */
-    pipe_count_seen = 0;
-    run("cat motd.txt | head &");
-    CHECK(pipe_count_seen == 2 && pipe_background,
-          "a trailing & backgrounds the whole pipeline, not just its end");
-    CHECK(pipe_argcs[1] == 1, "and is not handed to anybody as an argument");
-
-
     run("help");
     CHECK(strstr(out, "summon") && strstr(out, "reboot"),
           "help lists the commands");
 
-    /* echo and uptime are programs now, not builtins. */
-    ran_path = NULL;
-    run("echo thou art I");
-    CHECK(ran_path && strcmp(ran_path, "/bin/echo") == 0,
-          "echo is a program now, found on the search path");
-    CHECK(ran_argc == 4, "and gets all its words");
-
-    ran_path = NULL;
-    run("uptime");
-    CHECK(ran_path && strcmp(ran_path, "/bin/uptime") == 0,
-          "and so is uptime");
-
-    /*
-     * help is one list now: builtins and programs together, because
-     * from where anybody is sitting there is one kind of thing here,
-     * a word you type
-     */
+    /* the list is the builtins, and the names only */
     out_reset();
     run("help");
     CHECK(strstr(out, "cd") != NULL, "help lists a builtin");
-    CHECK(strstr(out, "echo") != NULL, "and a program");
-    CHECK(strstr(out, "/bin") != NULL && strstr(out, "/boot/bin") != NULL,
-          "and says where it looked, in order");
+    CHECK(strstr(out, "ring 3") == NULL && strstr(out, "$PATH") == NULL,
+          "and no programs, since the monitor runs none");
     CHECK(strstr(out, "help <name>") != NULL,
           "and points at where one thing is actually explained");
-    /* the list is names only. */
     CHECK(strstr(out, "go somewhere; no argument") == NULL,
           "without a description beside every single one");
-
-
 
     out_reset();
     run("help cd");
@@ -2110,42 +1684,16 @@ int main(void)
           "a builtin explains itself out of the table");
     CHECK(strstr(out, "go somewhere") != NULL, "with what it is for");
 
-    /*
-     * a program is asked rather than described: the shell runs it with
-     * --help, because what it takes is declared inside it
-     */
-    ran_path = NULL;
-    ran_arg1 = NULL;
-    run("help echo");
-    CHECK(ran_path && strcmp(ran_path, "/bin/echo") == 0,
-          "a program is asked rather than described");
-    CHECK(ran_arg1 && strcmp(ran_arg1, "--help") == 0,
-          "by running it with --help, so the answer is its own");
-
     out_reset();
     run("help nonsense");
     CHECK(strstr(out, "not something you can type") != NULL,
           "and a name that is neither says so");
 
-    /*
-     * a word with a slash in it is a path, taken exactly as written and
-     * not searched for anywhere. `./x` is how you say "the one here"
-     */
-    ran_path = NULL;
-    run("/boot/bin/echo hello");
-    CHECK(ran_path && strcmp(ran_path, "/boot/bin/echo") == 0,
-          "a full path runs exactly what it names");
-
-    ran_path = NULL;
-    run("bin/echo hello");
-    CHECK(ran_path && strcmp(ran_path, "/bin/echo") == 0,
-          "and a relative one is read from where the test is standing");
-
-    /* a name that is on no search path is not a command, however much it looks like a file. */
-    ran_path = NULL;
-    out_reset();
-    run("motd.txt");
-    CHECK(ran_path == NULL, "a file that is not on the path is not a command");
+    /* a file is not a command, however much it is there */
+    run("/init");
+    CHECK(strstr(out, "not one of the monitor's commands") != NULL
+          && me()->status == 127,
+          "a file on the medium is not a command");
 
     run("");
     CHECK(out_len == 0, "empty line does nothing at all");
@@ -2274,33 +1822,6 @@ int main(void)
         CHECK(strcmp(line, "hexdump") == 0 && len == 7 && pos == 7,
               "a unique prefix completes to the whole command");
 
-        /*
-         * a program's subcommands, which tab cannot get from the
-         * directory: /bin says `git` exists and nothing says what it
-         * takes
-         */
-        strcpy(line, "git comm"); len = 8; pos = 8;
-        out_reset();
-        complete(line, &len, &pos);
-        CHECK(strcmp(line, "git commit") == 0,
-              "a git subcommand completes from its own list");
-
-        strcpy(line, "git ch"); len = 6; pos = 6;
-        out_reset();
-        complete(line, &len, &pos);
-        CHECK(strcmp(line, "git checkout") == 0,
-              "and one that shares no letters with the rest");
-
-        /*
-         * and only the word straight after it: a commit message is not
-         * a subcommand
-         */
-        strcpy(line, "git commit comm"); len = 15; pos = 15;
-        out_reset();
-        complete(line, &len, &pos);
-        CHECK(strcmp(line, "git commit comm") == 0,
-              "the word after the subcommand is not one of them");
-
         /* several candidates sharing no more letters: list them */
         strcpy(line, "c"); len = 1; pos = 1;
         out_reset();
@@ -2328,59 +1849,51 @@ int main(void)
          * answer, unlike a bare tab in the command position, there is
          * no `help` listing files
          */
-        strcpy(line, "cat "); len = 4; pos = 4;
+        strcpy(line, "source "); len = 7; pos = 7;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(out_len > 0, "cat<tab> with nothing typed offers something");
+        CHECK(out_len > 0, "source<tab> with nothing typed offers something");
 
-        strcpy(line, "run "); len = 4; pos = 4;
-        out_reset();
-        complete(line, &len, &pos);
-        CHECK(out_len > 0, "and so does run<tab>");
-
-        /*
-         * a program completes in the command position, the same as a
-         * builtin does, they are the same kind of thing to type
-         */
+        /* the monitor runs no programs, so their names complete to nothing */
         strcpy(line, "upt"); len = 3; pos = 3;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "uptime") == 0, "a program name completes");
+        CHECK(strcmp(line, "upt") == 0 && out_len == 0,
+              "a program's name is not offered");
 
         /*
          * the ramdisk is flat and has no leading slash on anything, so
-         * a word that starts with one is the disk's business. these are
-         * the cases that did not work at all before: the candidates
-         * only ever came from the ramdisk, so a path matched nothing
+         * a word that starts with one is the disk's business, walked a
+         * directory at a time
          */
 
         /*
          * "/b" is ambiguous, big.bin is also there, so it must fill
          * in no further and list the two instead of picking one
          */
-        strcpy(line, "ls /b"); len = 5; pos = 5;
+        strcpy(line, "source /b"); len = 9; pos = 9;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "ls /b") == 0,
+        CHECK(strcmp(line, "source /b") == 0,
               "an ambiguous prefix completes no further");
         CHECK(out_len > 0, "and lists what it could have been");
 
-        strcpy(line, "ls /bo"); len = 6; pos = 6;
+        strcpy(line, "source /bo"); len = 10; pos = 10;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "ls /boot/") == 0,
+        CHECK(strcmp(line, "source /boot/") == 0,
               "one more character reaches the mount point");
 
-        strcpy(line, "ls /boot"); len = 8; pos = 8;
+        strcpy(line, "source /boot"); len = 12; pos = 12;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "ls /boot/") == 0,
+        CHECK(strcmp(line, "source /boot/") == 0,
               "and so does the mount point with no slash yet");
 
-        strcpy(line, "cat /w"); len = 6; pos = 6;
+        strcpy(line, "source /w"); len = 9; pos = 9;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat /welcome.txt") == 0,
+        CHECK(strcmp(line, "source /welcome.txt") == 0,
               "a file on the disk completes to its whole path");
 
         /*
@@ -2388,137 +1901,77 @@ int main(void)
          * again carries on into it rather than stopping at a name that
          * cannot be opened
          */
-        strcpy(line, "cat /n"); len = 6; pos = 6;
+        strcpy(line, "cd /n"); len = 5; pos = 5;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat /notes/") == 0,
+        CHECK(strcmp(line, "cd /notes/") == 0,
               "a directory completes with a trailing slash");
 
         /* and then straight on into it */
-        strcpy(line, "cat /notes/deep"); len = 15; pos = 15;
+        strcpy(line, "source /notes/deep"); len = 18; pos = 18;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat /notes/deep") == 0,
+        CHECK(strcmp(line, "source /notes/deep") == 0,
               "two files sharing a prefix fill in no further");
         CHECK(out_len > 0, "and the pair gets listed instead");
 
-        strcpy(line, "cat /notes/deeper"); len = 17; pos = 17;
+        strcpy(line, "source /notes/deeper"); len = 20; pos = 20;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat /notes/deeper.txt") == 0,
+        CHECK(strcmp(line, "source /notes/deeper.txt") == 0,
               "and one more character is enough to settle it");
 
-        /* the two commands that had no completion at all before. */
-        strcpy(line, "grep x /h"); len = 9; pos = 9;
+        strcpy(line, "source x /h"); len = 11; pos = 11;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "grep x /hello.txt") == 0,
+        CHECK(strcmp(line, "source x /hello.txt") == 0,
               "a filename anywhere in the arguments completes");
 
-        strcpy(line, "ls /n"); len = 5; pos = 5;
-        out_reset();
-        complete(line, &len, &pos);
-        CHECK(strcmp(line, "ls /notes/") == 0,
-              "and so does ls");
-
         /* a bare tab after the mount point lists what is there */
-        strcpy(line, "ls /"); len = 4; pos = 4;
+        strcpy(line, "cd /"); len = 4; pos = 4;
         out_reset();
         complete(line, &len, &pos);
         CHECK(out_len > 0, "a bare tab at the root lists it");
 
         /* a path that is not the test's must not be answered with the disk */
-        strcpy(line, "cat /nowhere/pass"); len = 17; pos = 17;
+        strcpy(line, "source /nowhere/pass"); len = 20; pos = 20;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat /nowhere/pass") == 0,
+        CHECK(strcmp(line, "source /nowhere/pass") == 0,
               "a path into a directory that is not there completes to nothing");
 
-        /*
-         * a relative path completes the same as an absolute one, which
-         * is what `ls boot/<tab>` needs
-         */
-        strcpy(line, "ls notes/d"); len = 10; pos = 10;
+        /* a relative path completes the same as an absolute one */
+        strcpy(line, "cd notes/d"); len = 10; pos = 10;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "ls notes/deep") == 0,
+        CHECK(strcmp(line, "cd notes/deep") == 0,
               "a relative path completes against the tree, as far as two agree");
 
-        strcpy(line, "cat notes/deeper"); len = 16; pos = 16;
+        strcpy(line, "source notes/deeper"); len = 19; pos = 19;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat notes/deeper.txt") == 0,
+        CHECK(strcmp(line, "source notes/deeper.txt") == 0,
               "and settles when one more character is given");
 
-        /* run completes a nested path, which is where bin/hello lives */
-        strcpy(line, "run bin/hell"); len = 12; pos = 12;
+        /* the ramdisk's own names are whole paths, nested ones included */
+        strcpy(line, "source selftests/sched/wa"); len = 25; pos = 25;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "run bin/hello") == 0,
-              "run completes bin/hello from a partial path");
+        CHECK(strcmp(line, "source selftests/sched/wait") == 0,
+              "a nested name on the ramdisk completes from a partial path");
 
-        /* `head` shares two letters with `hello`, so `bin/h` is now genuinely ambiguous. */
-        strcpy(line, "run bin/h"); len = 9; pos = 9;
+        /* signal and setuid share only the s, and stop does too */
+        strcpy(line, "source selftests/sched/s"); len = 24; pos = 24;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "run bin/he") == 0,
-              "two programs sharing a prefix complete only as far as they "
-              "agree");
+        CHECK(strcmp(line, "source selftests/sched/s") == 0,
+              "names sharing a prefix complete only as far as they agree");
 
-        /*
-         * two programs live under bin/, so completing `bin` fills in as
-         * far as they agree and stops rather than picking one
-         */
-        strcpy(line, "cat bin"); len = 7; pos = 7;
+        strcpy(line, "source selftests/sched/si"); len = 25; pos = 25;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat bin/") == 0,
-              "an ambiguous path completes to the shared prefix");
-
-        strcpy(line, "cat bin/hel"); len = 11; pos = 11;
-        out_reset();
-        complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat bin/hello") == 0,
+        CHECK(strcmp(line, "source selftests/sched/signal") == 0,
               "and one more character settles it");
-
-        strcpy(line, "run bin/co"); len = 10; pos = 10;
-        out_reset();
-        complete(line, &len, &pos);
-        CHECK(strcmp(line, "run bin/counter") == 0,
-              "the other program completes too");
-
-        /* the word after a bar is a command, not a file. */
-        strcpy(line, "cat motd.txt | wc"); len = 17; pos = 17;
-        out_reset();
-        complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat motd.txt | wc") == 0,
-              "a complete command after a bar stays as it is");
-
-        strcpy(line, "cat motd.txt | sor"); len = 18; pos = 18;
-        out_reset();
-        complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat motd.txt | sort") == 0,
-              "and a partial one completes as a command, not as a filename");
-
-        strcpy(line, "cat motd.txt |sor"); len = 17; pos = 17;
-        out_reset();
-        complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat motd.txt |sort") == 0,
-              "with no space after the bar either");
-
-        /*
-         * `source` shares two letters with
-         * `sort`, so `so` is genuinely ambiguous now, and completion
-         * has to stop where they stop agreeing rather than guess which
-         * was meant. that it offers a builtin and a program in the same
-         * breath is right: both are things you can type there
-         */
-        strcpy(line, "cat motd.txt | so"); len = 17; pos = 17;
-        out_reset();
-        complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat motd.txt | so") == 0,
-              "a builtin and a program sharing a prefix complete only as "
-              "far as they agree");
 
         /*
          * a word that grows by less than what follows it: the rest of
@@ -2537,18 +1990,18 @@ int main(void)
         CHECK(strcmp(line, "cat mo done and more") == 0 && pos == 6,
               "and so does a shorter one");
 
-        /* filenames after cat */
-        strcpy(line, "cat in"); len = 6; pos = 6;
+        /* filenames after a builtin that takes one */
+        strcpy(line, "source in"); len = 9; pos = 9;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat init") == 0 && pos == 8,
-              "cat completes a filename out of the ramdisk");
+        CHECK(strcmp(line, "source init") == 0 && pos == 11,
+              "source completes a filename out of the ramdisk");
 
         /* completing mid-line keeps whatever followed */
-        strcpy(line, "cat in done"); len = 11; pos = 6;
+        strcpy(line, "source in done"); len = 14; pos = 9;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat init done") == 0,
+        CHECK(strcmp(line, "source init done") == 0,
               "and the rest of the line survives the insert");
 
         strcpy(line, "zzz"); len = 3; pos = 3;
@@ -2564,17 +2017,7 @@ int main(void)
         CHECK(strcmp(line, "bt in") == 0 && out_len == 0,
               "a builtin that takes no file completes nothing");
 
-        /*
-         * but a program does, since the shell cannot know what it takes
-         * and most of them take a filename
-         */
-        strcpy(line, "cat in"); len = 6; pos = 6;
-        out_reset();
-        complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat init") == 0,
-              "and a program in bin/ completes filenames after it");
-
-        /* an unknown command offers nothing after it either */
+        /* nor does a name that is not a builtin */
         strcpy(line, "zzz in"); len = 6; pos = 6;
         out_reset();
         complete(line, &len, &pos);
@@ -2585,12 +2028,12 @@ int main(void)
          * terminated, which is the state it is really called in
          */
         memset(line, 'X', LINE_MAX);
-        line[0]='c'; line[1]='a'; line[2]='t'; line[3]=' ';
-        line[4]='i'; line[5]='n';
-        len = 6; pos = 6;
+        line[0]='c'; line[1]='d'; line[2]=' ';
+        line[3]='i'; line[4]='n';
+        len = 5; pos = 5;
         out_reset();
         complete(line, &len, &pos);
-        CHECK(strcmp(line, "cat init") == 0,
+        CHECK(strcmp(line, "cd init") == 0,
               "an unterminated buffer still completes correctly");
     }
 
@@ -2624,26 +2067,6 @@ int main(void)
     run("hexdump");
     CHECK(strstr(out, "hexdump <hex address>") != NULL, "hexdump explains itself");
 
-    /* ls and cat are programs now rather than builtins. */
-    ran_path = NULL;
-    run("ls");
-    CHECK(ran_path && strcmp(ran_path, "/bin/ls") == 0, "ls is a program now");
-
-    ran_path = NULL;
-    run("cat motd.txt");
-    CHECK(ran_path && strcmp(ran_path, "/bin/cat") == 0, "and so is cat");
-
-    /* typing a program by name wants its output, not a commentary on it. */
-    CHECK(!ran_announce, "a command typed by name is not narrated");
-    run("run bin/cat motd.txt");
-    CHECK(ran_announce, "but one run deliberately is");
-
-
-
-
-
-
-
     run("dmesg");
     CHECK(strcmp(out, "<DMESG>") == 0, "dmesg reaches the log");
 
@@ -2652,70 +2075,8 @@ int main(void)
     CHECK(strstr(out, "didst thou mean 'dmesg'") != NULL,
           "one candidate by first letter earns a suggestion");
     run("qqq");
-    CHECK(strstr(out, "try 'help'") != NULL,
+    CHECK(strstr(out, "`help` lists what it has") != NULL,
           "no candidate falls back to pointing at help");
-
-    /* running a program */
-    ran_path = NULL; run_ok = true;
-    run("run bin/hello");
-    CHECK(ran_path && strcmp(ran_path, "bin/hello") == 0,
-          "run passes the path through to the loader");
-
-    run_ok = false;
-    run("run junk");
-    CHECK(strstr(out, "cannot run junk") && strstr(out, "not an elf"),
-          "and reports why the loader refused");
-
-    /* the mistake a person actually makes: the bare name of a file that lives in a directory. */
-    run_error = USER_RUN_NO_SUCH_FILE;
-    run("run hello");
-    CHECK(strstr(out, "bin/hello") != NULL,
-          "`run hello` points at bin/hello instead of just refusing");
-
-    run("run nowhere");
-    CHECK(strstr(out, "`ls`") != NULL,
-          "and something with no near match points at ls and tab");
-    run_error = "not an elf";
-    run_ok = true;
-
-    run("run");
-    CHECK(strstr(out, "run <program>") != NULL, "bare run explains itself");
-
-    ran_background = true;
-    run("run bin/hello");
-    CHECK(!ran_background, "run waits for its program by default");
-
-    run("run bin/hello &");
-    CHECK(ran_background, "a trailing & puts it in the background");
-
-    /*
-     * arguments reach the program, which is what let cat and echo
-     * stop being kernel commands
-     */
-    run("run bin/cat motd.txt");
-    CHECK(ran_argc == 2 && ran_arg1 && strcmp(ran_arg1, "motd.txt") == 0,
-          "arguments after the program name are handed to it");
-
-    run("run bin/cat motd.txt &");
-    CHECK(ran_background && ran_argc == 2,
-          "and the & is taken off rather than passed along as one");
-
-    /*
-     * an unknown command is looked for on the search path, which is how
-     * a command that moved keeps working without the shell knowing it
-     * moved, and how one on the disk becomes a command at all
-     */
-    ran_path = NULL;
-    run("cat motd.txt");
-    CHECK(ran_path && strcmp(ran_path, "/bin/cat") == 0,
-          "an unknown command is looked for as a program");
-    CHECK(ran_argc == 2 && ran_arg1 && strcmp(ran_arg1, "motd.txt") == 0,
-          "with its arguments");
-
-    ran_path = NULL;
-    run("definitelynotathing");
-    CHECK(ran_path == NULL, "and one that is not there is not run");
-
 
     run("arcana");
     CHECK(strstr(out, "COMPUTER ARCANA") && strstr(out, VELVET_VERSION),

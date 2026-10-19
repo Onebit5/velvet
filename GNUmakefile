@@ -896,29 +896,6 @@ ext4-image: $(T)/mkext4
 # what keeps the driver honest about reading both
 	@$(T)/mkext4 $(T)/ext4.img $(T)/ext4root 16 >/dev/null
 
-# the shell resolves a name by looking for a file of that name under
-# PATH, and completes from the same place, so its suite needs a /bin to
-# look in. this tree's medium has none, since a system built on the
-# kernel brings its own programs, so the suite gets the medium with the
-# names velvetOS shipped when the two were split, as empty files.
-# resolving a name opens the file and nothing ever reads it, and the
-# list is fixed on purpose: completion is checked against exactly which
-# names are there, and a /bin that changed under it would change what a
-# unique prefix is
-SHELL_FIXTURE_PROGS := hello counter fail reader parent ask echo cat \
-                       uptime ls whoami mkdir rmdir rm cp mv touch head \
-                       wc grep sort margaret gemini chmod chown ln \
-                       tartarus hermes theodore patience diff find less \
-                       wordcount sha1sum git
-
-$(T)/shell.tar: $(RAMDISK)
-	@rm -rf $(T)/shellroot
-	@mkdir -p $(T)/shellroot/bin
-	@tar -xf $(RAMDISK) -C $(T)/shellroot
-	@for p in $(SHELL_FIXTURE_PROGS); do : > $(T)/shellroot/bin/$$p; done
-	@tar --format=ustar --sort=name --owner=0 --group=0 --numeric-owner \
-		--mtime=@0 -cf $@ -C $(T)/shellroot .
-
 # the kernel itself is a prerequisite, and that is not decoration. twice
 # now every host suite has passed while the kernel did not link: disk.c
 # and shell.c are compiled into no host test, so nothing but building
@@ -926,7 +903,7 @@ $(T)/shell.tar: $(RAMDISK)
 # and the boot image, because since 0.3.26 there is a check that starts
 # from the image rather than from anything the build says about it
 test: checkfmt checkarch portable-check $(BINDIR)/$(KERNEL) $(BOOTIMG) \
-      $(RAMDISK) $(T)/shell.tar $(TEST_BINS) $(TOOL_BINS) \
+      $(RAMDISK) $(TEST_BINS) $(TOOL_BINS) \
       fat32-image ext4-image part-images
 	@fail=0; \
 	for t in $(TEST_BINS); do \

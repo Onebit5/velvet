@@ -7,10 +7,7 @@ thing: the kernel's monitor, on the fifth console, started by the kernel's
 the system's, run by its ``/init``.
 
 it is a **kernel thread**, not a program in ring 3, which is why everything
-inside it is a builtin and why pid 0 (not a process) is what the process
-table sees as its owner. that has a consequence the process table cares
-about: a process whose parent is 0 belongs to a shell that waits for its own
-and reads their exit codes, so init must not collect it.
+inside it is a builtin.
 
 ``shell_monitor()`` does not return. the monitor is there for as long as
 the machine is, and if it dies the ``services`` thread starts it again.
@@ -29,10 +26,9 @@ gone wrong, and a login checked against the system's accounts would be
 asking the broken thing for permission.
 
 **it runs no programs.** a name that is not one of its builtins is
-refused rather than looked up on the path, and so are ``run``, ``jobs``,
-``fg`` and ``bg``, a ``|`` and a redirection. ``help`` lists only what it
-has, and ``help <program>`` does not run the program to ask it. starting
-programs, and the sessions and jobs they belong to, is the system's work.
+refused, and so are a ``|`` and a redirection: its builtins print straight
+at the screen and have no output to hand anybody. starting programs, and
+the sessions and jobs they belong to, is the system's work.
 the monitor is for looking at the kernel underneath it, ``ps``, ``mem``,
 ``dmesg``, ``bt``, ``vmm``, ``hexdump``, and for taking the machine down
 with ``reboot`` or ``poweroff`` when nothing else will.
@@ -40,32 +36,60 @@ with ``reboot`` or ``poweroff`` when nothing else will.
 builtins
 --------
 
-boot lands you at a ``velvet>`` prompt:
+alt+5 lands you at the monitor's prompt, ``monitor@velvet[5]:/#``:
 
 ::
 
     help      list what thou may command
     clear     wipe the screen clean
-    echo      say something back
-    ls        what the ramdisk carries
-    run       give a program the outer ring
+    whoami    who thou art, and what that permits
     dmesg     everything boot said while you werent looking
-    cat       read a file aloud
     arcana    the rank of this bond, and its making
     persona   the face this machine wears
     mem       frames and heap, honestly counted
-    uptime    how long since the bond was formed
     ps        the threads that walk this realm
+    top       the same, but watched rather than asked
+    lspci     what is plugged into this machine
+    slabs     the object caches, and what they hold
+    disk      the drive, and the filesystem on it
+    sync      put what is in memory onto the disk
+    fsck      check the filesystem, and mend what has one answer
+    resize    grow a filesystem into the partition it sits in
+    mount     which filesystem is where; mount <n> moves it
+    parts     what each drive says it holds
+    chvt      show another console; alt+f1..f5 too
+    mouse     the pointer, and whether it is well
+    set       a variable, or all of them
+    unset     forget one
+    env       what is set
+    test      answer a question in $?, for `if`
+    source    run a file of commands in this shell
+    cpus      the processors, and which are awake
+    locks     what guards what, and what waits
+    cd        go somewhere; no argument means the root
+    pwd       where the kernel is standing
+    ioapic    move external interrupts off the 8259 (risky)
+    summon    call forth a persona thread (in the background)
+    vmm       what the page tables say about an address
     bt        who called whom to get here
     date      what the battery-backed clock believes
     hexdump   look at memory, safely
     kill      end a thread by id
+    signal    send a signal to a process by pid
     history   what thou hast said before
     time      how long a command takes
-    summon    call forth a persona thread
-    vmm       what the page tables say about an address
     crash     tempt fate with a wild pointer
     smash     run off the end of the stack on purpose
+    init      what init looks after, and how it fares
+    install   copy this system onto a drive and make it boot
+    src       the source this was built from, still on the medium
+    ifconfig  the card, and the address on it
+    dhcp      the address the wire handed out
+    tcp       connections, and what state they are in
+    host      what a name resolves to
+    fetch     pull a file down over http
+    ping      the smallest round trip there is
+    arp       who else is out there
     reboot    sever the bond and begin anew
     poweroff  let the velvet room fade
 
@@ -105,7 +129,7 @@ ctrl+a / ctrl+e                 start and end of line
 backspace, del / ctrl+d         delete behind and ahead
 ctrl+w / ctrl+u / ctrl+k        kill a word, the line, or to the end
 up / down                       the last 16 commands
-tab                             complete a command name, or a filename after ``cat`` / ``run``
+tab                             complete a builtin's name, or a filename after one that takes one
 ctrl+l                          wipe the screen, keeping the line you were typing
 ctrl+c                          abandon the line, and recall any running personas
 ==============================  ================================================
@@ -124,47 +148,23 @@ to be there. see `the console <drivers.rst>`_.
 help
 ----
 
-``help`` knows what it is describing by *asking*. what ``cat`` takes is
-declared inside ``cat``; the shell could keep a copy and then there would be
-two descriptions free to drift, so it does not keep one: **``help cat`` runs
-cat with ``--help``** and lets it answer. the same declaration produces both,
-so ``cat --help`` typed directly is the identical text by construction rather
-than by discipline.
-
-builtins are described out of the shell's own table, which is right for the
-same reason, that is where they are declared, and ``help cd`` also says
-*why* it is a builtin, because that is the question somebody asking has
-probably got.
+builtins are described out of the shell's own table, which is where they
+are declared, so the description cannot drift from the thing described:
+``help cd`` prints the usage and what it is for.
 
 plain ``help`` prints names in columns sized to the terminal: what somebody
 scanning it needs is the vocabulary, and what any one word means is ``help
-<name>``. whether something runs inside the kernel or out in ring 3 is a fact
-about how it was built, not about how it is used, so it is a dot in the
-margin rather than a heading to look under. completion offers both.
-
-commands and the path
----------------------
-
-there is a search path. ``/bin``, then ``/boot/bin``. looked up through
-the vfs like everything else, so a disk can supply a command and a name
-earlier on the path hides one later. **the working directory is deliberately
-not on it.** a name typed on its own should mean the same thing wherever you
-happen to be standing, and a program left lying in a directory should not
-quietly become a verb there. anything with a slash in it is a path, read from
-where you are and taken exactly as written. say ``./thing`` if that is what
-you mean.
+<name>``.
 
 environment and scripts
 -----------------------
 
-the environment is a *block* of ``NAME=value`` strings, inherited across
-``spawn`` by one ``memcpy``. it belongs to the process rather than to the
-program, which is why ``export`` is a builtin and not a command. a command
-could only ever change its own. see `the environment <lib.rst>`_.
+the monitor's variables are kept as a program keeps its environment, a
+*block* of ``NAME=value`` strings: ``set`` and ``unset`` change it, and
+``$NAME`` and ``$?`` read it. see `the environment <lib.rst>`_.
 
-scripts are lines with ``if`` and ``while``, run by the shell; ``$PATH`` and
-the other variables come out of the same block. ``hello.sh`` in ``base/diskroot/``
-is an example.
+``source`` runs a file of lines with ``if`` and ``while``, in the monitor
+itself. ``hello.sh`` in ``base/diskroot/`` is an example.
 
 shutting down
 -------------
@@ -178,10 +178,9 @@ see `init <sched.rst>`_.
 the shell interface
 ---------------------
 
-the velvet room terminal. the shell is a kernel thread rather than a
-program, so the things that belong to a session, its working directory, its
-history and its jobs, live in a struct that the console owns and every
-function reaches through one accessor. that is why a second console has its
-own shell rather than sharing one.
+the velvet room terminal, as the kernel's monitor. the shell is a kernel
+thread rather than a program, so what a program would keep in its process,
+its working directory, its history and its variables, lives in one struct
+that every function reaches through one accessor.
 
 what follows is what each name means and what a caller may pass.
