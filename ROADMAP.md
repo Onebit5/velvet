@@ -57,8 +57,11 @@ has to know the other exists.*
 
 **0.4.4 an update that goes wrong costs one reboot.** velvetOS 0.4.4
 without this is a machine that can brick itself with one bad build. a new
-kernel runs on probation: it has to reach a prompt and say so, and if it
-does not, the boot after it starts the kernel that was there before.
+kernel runs on probation: philemon counts the boots it has given it, and
+if the system has not said one of them was good before they run out, the
+boot after starts the kernel that was there before. when a boot counts
+as good, a prompt, a login, a service up, is the system's to decide and
+not the kernel's, and velvetOS's init is what says it (0.4.4 there).
 *ends when a deliberately broken kernel is installed, fails, and the
 machine comes back up on the old one without anyone touching it.*
 
