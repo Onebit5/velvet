@@ -1189,7 +1189,8 @@ int main(void)
     CHECK(spawned_parent == me.pid,
           "and records the caller as its parent, so only it may wait");
 
-    int other = process_create("someone else's", 999, 0, false, 0);
+    int stranger = process_create("stranger", 0, 0, false, 0);
+    int other = process_create("someone else's", stranger, 0, false, 0);
     CHECK(call(SYS_WAIT, other, 0) == -1,
           "waiting for another process's child is refused, otherwise the "
           "exit code would go to the wrong place");

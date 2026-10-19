@@ -60,6 +60,17 @@ int process_create(const char *name, int parent, int uid, bool announce,
     uint64_t flags = spin_lock_irq(&process_lock);
     int pid = 0;
 
+    /*
+     * a parent that has ended has already handed its children to init,
+     * so one born to it now is init's from birth, and so is one born to
+     * a parent that is not there at all. deciding it here is what lets
+     * init find every orphan by its parent alone
+     */
+    const struct process *p_parent = (parent != 0) ? slot_for(parent) : NULL;
+    if (parent != 0 && (p_parent == NULL || p_parent->exited)) {
+        parent = INIT_PID;
+    }
+
     for (size_t i = 0; i < MAX_PROCESSES; i++) {
         if (table[i].pid != 0) {
             continue;
@@ -206,40 +217,6 @@ bool process_collect(int pid, int *code)
 }
 
 
-
-/* is there still a process with this pid? */
-static bool present(int pid)
-{
-    return pid != 0 && slot_for(pid) != NULL;
-}
-
-int process_orphan(void)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-    int pid = 0;
-
-    for (size_t i = 0; i < MAX_PROCESSES; i++) {
-        struct process *p = &table[i];
-        if (p->pid == 0 || !p->exited) {
-            continue;
-        }
-        /* parent 0 is a kernel shell's, and the shell collects its own. */
-        if (p->parent == 0) {
-            continue;
-        }
-        /*
-         * whose parent is init, or whose parent is not in the table at
-         * all, has nobody else who could
-         */
-        if (p->parent == INIT_PID || !present(p->parent)) {
-            pid = p->pid;
-            break;
-        }
-    }
-
-    spin_unlock_irq(&process_lock, flags);
-    return pid;
-}
 
 size_t process_interrupt_all(void)
 {

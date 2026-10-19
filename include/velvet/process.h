@@ -42,10 +42,7 @@ struct pipe;
  * anybody remembering to keep them in step.
  *
  * pid *0* is the other special number and is not a process at all: it is
- * what the kernel shell uses, since a shell here is a kernel thread. the
- * difference matters to exactly one rule, and it is the important one,
- * a process whose parent is 0 belongs to a shell that waits for its own
- * and reads their exit codes, so init must not collect it
+ * the parent of what the kernel starts itself, which is /init
  */
 #define INIT_PID        1
 
@@ -177,22 +174,20 @@ void process_set_thread(int pid, int thread_id);
 
 int  process_thread(int pid);
 
-void process_exited(int pid, int code, uint64_t now_ms);
-
-bool process_collect(int pid, int *code);
-
 /*
  * a process that has ended and not been collected is holding a slot, and
  * there are thirty-two of them. normally its parent collects it, that
  * is what `wait` is, but a parent can die first, and then the exit code
  * is addressed to nobody and the slot is held forever.
  *
- * so children are reparented to init as their parent goes (that happens
- * inside process_exited, since the moment the parent ends is the only
- * moment anybody could notice), and init collects them.
+ * so children are reparented to init as their parent goes, here, since
+ * the moment the parent ends is the only moment anybody could notice.
+ * one born to a parent that has already ended is init's from birth, and
+ * init collects them all with `wait`
  */
+void process_exited(int pid, int code, uint64_t now_ms);
 
-int process_orphan(void);
+bool process_collect(int pid, int *code);
 
 size_t process_interrupt_all(void);
 

@@ -80,36 +80,10 @@ int main(void)
      * which ones is the delicate part, and it is most of what is below
      */
 
-    CHECK(process_orphan() == 0, "an empty table has no orphans");
-
     int p1 = process_create("init", 0, 0, false, 0);
     CHECK(p1 == INIT_PID,
           "the first process is pid 1, which is what makes 1 a number "
           "reparenting can be written against");
-
-    /* a shell's child, which the shell will wait for itself */
-    int shell_child = process_create("cat", 0, 0, false, 0);
-    process_exited(shell_child, 0, 0);
-    CHECK(process_orphan() == 0,
-          "a process whose parent is 0 is a kernel shell's, and the shell "
-          "collects its own, taking this one would be a `$?` that is "
-          "right sometimes and whatever was there before the rest of the "
-          "time");
-    process_collect(shell_child, NULL);
-
-    /*
-     * a child whose parent is alive and well is nobody's business but
-     * the parent's, however long it has been sitting there finished
-     */
-    int waiting = process_create("waiting", 0, 0, false, 0);
-    int watched = process_create("watched", waiting, 0, false, 0);
-    process_exited(watched, 0, 5);
-    CHECK(process_orphan() == 0,
-          "and a finished child whose parent is still running is the "
-          "parent's to collect");
-    process_collect(watched, NULL);
-    process_exited(waiting, 0, 6);
-    process_collect(waiting, NULL);
 
     int mother   = process_create("mother", 0, 0, false, 0);
     int kid      = process_create("kid", mother, 0, false, 0);
@@ -124,46 +98,39 @@ int main(void)
           "but only its own children, reparenting one generation at a "
           "time, or a whole tree moves every time anybody in it dies");
 
-    CHECK(process_orphan() == 0,
-          "an adopted child that is still running is not collectable, "
-          "however orphaned it is");
-
     process_exited(kid, 7, 110);
-    CHECK(process_orphan() == kid,
-          "one that has ended is, and this one's parent really is init, "
-          "which is here in the table");
     CHECK(process_find(grandkid)->parent == INIT_PID,
           "and its own children move up in turn");
     process_collect(kid, NULL);
 
-    /* the other clause: a child whose parent is not in the table at all. */
+    /*
+     * a parent that ended before its child was made had already handed
+     * its children on, so the child has to be init's from birth, or
+     * nobody would ever collect it
+     */
+    int late = process_create("late", mother, 0, false, 0);
+    CHECK(process_find(late)->parent == INIT_PID,
+          "a child born to a parent that has ended is init's");
+    process_exited(late, 0, 205);
+    process_collect(late, NULL);
+
     int ghost = process_create("ghost", 0, 0, false, 0);
     process_exited(ghost, 0, 200);
     process_collect(ghost, NULL);       /* gone from the table altogether */
 
     int left_behind = process_create("left behind", ghost, 0, false, 0);
-    CHECK(process_find(left_behind)->parent == ghost,
-          "a process can be born naming a parent that has already gone");
+    CHECK(process_find(left_behind)->parent == INIT_PID,
+          "and so is one born to a parent that is not there at all");
     process_exited(left_behind, 0, 210);
-    CHECK(process_orphan() == left_behind,
-          "and it is init's too, by the parent not being anywhere rather "
-          "than by having been handed over");
     process_collect(left_behind, NULL);
 
     process_exited(grandkid, 0, 220);
     process_collect(grandkid, NULL);
     process_collect(mother, NULL);
 
-    CHECK(process_orphan() == 0, "and then there are none");
-
-    /*
-     * and init is not its own orphan, by the same rule as everything
-     * else rather than by a special case, since init's parent is 0: it
-     * is what kmain started, and kmain is not a process either
-     */
+    /* init's parent is 0: kmain started it, and kmain is not a process */
     process_exited(p1, 0, 300);
     CHECK(process_find(p1)->parent == 0, "init's parent is nobody");
-    CHECK(process_orphan() == 0, "so init is not its own orphan");
     process_collect(p1, NULL);
 
     CHECK(process_count() == 0, "and the table is empty for what follows");

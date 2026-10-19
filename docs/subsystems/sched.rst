@@ -146,17 +146,16 @@ it. that is a zombie.
 and the uid, the environment block, the current working directory, the file
 descriptors, and the signal state.
 
-pid 0 is not a process at all; it is what the kernel shell uses, since a
-shell here is a kernel thread. the difference matters to exactly one rule:
-a process whose parent is 0 belongs to a shell that waits for its own, so
-init must not collect it. pid 1 is init, handed out first so reparenting has
-a number that is known before the process it names exists.
+pid 0 is not a process at all; it is the parent of what the kernel starts
+itself, which is ``/init``. pid 1 is init, handed out first so reparenting
+has a number that is known before the process it names exists.
 
 the process table (``process.c``) is where ``ps``, ``wait``, ``kill`` and
 reparenting all bottom out. children are reparented to init as their parent
 goes, inside ``process_exited()``, since the moment the parent ends is the
-only moment anybody could notice. ``process_orphan()`` returns only what is
-genuinely nobody's.
+only moment anybody could notice, and a child born to a parent that has
+already ended, or is not there at all, is init's from birth. so every
+orphan has init for its parent, and init finds them all with ``wait``.
 
 file descriptors
 ~~~~~~~~~~~~~~~~
@@ -417,9 +416,6 @@ the table means.
 
 ``bool process_collect(int pid, int *code);``
     has it finished? if so, take the code and free the slot.
-
-``int process_orphan(void);``
-    the pid of something init should collect, or 0 when there is nothing.
 
 ``size_t process_interrupt_all(void);``
     raise the interrupt flag on everything still running, and say how many that was.
