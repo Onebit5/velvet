@@ -142,11 +142,18 @@ int main(void)
     CHECK(!process_interrupt_pending(pid), "and are not interrupts");
 
 
+    /*
+     * a program in front: ctrl+c is SIGINT to its group, whether or not
+     * a program has taken the console as its terminal
+     */
     woken_thread = -1;
     killed_thread = -1;
     CHECK(tty_intercept(KEY_CTRL_C),
-          "ctrl+c aimed at a program is taken as an interrupt");
-    CHECK(process_interrupt_pending(pid), "and delivered to it");
+          "ctrl+c aimed at a program is taken");
+    CHECK(process_signal_state(pid)->pending & (1u << SIGINT),
+          "as a SIGINT to it");
+    CHECK(process_interrupt_pending(pid),
+          "which is what a call it is blocked in sees");
     CHECK(woken_thread == 9,
           "and it is woken, so a sleeping program finds out now rather "
           "than whenever it next happens to ask for something");
@@ -158,16 +165,12 @@ int main(void)
     CHECK(!process_interrupt_pending(pid), "and it is gone afterwards");
     CHECK(!process_take_interrupt(pid), "and cannot be taken twice");
 
-
     tty_intercept(KEY_CTRL_C);
-    CHECK(process_interrupt_pending(pid), "one interrupt is pending");
-
     killed_thread = -1;
-    out_reset();
-    CHECK(tty_intercept(KEY_CTRL_C), "a second ctrl+c is also consumed");
-    CHECK(killed_thread == 9,
-          "but this one kills, because the program had its chance");
-    CHECK(strstr(out, "did not take the hint") != NULL, "and says why");
+    CHECK(tty_intercept(KEY_CTRL_C) && killed_thread == -1,
+          "a second ctrl+c is another SIGINT, not a kill: what becomes "
+          "of a program is the business of whoever started it");
+    process_take_interrupt(pid);
 
     /*
      * `cat x | grep y | wc -l` is three processes and one thing the
@@ -199,33 +202,14 @@ int main(void)
         process_take_interrupt(b);
         process_take_interrupt(c);
 
-        /* nothing is asked of the program. */
         stopped_count = 0;
-        out_reset();
         CHECK(tty_intercept(KEY_CTRL_Z), "ctrl+z is taken as well");
         CHECK(stopped_count == 3, "and stops every member of the job");
         CHECK(sched_thread_stopped(21) && sched_thread_stopped(22)
               && sched_thread_stopped(23), "all three of them");
-        CHECK(!process_interrupt_pending(a),
-              "without delivering anything, a stopped program is not "
-              "asked, it is simply not run");
-
-        CHECK(tty_foreground() == TTY_SHELL,
-              "and the terminal comes straight back to the shell");
-
-        /*
-         * the shell has no other way to hear about it: there are no
-         * signals here, so a note is left where it will look
-         */
-        int which = 0;
-        CHECK(tty_take_stopped(&which), "a note is left saying which job");
-        CHECK(which == a, "naming the group");
-        CHECK(!tty_take_stopped(&which), "and taking it twice finds nothing");
-
-        /* a background job may not read the keyboard. */
-        char buf[16];
-        CHECK(tty_read_line(a, buf, sizeof buf) == -1,
-              "a job that is not at the front cannot read a line");
+        CHECK(tty_foreground() == a,
+              "and the terminal stays where it is, for whoever started "
+              "the job to take back");
 
         process_exited(a, 0, 0); process_collect(a, NULL);
         process_exited(b, 0, 0); process_collect(b, NULL);
@@ -233,7 +217,7 @@ int main(void)
     }
 
     /*
-     * ctrl+z with the shell at the front means nothing, but it must not
+     * ctrl+z with no program in front means nothing, but it must not
      * reach the line editor as a stray character either
      */
     tty_set_foreground(TTY_SHELL);

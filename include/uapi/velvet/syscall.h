@@ -232,9 +232,8 @@ struct user_stat {
  * front; its children are born on that console. tcsetpgrp puts a group
  * in front of the caller's console, which the console's program may do,
  * and so may a member of the group in front, giving it away. tcgetpgrp
- * says which group is in front, 0 while it is the kernel's own shell.
- * ctrl+c and ctrl+z on a program's console are SIGINT and SIGTSTP to
- * the group in front
+ * says which group is in front, 0 while no program is. ctrl+c and
+ * ctrl+z are SIGINT and SIGTSTP to the group in front
  */
 #define SYS_TTYATTACH 62
 #define SYS_TCSETPGRP 63

@@ -26,8 +26,6 @@
 #include <velvet/signal.h>
 #include <asm/irq.h>
 
-const char *const USER_RUN_NO_SUCH_FILE = "no such file";
-
 /* what a user thread needs to know before it stops being a kernel one. */
 struct user_start {
     uint64_t entry;
@@ -146,86 +144,6 @@ static bool build_args(uint64_t stack_phys, int argc, const char *const argv[],
     return true;
 }
 
-/* put a file where the console or the keyboard would have been. */
-static bool redirect(int pid, int fd, const char *path, bool writing,
-                     bool append, const char **error)
-{
-    struct vfs_file f;
-    int uid = process_uid(pid);
-
-    if (!writing) {
-        if (!vfs_open(path, &f) || f.is_dir) {
-            *error = "no such file to read from";
-            return false;
-        }
-        /* the same question `open` asks, asked in the same way. */
-        if (!vfs_may_read(&f, uid)) {
-            *error = "that file is not yours to read";
-            return false;
-        }
-    } else {
-        if (uid != 0) {
-            *error = "only the master may write files";
-            return false;
-        }
-        if (!append) {
-            /* truncate by removing it first. */
-            struct vfs_file existing;
-            if (vfs_open(path, &existing)) {
-                if (existing.is_dir) {
-                    *error = "that is a directory";
-                    return false;
-                }
-                vfs_unlink(path);
-            }
-        }
-        if (!vfs_create(path, &f)) {
-            *error = "cannot write there, only the disk takes new files";
-            return false;
-        }
-    }
-
-    struct fd slot;
-    memset(&slot, 0, sizeof slot);
-    slot.size = f.size;
-    slot.writing = writing;
-    slot.pos = (writing && append) ? f.size : 0;
-
-    if (f.kind == VFS_DISK) {
-        slot.kind = FD_DISK;
-        slot.mount = f.mount;
-        slot.cluster = f.cluster;
-        slot.entry_sector = f.entry_sector;
-        slot.entry_offset = f.entry_offset;
-    } else if (f.kind == VFS_SOURCE) {
-        slot.kind = FD_SOURCE;
-        slot.medium_at = f.medium_at;
-    } else {
-        slot.kind = FD_MEMORY;
-        slot.data = f.data;
-    }
-
-    return process_fd_install(pid, fd, &slot);
-}
-
-static bool install_pipe(int pid, int fd, struct pipe *p, bool writing)
-{
-    struct fd slot;
-    memset(&slot, 0, sizeof slot);
-    slot.kind = FD_PIPE;
-    slot.pipe = p;
-    slot.writing = writing;
-    return process_fd_install(pid, fd, &slot);
-}
-
-/* what a spawned program is born holding, when the caller has one to give. */
-static const struct spawn_env *pending_env;
-
-void user_spawn_env(const struct spawn_env *env)
-{
-    pending_env = env;
-}
-
 /*
  * a program made ready to run, short of anything to run it: its own
  * address space with the image and a stack in it, where it starts, and
@@ -251,7 +169,7 @@ static bool image_build(const char *str_path, int i_argc,
     uint64_t image_size = 0;
     bool owned = false;
     if (!vfs_slurp(str_path, &image, &image_size, &owned)) {
-        *pp_error = USER_RUN_NO_SUCH_FILE;
+        *pp_error = "no such file";
         return false;
     }
 
@@ -369,9 +287,8 @@ static bool image_build(const char *str_path, int i_argc,
 }
 
 int user_spawn(const char *path, int argc, const char *const argv[],
-               const char *cwd,
-               int parent, int uid, bool announce,
-               const struct spawn_io *io, const char **error)
+               const char *cwd, int parent, int uid, bool announce,
+               const char **error)
 {
     struct user_image img;
     if (!image_build(path, argc, argv, &img, error)) {
@@ -394,18 +311,15 @@ int user_spawn(const char *path, int argc, const char *const argv[],
      * the process comes first, because it is what outlives the thread
      * and holds the exit code somebody will want to read
      */
-    /*
-     * a program cannot ask to be somebody else: it runs as whoever
-     * started it, and only the shell decides what that is
-     */
+    /* a program cannot ask to be somebody else: it runs as who started it */
     int pid = process_create(path, parent, uid, announce, pit_uptime_ms());
     if (pid == 0) {
         /*
-         * full. init collects orphans on its own schedule and a shell
-         * collects its own jobs, so anything still sitting here is
-         * something somebody may yet ask about, but a machine that
-         * cannot start a program is worse than one that lost an exit
-         * code, so this takes the lot and tries once more
+         * full. init collects orphans on its own schedule and a parent
+         * its own children, so anything still sitting here is something
+         * somebody may yet ask about, but a machine that cannot start a
+         * program is worse than one that lost an exit code, so this
+         * takes the lot and tries once more
          */
         reap_abandoned();
         pid = process_create(path, parent, uid, announce, pit_uptime_ms());
@@ -416,45 +330,11 @@ int user_spawn(const char *path, int argc, const char *const argv[],
         process_set_cwd(pid, cwd);
     }
 
-    /* the environment it was born holding. */
-    if (pid != 0 && pending_env != NULL && pending_env->block != NULL) {
-        process_set_env(pid, pending_env->block, pending_env->len);
-    } else if (pid != 0 && parent != 0) {
-        /*
-         * spawned by a program rather than by the shell: it takes its
-         * parent's, which is the same rule seen from the other side
-         */
+    /* the environment it was born holding, which is its parent's. */
+    if (pid != 0 && parent != 0) {
         static char inherited[PROC_ENV_MAX];
         size_t n = process_get_env(parent, inherited, sizeof inherited);
         process_set_env(pid, inherited, n);
-    }
-    /*
-     * whatever was asked for goes in before the thread exists, so the
-     * program has never seen anything else in those slots
-     */
-    if (pid != 0 && io != NULL) {
-        const char *why = NULL;
-        bool ok = true;
-        if (io->in != NULL) {
-            ok = install_pipe(pid, FD_STDIN, io->in, false);
-        } else if (io->in_path != NULL) {
-            ok = redirect(pid, FD_STDIN, io->in_path, false, false, &why);
-        }
-        if (ok && io->out != NULL) {
-            ok = install_pipe(pid, FD_STDOUT, io->out, true);
-        } else if (ok && io->out_path != NULL) {
-            ok = redirect(pid, FD_STDOUT, io->out_path, true, io->append, &why);
-        }
-        if (!ok) {
-            int ignored;
-            process_exited(pid, PROCESS_KILLED, pit_uptime_ms());
-            pipe_release_for(pid);
-            process_collect(pid, &ignored);
-            kfree(start);
-            addrspace_destroy(space);
-            *error = (why != NULL) ? why : "could not redirect that";
-            return 0;
-        }
     }
     if (pid == 0) {
         kfree(start);
@@ -547,29 +427,6 @@ bool user_collect(int i_pid, int *p_code)
     return process_collect(i_pid, p_code);
 }
 
-bool user_wait(int pid, int *code)
-{
-    struct thread *self = sched_current();
-    int me = (self != NULL) ? self->pid : 0;
-
-    for (;;) {
-        const struct process *p = process_find(pid);
-        if (p == NULL) {
-            return false;       /* gone, or somebody else collected it */
-        }
-        if (p->exited) {
-            break;
-        }
-
-        /* waiting is a blocking call like any other, and a signal is a third reason for one to end. */
-        if (me > 0 && process_take_interrupt(me)) {
-            return false;
-        }
-        sleep_ms(20);
-    }
-    return user_collect(pid, code);
-}
-
 /* let a spawned process actually begin. */
 void user_start(int pid)
 {
@@ -577,220 +434,4 @@ void user_start(int pid)
     if (p != NULL && p->thread_id != 0) {
         sched_wake_thread(p->thread_id);
     }
-}
-
-/*
- * everything one typed line started, held together by a group number so
- * the terminal can talk to all of it at once. the number is the pid of
- * the first process, which is arbitrary and traditional and means the
- * group needs nothing allocated to name it
- */
-
-bool user_job_alive(const struct job *j)
-{
-    for (int i = 0; i < j->count; i++) {
-        if (j->pids[i] == 0) {
-            continue;
-        }
-        const struct process *p = process_find(j->pids[i]);
-        if (p != NULL && !p->exited) {
-            return true;
-        }
-    }
-    return false;
-}
-
-void user_job_collect(struct job *j)
-{
-    for (int i = 0; i < j->count; i++) {
-        if (j->pids[i] == 0) {
-            continue;
-        }
-        int code = 0;
-        if (user_collect(j->pids[i], &code)) {
-            /* the last one's status is the job's. */
-            if (i == j->count - 1) {
-                j->status = code;
-            }
-            /* being killed is worth saying, since somebody asked for it. */
-            if (code == PROCESS_KILLED && i == j->count - 1) {
-                kprintf("[kernel] pid %d was killed\n", j->pids[i]);
-            }
-            j->pids[i] = 0;
-        }
-    }
-}
-
-bool user_job_wait(struct job *j)
-{
-    /*
-     * waiting by id rather than by pointer is deliberate: the reaper
-     * may free a thread the moment it dies, and an id cannot dangle.
-     * this polls every 20ms, which no human will notice
-     */
-    for (;;) {
-        if (!user_job_alive(j)) {
-            j->stopped = false;
-            break;
-        }
-
-        /* the other way waiting can end. */
-        int which = 0;
-        if (tty_take_stopped(&which) && which == j->pgid) {
-            j->stopped = true;
-            tty_set_foreground(TTY_SHELL);
-            return false;
-        }
-
-        sleep_ms(20);
-    }
-
-    tty_set_foreground(TTY_SHELL);
-    user_job_collect(j);
-    return true;
-}
-
-void user_job_continue(struct job *j, bool foreground)
-{
-    int ids[MAX_PROCESSES];
-    size_t n = process_group_threads(j->pgid, ids, MAX_PROCESSES);
-    for (size_t i = 0; i < n; i++) {
-        sched_set_stopped(ids[i], false);
-    }
-    j->stopped = false;
-
-    /* the terminal goes with it, or does not. */
-    if (foreground) {
-        tty_set_foreground(j->pgid);
-    }
-}
-
-bool user_pipeline(const struct stage *stages, int count, const char *cwd,
-                   int uid, bool background, struct job *out,
-                   const char **error)
-{
-    memset(out, 0, sizeof *out);
-
-    if (count < 1 || count > PIPELINE_MAX) {
-        *error = "that is more commands than the kernel can join up";
-        return false;
-    }
-
-    /* one pipe between each neighbouring pair, so count-1 of them. */
-    struct pipe *pipes[PIPELINE_MAX - 1];
-    for (int i = 0; i < count - 1; i++) {
-        pipes[i] = pipe_create();
-        if (pipes[i] == NULL) {
-            for (int j = 0; j < i; j++) {
-                pipe_close_read(pipes[j]);
-                pipe_close_write(pipes[j]);
-            }
-            *error = "no memory for a pipe";
-            return false;
-        }
-    }
-
-    int started = 0;
-    out->count = count;
-
-    for (int i = 0; i < count; i++) {
-        struct spawn_io io;
-        memset(&io, 0, sizeof io);
-        io.in  = (i > 0)         ? pipes[i - 1] : NULL;
-        io.out = (i < count - 1) ? pipes[i]     : NULL;
-        io.in_path  = stages[i].in_path;
-        io.out_path = stages[i].out_path;
-        io.append   = stages[i].append;
-
-        const char *why = NULL;
-        int pid = user_spawn(stages[i].path, stages[i].argc,
-                             (const char *const *)stages[i].argv,
-                             cwd, 0, uid, false, &io, &why);
-        out->pids[i] = pid;
-        if (pid != 0) {
-            /* the first one to start names the group and everybody else joins it. */
-            if (out->pgid == 0) {
-                out->pgid = pid;
-            }
-            process_set_pgid(pid, out->pgid);
-            started++;
-            continue;
-        }
-
-        /*
-         * it never started, so it will never close the ends it was
-         * going to be given, and a pipe nobody closes is a neighbour
-         * blocked forever. close them here instead, which the ones
-         * either side see as end of file and a broken pipe, and they
-         * finish by themselves
-         */
-        if (i == 0 && count == 1) {
-            *error = why;
-            return false;
-        }
-        kprintf("cannot run %s: %s\n", stages[i].path, why);
-        pipe_close_read(io.in);
-        pipe_close_write(io.out);
-
-        if (i == 0) {
-            *error = why;
-        }
-    }
-
-    if (started == 0) {
-        return false;
-    }
-
-    /* the terminal is the job's now, unless it was sent to the background. */
-    if (!background) {
-        tty_set_foreground(out->pgid);
-    }
-
-    for (int i = 0; i < count; i++) {
-        if (out->pids[i] != 0) {
-            user_start(out->pids[i]);
-        }
-    }
-
-    if (background) {
-        return true;
-    }
-
-    user_job_wait(out);
-    return true;
-}
-
-bool user_run(const char *path, int argc, const char *const argv[],
-              const char *cwd,
-              int uid, bool background, bool announce, struct job *out,
-              const char **error)
-{
-    memset(out, 0, sizeof *out);
-
-    int pid = user_spawn(path, argc, argv, cwd, 0, uid, announce,
-                         NULL, error);
-    if (pid == 0) {
-        return false;
-    }
-
-    /* a command on its own is a job of one, and its group is itself. */
-    out->pgid = pid;
-    out->pids[0] = pid;
-    out->count = 1;
-
-    if (!background) {
-        tty_set_foreground(out->pgid);
-    }
-    user_start(pid);
-
-    if (background) {
-        /* nobody is waiting, so nobody will collect it. */
-        if (announce) {
-            kprintf("[kernel] pid %d runs in the background\n", pid);
-        }
-        return true;
-    }
-
-    user_job_wait(out);
-    return true;
 }

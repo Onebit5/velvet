@@ -662,25 +662,6 @@ void process_set_pgid(int pid, int pgid)
     spin_unlock_irq(&process_lock, flags);
 }
 
-size_t process_group_threads(int pgid, int *ids, size_t max)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-    size_t n = 0;
-
-    for (size_t i = 0; i < MAX_PROCESSES && n < max; i++) {
-        if (table[i].pid == 0 || table[i].pgid != pgid) {
-            continue;
-        }
-        if (table[i].exited || table[i].thread_id == 0) {
-            continue;
-        }
-        ids[n++] = table[i].thread_id;
-    }
-
-    spin_unlock_irq(&process_lock, flags);
-    return n;
-}
-
 size_t process_group_pids(int i_pgid, int *p_pids, size_t sz_max)
 {
     uint64_t u_flags = spin_lock_irq(&process_lock);
@@ -696,34 +677,6 @@ size_t process_group_pids(int i_pgid, int *p_pids, size_t sz_max)
     spin_unlock_irq(&process_lock, u_flags);
     return sz_n;
 }
-
-bool process_group_alive(int pgid)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-    bool alive = false;
-
-    for (size_t i = 0; i < MAX_PROCESSES; i++) {
-        if (table[i].pid != 0 && table[i].pgid == pgid && !table[i].exited) {
-            alive = true;
-            break;
-        }
-    }
-
-    spin_unlock_irq(&process_lock, flags);
-    return alive;
-}
-
-void process_interrupt_group(int pgid)
-{
-    /*
-     * one ctrl+c, the whole job, said in signals now, which is what
-     * makes it wake a program that is blocked rather than only marking
-     * it for the next time it happens to ask
-     */
-    process_signal_group(pgid, SIGINT);
-}
-
-
 
 int process_fd_open(int pid, const void *data, uint64_t size)
 {

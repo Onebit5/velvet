@@ -112,8 +112,9 @@ rather than acted on for it.
 the front of the terminal is a **group**, not a process. ``cat x | wc`` is
 three processes and one thing the person typing is thinking about, and every
 question the terminal asks has to be asked of the whole job. ``TTY_SHELL``
-(0) means the kernel shell, which is where the terminal goes back to
-whenever a program finishes.
+(0) means no program is in front: the monitor's console, and one no
+program has been put in front of. there ctrl+c is a key like any other,
+the monitor's to read, and ctrl+z means nothing.
 
 each of the consoles has its own answer to all of this, and which
 console a caller means is not passed in: it is whichever the calling thread
@@ -126,18 +127,19 @@ looked at, and a reader only takes from its own, so a read on a hidden
 console waits until somebody switches to it, and can never take what was
 typed at another.
 
+with a program in front, ctrl+c and ctrl+z are SIGINT and SIGTSTP to
+its group, and that is all: no second ctrl+c turns into a kill, and no
+terminal is handed back on a stop. what becomes of a job is the business
+of whoever started it, and a shell learns of the stop from ``wait`` and
+takes the terminal back itself.
+
 a console can also belong to a program. ``ttyattach``, which only root
 may call, moves the caller onto a console and makes it the program that
 console belongs to, with its group in front; its children are born on the
 same console. from then on the jobs are the program's to run: it puts a
-group in front with ``tcsetpgrp``, and ctrl+c and ctrl+z are SIGINT and
-SIGTSTP to whatever group is in front, with no second ctrl+c turning into
-a kill and no terminal handed back on a stop. the shell learns of the
-stop from ``wait`` and takes the terminal back itself. the console's
-program may always put a group in front; otherwise only a member of the
-group already there may, which is how a job gives the terminal back. the
-kernel shell's own consoles keep their old rules for as long as it runs
-jobs.
+group in front with ``tcsetpgrp``. the console's program may always put a
+group in front; otherwise only a member of the group already there may,
+which is how a job gives the terminal back.
 
 ``termios.c`` is how a terminal treats what is typed at it, and it is only
 the *policy*: given a mode and a key, what does the terminal do. the reading,

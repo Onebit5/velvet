@@ -21,14 +21,10 @@ static struct spinlock tty_lock = SPINLOCK("tty", LOCK_RANK_DEVICE);
 /* one of each, per console. */
 static int foreground[VCONSOLE_COUNT];
 
-/* set by ctrl+z, taken by whoever was waiting. */
-static int stopped_group[VCONSOLE_COUNT];
-
 /*
- * the program that took each console as its terminal, or 0 while the
- * console is the kernel shell's. on a program's console ctrl+c and
- * ctrl+z are signals to the group in front and nothing more: what
- * becomes of a job is the program's business
+ * the program that took each console as its terminal, or 0 while no
+ * program has: the monitor's console, and one /init has not handed out.
+ * it decides who may put a group in front
  */
 static int controller[VCONSOLE_COUNT];
 
@@ -45,21 +41,6 @@ void tty_set_foreground(int pgid)
     uint64_t flags = spin_lock_irq(&tty_lock);
     foreground[n] = pgid;
     spin_unlock_irq(&tty_lock, flags);
-}
-
-bool tty_take_stopped(int *pgid)
-{
-    unsigned n = tty_my_console();
-    uint64_t flags = spin_lock_irq(&tty_lock);
-    int g = stopped_group[n];
-    stopped_group[n] = 0;
-    spin_unlock_irq(&tty_lock, flags);
-
-    if (g == 0) {
-        return false;
-    }
-    *pgid = g;
-    return true;
 }
 
 /*
@@ -119,28 +100,6 @@ bool tty_hand_to(int i_caller, int i_pgid)
     return b_may;
 }
 
-/* ctrl+z: stop the whole job where it stands. */
-static bool stop_foreground(unsigned console, int pgid)
-{
-    int ids[MAX_PROCESSES];
-    size_t n = process_group_threads(pgid, ids, MAX_PROCESSES);
-    if (n == 0) {
-        return false;
-    }
-
-    for (size_t i = 0; i < n; i++) {
-        sched_set_stopped(ids[i], true);
-    }
-
-    uint64_t flags = spin_lock_irq(&tty_lock);
-    stopped_group[console] = pgid;
-    foreground[console] = TTY_SHELL;    /* it comes back to its own shell */
-    spin_unlock_irq(&tty_lock, flags);
-
-    kprintf("\n");
-    return true;
-}
-
 bool tty_intercept(int key)
 {
     /* switching consoles is the terminal's business and nobody else's. */
@@ -186,47 +145,15 @@ bool tty_intercept(int key)
     unsigned console = console_active();
     int pgid = foreground[console];
     if (pgid == TTY_SHELL) {
-        /* the shell is at the front. */
+        /* no program in front: ctrl+c is the monitor's key, ctrl+z nothing */
         return key == KEY_CTRL_Z;
     }
 
-    /* a program's terminal: a signal to the group in front, and that is all */
-    if (controller[console] != 0) {
-        process_signal_group(pgid, key == KEY_CTRL_C ? SIGINT : SIGTSTP);
-        return true;
-    }
-
-    if (key == KEY_CTRL_Z) {
-        return stop_foreground(console, pgid);
-    }
-
-    /* ctrl+c reaches every member. */
-    int ids[MAX_PROCESSES];
-    size_t n = process_group_threads(pgid, ids, MAX_PROCESSES);
-    if (n == 0) {
-        return true;
-    }
-
     /*
-     * asking twice means insisting: the first one is delivered and the
-     * program may do as it likes with it, the second stops being a
-     * request. asked of the group's leader, since that is the one whose
-     * answer the person is waiting on
+     * a program in front: a signal to its group, and that is all. what
+     * becomes of a job is the business of whoever started it
      */
-    if (process_interrupt_pending(pgid)) {
-        kprintf("\n[tty] job %d did not take the hint\n", pgid);
-        for (size_t i = 0; i < n; i++) {
-            sched_kill(ids[i]);
-        }
-        return true;
-    }
-
-    process_interrupt_group(pgid);
-
-    /* wake them, wherever they are. */
-    for (size_t i = 0; i < n; i++) {
-        sched_wake_thread(ids[i]);
-    }
+    process_signal_group(pgid, key == KEY_CTRL_C ? SIGINT : SIGTSTP);
     return true;
 }
 

@@ -15,8 +15,8 @@
 /* who the keyboard belongs to. */
 
 /*
- * group 0 means the kernel shell, which is where the terminal goes back
- * to whenever a program finishes
+ * group 0 means no program's: the kernel's monitor, and a console no
+ * program has been put in front of
  */
 #define TTY_SHELL 0
 
@@ -46,9 +46,6 @@ bool tty_hand_to(int i_caller, int i_pgid);
  * are requests, not bytes, and must not end up in anybody's buffer
  */
 bool tty_intercept(int key);
-
-/* did ctrl+z stop the foreground since the kernel lasts asked? */
-bool tty_take_stopped(int *pgid);
 
 /* may this process read the keyboard at all? */
 bool tty_is_current(int pid);

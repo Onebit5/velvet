@@ -667,9 +667,9 @@ static int spawned_uid = -1;
 static const char *spawned_cwd;
 int user_spawn(const char *path, int argc, const char *const argv[],
                const char *cwd, int parent, int uid, bool announce,
-               const struct spawn_io *io, const char **error)
+               const char **error)
 {
-    (void)argc; (void)argv; (void)error; (void)announce; (void)io;
+    (void)argc; (void)argv; (void)error; (void)announce;
     spawned_path = path; spawned_parent = parent; spawned_uid = uid;
     spawned_cwd = cwd;
     return 77;
@@ -715,12 +715,6 @@ void init_stop_machine(enum init_stop e_how)
 bool user_collect(int i_pid, int *p_code)
 {
     return process_collect(i_pid, p_code);
-}
-
-static int wait_code = 5;
-bool user_wait(int pid, int *code)
-{
-    (void)pid; if (code) *code = wait_code; return true;
 }
 
 #include <asm/syscall.h>

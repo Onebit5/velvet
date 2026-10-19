@@ -406,15 +406,6 @@ the table means.
 ``int  process_pgid(int pid);``
     a job is a group, and everything the terminal does it does to a whole one: the keys belong to a group, ctrl+c reaches a group, ctrl+z stops a group
 
-``size_t process_group_threads(int pgid, int *ids, size_t max);``
-    the thread ids of everything still running in a group.
-
-``void process_interrupt_group(int pgid);``
-    deliver an interrupt to every member. one ctrl+c, the whole job
-
-``bool process_group_alive(int pgid);``
-    is anything in the group still going?
-
 ``void process_set_thread(int pid, int thread_id);``
     note which thread is running it, once there is one
 
@@ -800,17 +791,9 @@ something.
 ``#define MAX_ARGS 8``
     how many arguments a program may be handed.
 
-``extern const char *const USER_RUN_NO_SUCH_FILE;``
-    the shell wants to say something more useful than this particular message, so it is a value it can compare against rather than prose
-
-``struct spawn_env { const char *block;``
-    the environment a program is born holding. NULL means an empty one
-
-``int user_spawn(const char *path, int argc, const char *const argv[], const char *cwd, int parent, int uid, bool announce, const struct spawn_io *io, const char **error);``
-    start a program and return its pid, or 0 with ``*error`` set.
-
-``void user_spawn_env(const struct spawn_env *env);``
-    what the next spawn should hand its child.
+``int user_spawn(const char *path, int argc, const char *const argv[], const char *cwd, int parent, int uid, bool announce, const char **error);``
+    start a program, parked until ``user_start``, holding its parent's
+    environment, and return its pid, or 0 with ``*error`` set.
 
 ``bool user_exec(const char *str_path, int i_argc, const char *const pp_argv[], struct user_entry *p_out, const char **pp_error);``
     the calling process becomes the program at ``str_path``, keeping its
@@ -827,30 +810,3 @@ everything that can fail has already succeeded, so a failed exec leaves
 the caller running exactly what it was. the ``execve`` call then
 rewrites the frame the syscall exit path restores, so the return from
 the call is the new program's first instruction.
-
-``#define PIPELINE_MAX 4``
-    one command in a pipeline: already resolved to a path, with the arguments it was typed with and whatever redirection was written beside it
-
-``struct job { int  pgid;``
-    a job: everything one typed line started, held together by a group number so the terminal can talk to all of it at once
-
-``int  status;``
-    what the last of them exited with.
-
-``bool user_job_wait(struct job *j);``
-    wait for a job to end, or to be stopped, which is the other way waiting can finish.
-
-``void user_job_continue(struct job *j, bool foreground);``
-    let a stopped job go again, with or without the terminal.
-
-``bool user_job_alive(const struct job *j);``
-    is anything in it still going?
-
-``bool user_pipeline(const struct stage *stages, int count, const char *cwd, int uid, bool background, struct job *out, const char **error);``
-    run `count` commands with a pipe between each neighbouring pair, and wait for all of them.
-
-``bool user_wait(int pid, int *code);``
-    block until a pid has ended, then collect it.
-
-``bool user_run(const char *path, int argc, const char *const argv[], const char *cwd, int uid, bool background, bool announce, struct job *out, const char **error);``
-    the shell's way in: spawn, and unless told otherwise wait for it and report how it went

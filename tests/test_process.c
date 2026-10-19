@@ -477,15 +477,13 @@ int main(void)
               "and a pipeline joins the first one's");
 
         int ids[8];
-        size_t n = process_group_threads(a, ids, 8);
-        CHECK(n == 3, "all three threads are in the group");
+        size_t n = process_group_pids(a, ids, 8);
+        CHECK(n == 3, "all three are in the group");
 
-        process_interrupt_group(a);
+        process_signal_group(a, SIGINT);
         CHECK(process_interrupt_pending(a) && process_interrupt_pending(b)
               && process_interrupt_pending(c),
-              "and one interrupt reaches every one of them");
-
-        CHECK(process_group_alive(a), "the group is alive while any of it is");
+              "and one SIGINT to the group reaches every one of them");
 
         /*
          * a member that has ended is not one to stop, continue or
@@ -493,20 +491,16 @@ int main(void)
          * the reaper has been through would be asking about nothing
          */
         process_exited(b, 0, 0);
-        n = process_group_threads(a, ids, 8);
+        n = process_group_pids(a, ids, 8);
         CHECK(n == 2, "a process that ended is not in the group any more");
-        CHECK(process_group_alive(a), "though the group is still going");
 
         process_exited(a, 0, 0);
         process_exited(c, 0, 0);
-        CHECK(!process_group_alive(a),
-              "and is over once the last of it has gone");
-
-        n = process_group_threads(a, ids, 8);
-        CHECK(n == 0, "with nothing left to stop or continue");
+        n = process_group_pids(a, ids, 8);
+        CHECK(n == 0, "and the group is over once the last of it has gone");
 
         /* the array is filled to what it can hold and no further */
-        CHECK(process_group_threads(a, ids, 0) == 0,
+        CHECK(process_group_pids(a, ids, 0) == 0,
               "and asking for none gets none rather than a scribble");
 
         process_collect(a, NULL);

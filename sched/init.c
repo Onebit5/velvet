@@ -583,7 +583,7 @@ bool init_boot(void)
 
     const char *arr_argv[1] = { INIT_PROGRAM };
     const char *str_why = NULL;
-    int pid = user_spawn(INIT_PROGRAM, 1, arr_argv, "/", 0, 0, true, NULL,
+    int pid = user_spawn(INIT_PROGRAM, 1, arr_argv, "/", 0, 0, true,
                          &str_why);
     if (pid != INIT_PID) {
         kprintf("init: %s would not start: %s\n", INIT_PROGRAM,

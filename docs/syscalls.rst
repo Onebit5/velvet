@@ -128,7 +128,7 @@ make descriptor to another handle on whatever from is, closing what to held firs
 
 put a process in a group: the caller or a child of its own, into a group named after it or one that already has a member of the same user. 0 for the pid means the caller and 0 for the group means the pid's own. sigsend with minus a pgid signals the whole group
 
-the terminal. ttyattach, root's alone, moves the caller onto console n and makes it the program that console belongs to, with its group in front; its children are born on that console. tcsetpgrp puts a group in front of the caller's console, which the console's program may do, and so may a member of the group in front, giving it away. tcgetpgrp says which group is in front, 0 while it is the kernel's own shell. ctrl+c and ctrl+z on a program's console are SIGINT and SIGTSTP to the group in front
+the terminal. ttyattach, root's alone, moves the caller onto console n and makes it the program that console belongs to, with its group in front; its children are born on that console. tcsetpgrp puts a group in front of the caller's console, which the console's program may do, and so may a member of the group in front, giving it away. tcgetpgrp says which group is in front, 0 while no program is. ctrl+c and ctrl+z are SIGINT and SIGTSTP to the group in front
 
 run as uid from now on. root may become anybody, which is how a login becomes the user it let in, and anyone else only who they already are, so nothing that is not root ever becomes root this way
 

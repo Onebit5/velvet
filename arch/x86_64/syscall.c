@@ -1621,7 +1621,7 @@ static int64_t sys_spawn(uint64_t ptr, uint64_t len)
     const char *why = NULL;
     const char *argv[1] = { path };
     int pid = user_spawn(path, 1, argv, process_cwd(caller_pid()), caller_pid(),
-                         process_uid(caller_pid()), false, NULL, &why);
+                         process_uid(caller_pid()), false, &why);
     if (pid == 0) {
         return -1;
     }

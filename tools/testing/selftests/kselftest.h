@@ -210,7 +210,7 @@ static inline int setpgid(int i_pid, int i_pgid)
     return (int)ksft_syscall(SYS_SETPGID, i_pid, i_pgid, 0);
 }
 
-/* the group in front of the caller's console, 0 for the kernel's shell */
+/* the group in front of the caller's console, 0 while no program is */
 static inline int tcgetpgrp(void)
 {
     return (int)ksft_syscall(SYS_TCGETPGRP, 0, 0, 0);

@@ -170,12 +170,6 @@ void process_inherit(int i_child, int i_parent);
 void process_set_uid(int i_pid, int i_uid);
 void process_set_pgid(int pid, int pgid);
 
-size_t process_group_threads(int pgid, int *ids, size_t max);
-
-void process_interrupt_group(int pgid);
-
-bool process_group_alive(int pgid);
-
 /* the live members of a group, by pid: how many, up to `sz_max` */
 size_t process_group_pids(int i_pgid, int *p_pids, size_t sz_max);
 
