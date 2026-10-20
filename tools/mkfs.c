@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * fs/mkfs.c
+ * tools/mkfs.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
  * ext2, laid out from nothing.
  */

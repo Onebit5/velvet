@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * fs/mkfs.h
+ * tools/mkfs.h
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
  * making a filesystem, rather than reading one.
  */
 
-/* the design notes for mkfs.h are in docs/subsystems/mm.rst */
+/* the design notes for mkfs.h are in docs/subsystems/tools.rst */
 
-#ifndef FS_MKFS_H
-#define FS_MKFS_H
+#ifndef TOOLS_MKFS_H
+#define TOOLS_MKFS_H
 
 #include <stdint.h>
 #include <stddef.h>

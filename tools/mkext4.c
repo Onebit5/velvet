@@ -14,7 +14,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "fs/mkfs.h"
+#include "tools/mkfs.h"
 #include <velvet/ext4.h>
 
 #define SECTOR 512

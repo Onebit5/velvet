@@ -38,7 +38,6 @@
 #include <velvet/hash.h>
 #include <velvet/disk.h>
 #include <velvet/fsck.h>
-#include <velvet/install.h>
 #include <velvet/netif.h>
 #include <velvet/ether.h>
 #include <velvet/ip.h>
@@ -1081,7 +1080,7 @@ static void cmd_src(int argc, char **argv)
         kprintf("writing %s to %s\n", from, to);
 
         const char *error = NULL;
-        size_t files = install_copy_tree(from, to, src_report, &error);
+        size_t files = source_unpack(from, to, src_report, &error);
         if (error != NULL) {
             console_set_colors(COLOR_WARN, 0x101018);
             kprintf("stopped after %zu files: %s\n", files, error);
@@ -1130,231 +1129,6 @@ static void cmd_src(int argc, char **argv)
             "kernel was built\nfrom. `src unpack` writes a copy "
             "somewhere you can change it\n");
 }
-
-/* both of the ways this machine stops are asked of init now. */
-
-/* read_line is defined with the rest of the line editing, a long way below this. */
-static void read_line(char *buf, size_t max);
-
-/* the installer talks to two drives by number. */
-struct install_context {
-    unsigned src, dst;
-};
-
-static bool install_src_read(void *ctx, uint64_t lba, uint32_t count,
-                             void *buf)
-{
-    const struct install_context *c = ctx;
-    return disk_raw_read(c->src, lba, count, buf);
-}
-
-static bool install_dst_read(void *ctx, uint64_t lba, uint32_t count,
-                             void *buf)
-{
-    const struct install_context *c = ctx;
-    return disk_raw_read(c->dst, lba, count, buf);
-}
-
-static bool install_dst_write(void *ctx, uint64_t lba, uint32_t count,
-                              const void *buf)
-{
-    const struct install_context *c = ctx;
-    return disk_raw_write(c->dst, lba, count, buf);
-}
-
-static void install_say(void *ctx, const char *what)
-{
-    (void)ctx;
-    kprintf("  %s\n", what);
-}
-
-/* every file, which on a ramdisk this size is a wall of text. */
-static void install_report(const char *what)
-{
-    kprintf("  %s\n", what);
-}
-
-/*
- * the ramdisk has been kept on the argument that it is what
- * makes the machine work when the disk does not. that makes this machine
- * a live medium by default, and there was never a way to say so.
- *
- * a drive is carrying the system if it has philemon's table at sector
- * 32. the machine is *installed* if that drive is also the one the root
- * filesystem is mounted from, one disk that both starts the machine
- * and holds it. anything else is live: running from something that
- * carries a system but is not the system's home
- */
-
-static void cmd_install(int argc, char **argv)
-{
-    if (disk_drive_count() == 0) {
-        kprintf("there are no drives here to install onto\n");
-        return;
-    }
-
-    /* which drive carries this system. */
-    int source = disk_system_drive();
-    if (source < 0) {
-        kprintf("this machine is not running from a boot medium, so "
-                "there is nothing to copy\n");
-        return;
-    }
-
-    if (argc < 2) {
-        kprintf("install <drive>, copy this system onto a drive and make "
-                "it bootable\n\n");
-        kprintf("%-6s %-22s %10s   %s\n", "drive", "model", "MiB", "");
-        for (size_t i = 0; i < disk_drive_count(); i++) {
-            uint64_t sectors = disk_drive_sectors((unsigned)i);
-            const char *note = "";
-            if ((int)i == source) {
-                note = "carries this system, the one you booted";
-            } else if ((int)i == disk_mounted_drive()) {
-                note = "currently mounted at /";
-            }
-            kprintf("%-6zu %-22s %10lu   %s\n", i, disk_drive_model((unsigned)i),
-                    sectors / 2048, note);
-        }
-        kprintf("\neverything on the drive you name is destroyed.\n");
-        return;
-    }
-
-    /*
-     * two partitions unless told otherwise: the system on one and
-     * somewhere to work on the other, so that filling the second does
-     * not stop the machine. `install <n> whole` gives the older
-     * arrangement, one filesystem over the whole drive
-     */
-    bool split = true;
-    for (int i = 2; i < argc; i++) {
-        if (strcmp(argv[i], "whole") == 0) {
-            split = false;
-        }
-    }
-
-    size_t target = 0;
-    for (const char *p = argv[1]; *p != '\0'; p++) {
-        if (*p < '0' || *p > '9') {
-            kprintf("'%s' is not a drive number. `install` lists them\n",
-                    argv[1]);
-            return;
-        }
-        target = target * 10 + (size_t)(*p - '0');
-    }
-    if (target >= disk_drive_count()) {
-        kprintf("there is no drive %zu\n", target);
-        return;
-    }
-    if ((int)target == source) {
-        kprintf("that is the drive this system is running from. installing "
-                "onto it would overwrite what is being read\n");
-        return;
-    }
-
-    /* the cache is bound to the mounted drive and the installer talks to another one. */
-    if (disk_dirty() && !disk_sync()) {
-        kprintf("could not flush what is still in memory. not starting\n");
-        return;
-    }
-
-    console_set_colors(COLOR_WARN, 0x101018);
-    kprintf("everything on drive %zu is about to be destroyed.\n", target);
-    console_set_colors(COLOR_TEXT, 0x101018);
-    kprintf("type the drive number again to go ahead: ");
-
-    char confirm[8];
-    read_line(confirm, sizeof confirm);
-    if (strcmp(confirm, argv[1]) != 0) {
-        kprintf("nothing was written\n");
-        return;
-    }
-
-    struct install_context ctx = { (unsigned)source, (unsigned)target };
-
-    struct install_io io = {
-        .src_read    = install_src_read,
-        .dst_read    = install_dst_read,
-        .dst_write   = install_dst_write,
-        .ctx         = &ctx,
-        .dst_sectors = disk_drive_sectors((unsigned)target),
-        .say         = install_say,
-    };
-
-    struct install_result r;
-    const char *error = NULL;
-    if (!install_system(&io, (uint32_t)(pit_uptime_ms() / 1000), split,
-                        &r, &error)) {
-        console_set_colors(COLOR_WARN, 0x101018);
-        kprintf("install failed: %s\n", error);
-        console_set_colors(COLOR_TEXT, 0x101018);
-        return;
-    }
-
-    kprintf("  system %lu sectors, partition at %lu, %lu MiB of ext4\n",
-            r.system_sectors, r.part_first_lba, r.part_sectors / 2048);
-    if (r.work_sectors > 0) {
-        kprintf("  and %lu MiB more at %lu, which will be %s, so that "
-                "filling it\n", r.work_sectors / 2048, r.work_first_lba,
-                DISK_WORK_AT);
-        kprintf("  does not leave the system with nowhere to write\n");
-    } else if (split) {
-        kprintf("  one partition: the drive is not big enough for a second "
-                "one worth\n  having, and two filesystems too small to "
-                "hold anything is worse\n  than one that is merely "
-                "small\n");
-    }
-
-    /*
-     * and now the files. the new filesystem has to be mounted to be
-     * written to, which means letting go of the one at /, so the
-     * ramdisk at /boot is the source, since it is memory and does not
-     * care which disk is selected
-     */
-    kprintf("mounting the new filesystem\n");
-    if (!disk_mount()) {
-        kprintf("the new disk did not come back as mountable. "
-                "the system is on it but there is nothing in the filesystem\n");
-        return;
-    }
-
-    size_t files = install_copy_tree(VFS_BOOT, "/", install_report, &error);
-    if (error != NULL) {
-        console_set_colors(COLOR_WARN, 0x101018);
-        kprintf("copying stopped after %zu files: %s\n", files, error);
-        console_set_colors(COLOR_TEXT, 0x101018);
-        return;
-    }
-
-    /* and the source, expanded into /src. */
-    if (source_present()) {
-        kprintf("writing the source out to /src\n");
-        size_t src_files = install_copy_tree(VFS_SRC, "/src", install_report,
-                                             &error);
-        if (error != NULL) {
-            console_set_colors(COLOR_WARN, 0x101018);
-            kprintf("the system is installed, but the source stopped after "
-                    "%zu files: %s\n", src_files, error);
-            console_set_colors(COLOR_TEXT, 0x101018);
-            return;
-        }
-        files += src_files;
-    }
-
-    if (!disk_sync()) {
-        kprintf("the drive would not flush. what was written may not be "
-                "all of it\n");
-        return;
-    }
-
-    console_set_colors(COLOR_PROMPT, 0x101018);
-    kprintf("\n%zu files copied. drive %zu will boot on its own now.\n",
-            files, target);
-    console_set_colors(COLOR_TEXT, 0x101018);
-}
-
-
-
 
 static void cmd_ifconfig(int argc, char **argv)
 {
@@ -2427,7 +2201,6 @@ static const struct command commands[] = {
     { "crash",  "tempt fate with a wild pointer",       cmd_crash, false, NULL },
     { "smash",  "run off the end of the stack on purpose", cmd_stackoverflow, false, NULL },
     { "init",   "what init looks after, and how it fares", cmd_init, false, "init [start <name>]" },
-    { "install","copy this system onto a drive and make it boot", cmd_install, false, "install [drive] [whole]" },
     { "src",    "the source this was built from, still on the medium", cmd_src, false, "src [verify|unpack [where [what]]]" },
     { "ifconfig","the card, and the address on it",     cmd_ifconfig, false, "ifconfig [address [netmask [router]]]" },
     { "tcp",    "connections, and what state they are in", cmd_tcp, false, "tcp [connect <address> <port>|listen <port>|send <n> <text>|read <n>|close <n>]" },
@@ -3131,35 +2904,6 @@ static void complete(char *line, size_t *len, size_t *pos)
         kprintf("%c", line[i]);
     }
     move_left(*len - *pos);
-}
-
-/* read a line for the kernel's own prompts. */
-static void read_line(char *buf, size_t max)
-{
-    size_t len = 0;
-    for (;;) {
-        int c = input_getchar_blocking();
-
-        if (c == '\n') {
-            kprintf("\n");
-            break;
-        }
-        if (c == '\b') {
-            if (len > 0) {
-                len--;
-                kprintf("\b \b");
-            }
-            continue;
-        }
-        if (c < ' ' || c > '~') {
-            continue;
-        }
-        if (len + 1 < max) {
-            buf[len++] = (char)c;
-            kprintf("%c", (char)c);
-        }
-    }
-    buf[len] = '\0';
 }
 
 static void session_loop(void);

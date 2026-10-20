@@ -27,7 +27,7 @@ at a glance
                        rtc, pci, ahci, e1000, partitions, the font
     net/               ethernet, arp, ip, icmp, udp, tcp, sockets
     fs/                vfs, disk, bcache, ext4, fat32, jbd2, path, pipe,
-                       ramdisk, source, mkfs, fsck, install
+                       ramdisk, source, fsck
     lib/               kprintf, panic, string, hash, epoch, ksyms,
                        backtrace
     mm/                pmm, buddy, slab, kmalloc, vmm, addrspace, pressure

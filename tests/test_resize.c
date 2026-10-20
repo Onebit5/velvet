@@ -22,7 +22,7 @@ void panic(const char *fmt, ...)
 }
 
 #include <velvet/ext4.h>
-#include "fs/mkfs.h"
+#include "tools/mkfs.h"
 #include <velvet/fsck.h>
 
 static int failures = 0;

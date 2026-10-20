@@ -27,7 +27,6 @@
 #include <velvet/ramdisk.h>
 #include <velvet/source.h>
 #include <velvet/disk.h>
-#include <velvet/install.h>
 #include <velvet/vfs.h>
 #include <velvet/init.h>
 #include <velvet/sched.h>
@@ -211,8 +210,8 @@ void kmain(const struct ph_handoff *handoff)
             kprintf("mode       : installed, drive %d both starts this "
                     "machine and holds it\n", home);
         } else {
-            kprintf("mode       : live, from drive %d. `install` copies "
-                    "this system onto a drive of its own\n", home);
+            kprintf("mode       : live, from drive %d, which carries "
+                    "this system without being its home\n", home);
         }
     }
 

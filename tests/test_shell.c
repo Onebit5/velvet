@@ -258,8 +258,7 @@ bool disk_ready(size_t w)
     return w == DISK_ROOT;
 }
 
-/* the installer, which the shell drives and this test does not. */
-#include <velvet/install.h>
+/* the drives, as what the shell links reads them. */
 size_t disk_drive_count(void)
 {
     return 1;
@@ -294,15 +293,9 @@ bool disk_raw_write(unsigned drive, uint64_t lba, uint32_t count,
     return true;
 }
 
-/*
- * the real install.c is linked in, so what is exercised here is the
- * actual sequence and not a description of it. only the half that needs
- * a mounted filesystem is stubbed, because that half is #ifdef'd out of
- * a host build anyway
- */
-size_t install_copy_tree(const char *from, const char *to,
-                         void (*report)(const char *what),
-                         const char **error)
+/* the half of source.c that needs a mounted filesystem, out of a host build. */
+size_t source_unpack(const char *from, const char *to,
+                     void (*report)(const char *what), const char **error)
 {
     (void)from; (void)to; (void)report; (void)error;
     return 0;
@@ -1557,25 +1550,10 @@ int main(void)
     CHECK(strstr(out, "not up") != NULL,
           "and the wire being down is checked before the address is");
 
-    /*
-     * the drives this test offers carry nothing, so `install` must say
-     * there is no system to copy rather than copying zeroes onto a disk
-     * and reporting success. that is the branch a machine booted some
-     * other way takes, and it is the one worth having covered here,
-     * the sequence itself has its own suite
-     */
-
+    /* copying a system onto a drive is a program's work now. */
     run("install");
-    CHECK(strstr(out, "not running from a boot medium") != NULL,
-          "`install` with nothing to copy says so rather than trying");
-
-    run("install 0");
-    CHECK(strstr(out, "not running from a boot medium") != NULL,
-          "and naming a drive does not change that");
-
-    run("install nonsense");
-    CHECK(strstr(out, "not running from a boot medium") != NULL,
-          "nor does naming something that is not a drive");
+    CHECK(me()->status == 127,
+          "`install` is not one of the monitor's commands any more");
 
 
 

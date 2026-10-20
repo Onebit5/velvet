@@ -15,8 +15,8 @@
 #define GD_SIZE_BASE    32
 
 /*
- * the same reason mkfs.c does it this way: the format is little endian
- * whatever the machine is, and these read out of the middle of a block
+ * the same reason tools/mkfs.c does it this way: the format is little
+ * endian whatever the machine is, and these read out of the middle of a block
  * buffer at whatever offset the layout says, so there is no alignment
  * to rely on either
  */

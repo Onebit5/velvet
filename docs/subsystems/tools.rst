@@ -86,8 +86,8 @@ the image builders
    ``mkfs.vfat`` on this machine, so this writes the filesystem by hand.
 
 ``mkext4.py``
-   the same for ext2/ext4. note that the machine can now also format ext4
-   itself (``fs/mkfs.c``), and the two are checked against each other.
+   the same for ext2/ext4. ``mkext4.c`` formats with ``mkfs.c`` instead,
+   and the two are checked against each other.
 
 ``mkdisk.py``
    wrap filesystem images in a partition table, because a disk is not a
@@ -123,9 +123,21 @@ can go, because ``toolcheck.py`` needs something to hold each C tool
 against.
 
 ``mkext4.c`` and ``mkfat.c`` are drivers rather than rewrites: they point
-``fs/mkfs.c``, ``fs/ext4.c`` and ``fs/fat32.c`` at a host file and a host
+``mkfs.c``, ``fs/ext4.c`` and ``fs/fat32.c`` at a host file and a host
 directory, so the image a disk is built from is written by the same code the
 machine runs. ``fsck.c`` is the same shape for ``fs/fsck.c``.
+
+``mkfs.c`` is mke2fs in about the smallest form that produces something
+``fs/ext4.c`` will mount and ``readext4.py``, written from the layout rather
+than from either of them, agrees is a filesystem. it makes an *empty* one: a
+root directory and nothing in it, no lost+found, no reserved blocks, no
+sparse superblocks, no directory index. the files go in afterwards through
+the ordinary ext4 write path, because a formatter that also laid out files
+would be a second implementation of the half that already works. it writes
+through a function pointer, the same shape ``drivers/part.c`` uses, so it is
+tested against a buffer as easily as pointed at a file. it is here and not
+in ``fs/`` because the kernel never makes a filesystem: a disk arrives
+formatted, by this or by a program.
 
 ``fuzz_parsers.c`` is the one that is not a tool for building anything: it
 feeds random and mutated input to the parsers that read from the wire or

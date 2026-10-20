@@ -504,7 +504,7 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/shell $(T)/pipe $(T)/bcache \
              $(T)/ext4 $(T)/part $(T)/console \
              $(T)/mouse $(T)/init $(T)/mkfs \
-             $(T)/install $(T)/net \
+             $(T)/net \
              $(T)/tcp \
              $(T)/signal $(T)/ansi \
              $(T)/termios \
@@ -578,7 +578,7 @@ $(T)/ext4:     tests/test_ext4.c     fs/ext4.c fs/jbd2.c \
 # the formatter, checked against the *driver* rather than against itself.
 # a formatter and a reader by one author can agree on something wrong and
 # both be happy, which is exactly what happened to mkfat.py in 0.1.10
-$(T)/mkfs:     tests/test_mkfs.c     fs/mkfs.c \
+$(T)/mkfs:     tests/test_mkfs.c     tools/mkfs.c \
                fs/ext4.c fs/jbd2.c \
                lib/string.c
 # almost all of a network stack is arithmetic over a byte buffer, so
@@ -595,10 +595,6 @@ $(T)/net:      tests/test_net.c      net/net.c \
                net/ether.c net/arp.c \
                net/ip.c net/icmp.c \
                net/udp.c net/socket.c \
-               lib/string.c
-$(T)/install:  tests/test_install.c  fs/install.c \
-               fs/mkfs.c drivers/part.c lib/hash.c \
-               fs/ext4.c fs/jbd2.c \
                lib/string.c
 $(T)/part:     tests/test_part.c     drivers/part.c \
                lib/string.c lib/hash.c
@@ -633,7 +629,7 @@ $(T)/mkboot:   tools/mkboot.c
 # filesystem and ext4.c already writes files, and both are tested. what
 # was missing was a way to point them at a host file and a host
 # directory
-$(T)/mkext4:   tools/mkext4.c        fs/mkfs.c \
+$(T)/mkext4:   tools/mkext4.c        tools/mkfs.c \
                fs/ext4.c fs/jbd2.c \
                lib/string.c
 # the one with code of its own in it: fat32.c mounts, creates and
@@ -652,7 +648,7 @@ $(T)/fsck:     tools/fsck.c          fs/fsck.c \
 # has an answer
 $(T)/crash:    tests/test_crash.c    fs/ext4.c \
                fs/jbd2.c \
-               fs/mkfs.c fs/fsck.c \
+               tools/mkfs.c fs/fsck.c \
                lib/string.c
 # growing a filesystem onto a disk bigger than the one it was made for.
 # the formatter, the driver and the checker again, and for the same
@@ -660,7 +656,7 @@ $(T)/crash:    tests/test_crash.c    fs/ext4.c \
 # which is not a question the thing doing the resizing may answer
 $(T)/resize:   tests/test_resize.c   fs/ext4.c \
                fs/jbd2.c \
-               fs/mkfs.c fs/fsck.c \
+               tools/mkfs.c fs/fsck.c \
                lib/string.c
 
 # the framebuffer is an array here, so what the screen shows can be read
@@ -729,7 +725,6 @@ $(T)/shell:    tests/test_shell.c    lib/string.c \
                fs/source.c \
                sched/spinlock.c fs/path.c \
                lib/env.c sched/init.c \
-               fs/install.c fs/mkfs.c \
                drivers/part.c lib/hash.c fs/fsck.c \
                net/net.c net/arp.c \
                net/tcp.c \
@@ -743,7 +738,6 @@ $(T)/shell:    SRCS = tests/test_shell.c lib/string.c \
                       fs/source.c \
                       sched/spinlock.c fs/path.c \
                       lib/env.c sched/init.c \
-                      fs/install.c fs/mkfs.c \
                       drivers/part.c lib/hash.c fs/fsck.c \
                       net/net.c net/arp.c \
                       net/tcp.c \

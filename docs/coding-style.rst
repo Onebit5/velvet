@@ -80,8 +80,8 @@ the tree mirrors itself by subsystem
 
 include guards
    the file's path with ``include/`` left out, in upper snake case:
-   ``include/velvet/process.h`` is ``VELVET_PROCESS_H`` and ``fs/mkfs.h``
-   is ``FS_MKFS_H``. no ``#pragma once``.
+   ``include/velvet/process.h`` is ``VELVET_PROCESS_H`` and ``fs/ustar.h``
+   is ``FS_USTAR_H``. no ``#pragma once``.
 
 includes
    standard headers first, then project headers, each block alphabetical.
@@ -97,12 +97,12 @@ includes
      ``<uapi/velvet/syscall.h>``. a uapi header includes nothing of the
      kernel's, since a program compiles against it too.
    - read only by its own subsystem: beside the code, included as
-     ``"mkfs.h"``.
+     ``"ustar.h"``.
 
    there is no ``-I.``. ``"mm/pmm.h"`` and ``"../mm/pmm.h"`` both fail to
    build, so a header in the wrong place is an error rather than a habit.
    the host suites and the tools may reach a private header as
-   ``"fs/mkfs.h"``; they are not the kernel, and testing internals is
+   ``"fs/ustar.h"``; they are not the kernel, and testing internals is
    their job.
 
 file headers

@@ -11,7 +11,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "fs/mkfs.h"
+#include "tools/mkfs.h"
 #include <velvet/ext4.h>
 
 static int failures = 0;

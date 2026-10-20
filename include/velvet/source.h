@@ -64,6 +64,15 @@ int64_t source_read_at(uint64_t at, uint64_t size, uint64_t offset,
 
 bool source_digest(uint8_t out[20]);
 
+/*
+ * write every file under `from`, a directory of the source as /boot/src
+ * shows it, out under `to` as files somebody can edit, making the
+ * directories on the way. how many were written, and *error set if it
+ * stopped before the end
+ */
+size_t source_unpack(const char *from, const char *to,
+                     void (*report)(const char *what), const char **error);
+
 extern const char source_stamp[41];
 extern const uint64_t source_stamp_bytes;
 

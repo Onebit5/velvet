@@ -74,9 +74,9 @@ the failing case. all of them:
    checksums, headers, sockets and connections, checked against packets
    captured from the rfcs rather than invented here.
 
-``shell``, ``tty``, ``install``, ``philemon``, ``hash``
-   the shell's parsing and dispatch, the terminal discipline, the
-   installer's ordering, the loader's elf parsing, and the two checksums.
+``shell``, ``tty``, ``philemon``, ``hash``
+   the shell's parsing and dispatch, the terminal discipline, the loader's
+   elf parsing, and the two checksums.
 
 the ``shell`` suite mounts ``bin/ramdisk.tar``, the medium the build just
 made, and completes names against what is really on it.

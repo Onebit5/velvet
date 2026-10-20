@@ -308,23 +308,14 @@ position of its own, the same rule fork has always followed. ``lseek``
 moves a file's position, within the file and no further, and is how a
 shell puts ``>>`` on the end of what is there rather than over its start.
 
-making a filesystem
--------------------
+growing a filesystem
+--------------------
 
-``mkfs.c`` is mke2fs, in the kernel, in about the smallest form that
-produces something ``ext4.c`` will mount and ``tools/readext4.py``. written
-from the layout rather than from either of them. agrees is a filesystem.
-
-it makes an *empty* filesystem: a root directory and nothing in it. no
-lost+found, no reserved blocks, no sparse superblocks, no directory index.
-that is the split that keeps it small: copying a system onto the new
-filesystem is done afterwards through the ordinary ext4 write path, because
-a formatter that also knew how to lay out files would be a second
-implementation of the half that already works, and the two would drift.
-
-the descriptor table is reserved up front (``s_reserved_gdt_blocks``) so
-that growing the filesystem never has to move every bitmap and inode table
-on the disk. see `resize` in the testing page.
+the kernel does not make filesystems; ``tools/mkfs.c`` does, on the host,
+and a program would on the machine. what the kernel holds a formatter to is
+that the descriptor table is reserved up front (``s_reserved_gdt_blocks``),
+so that growing the filesystem never has to move every bitmap and inode
+table on the disk. see `resize` in the testing page.
 
 a program asks for a resize with the ``resize`` call, root's alone, naming
 the filesystem by where it is mounted and the size in its own blocks, 0
@@ -367,11 +358,12 @@ the design point is that it is **reachable, not resident**. the obvious way
 to ship a source tree is to put it in the ramdisk, which is already a tar and
 already read, but the ramdisk is loaded whole into memory at boot and never
 freed, so that spends three and a half megabytes of *every* boot on files
-read once at install time. three megabytes of nothing in ram for the life of
+read once, when somebody unpacks them. three megabytes of nothing in ram for the life of
 the machine is what the other arrangement costs.
 
-``/boot/src`` is where it actually is. the installer expands it to ``/src``
-on the disk it writes, and those two are deliberately different places: one
+``/boot/src`` is where it actually is. ``src unpack`` writes it out as
+files wherever it is told, ``/src`` by habit, and those two are deliberately
+different places: one
 is the tree this kernel was built from and cannot be edited, the other is
 yours, and ``diff`` between them is a sentence about what you have changed.
 
@@ -387,23 +379,6 @@ first sector and the build's stamp, in a ``struct user_source``, and with
 ``SOURCE_HASH`` the medium's own digest beside it, so the comparison
 ``src verify`` makes is one a program can make. both digests are hex,
 since the stamp already is.
-
-the installer
--------------
-
-``install.c`` copies the machine onto a disk it can then boot from on its
-own. the boot medium is not a filesystem; it is philemon in the first
-sectors, a table at sector 32, and then the kernel and ramdisk as raw runs
-of sectors, so installing is: copy that system area verbatim, put a
-partition table after it, and format the partition. the copy is verbatim on
-purpose; reading the table and rebuilding the image would be a second
-implementation of ``tools/mkboot.py``.
-
-the one thing that makes it possible: an mbr partition table lives at offset
-446 of the first sector, which is the same sector the bios loads and jumps
-to, and philemon's first stage ends at byte 365. that is not luck, it is the
-constraint every bootloader that has ever shared a disk with a partition
-table works under.
 
 elf
 ---
@@ -565,7 +540,7 @@ file says which of them it means.
     and the last one: everything out, then the journal closed behind it.
 
 ``size_t   disk_drive_count(void);``
-    everything else here goes through the mounted filesystem, which is the right shape for every question except one: installing this system onto a *different* drive, where there is no filesystem yet and the bytes have to land at particular sector numbers. these bypass the block cache entirely, and that is deliberate rather than lazy. the cache holds absolute sector numbers and is therefore bound to whichever drive is selected, a cached block written back after the drive changed would land on the wrong disk, which is the worst failure this kernel could have. the drive is selected, the transfer happens, and the mounted drive is selected again before returning, so nothing above notices
+    everything else here goes through the mounted filesystem, which is the right shape for every question except one: writing a *different* drive, where there is no filesystem yet and the bytes have to land at particular sector numbers. these bypass the block cache entirely, and that is deliberate rather than lazy. the cache holds absolute sector numbers and is therefore bound to whichever drive is selected, a cached block written back after the drive changed would land on the wrong disk, which is the worst failure this kernel could have. the drive is selected, the transfer happens, and the mounted drive is selected again before returning, so nothing above notices
 
 ``int disk_mounted_drive(void);``
     which drive the mounted filesystem is on, or -1 if nothing is mounted.
@@ -830,37 +805,6 @@ would have. looking is anyone's; mending, with ``FSCK_MEND``, is root's,
 since it writes the disk.
 
 
-the install interface
------------------------
-
-copying this machine onto a disk it can then boot from on its own: the
-system area verbatim, a partition table after it, and a filesystem on the
-partition. what it needs from outside is function pointers for reading,
-writing and saying what it is doing, which is what lets the same code be run
-against a disk, a file or a fixture.
-
-``bool (*src_read)(void *ctx, uint64_t lba, uint32_t count, void *buf);``
-    the medium being installed *from*
-
-``bool (*dst_read)(void *ctx, uint64_t lba, uint32_t count, void *buf);``
-    and the one being installed *to*.
-
-``void (*say)(void *ctx, const char *what);``
-    said out loud as it goes.
-
-``struct install_result { uint64_t system_sectors;    /* philemon, the table, the kernel, the ramdisk */``
-    what it did, for the caller to report and the test to check
-
-``uint64_t work_first_lba;``
-    and the second partition, when the disk was big enough for one to be worth having.
-
-``bool install_system(const struct install_io *io, uint32_t now, bool split, struct install_result *out, const char **error);``
-    copy the system, partition what is left, and format it.
-
-``uint64_t install_system_end(bool (*read)(void *, uint64_t, uint32_t, void *),``
-    where the system area ends on a medium, by reading its table.
-
-
 the jbd2 interface
 --------------------
 
@@ -904,29 +848,6 @@ before the next one begins.
 
 ``bool jbd_peek(struct jbd *j, uint32_t block, void *into);``
     has this block been written in the transaction that is open?
-
-
-the mkfs interface
---------------------
-
-making a filesystem rather than reading one, in the kernel, in the smallest
-form that fs/ext4.c will mount and tools/readext4.py agrees is a filesystem.
-
-it makes an *empty* one. copying a system onto it afterwards goes through the
-ordinary write path, and a formatter that also laid out files would be a
-second implementation of the half that already works.
-
-``typedef bool (*mkfs_io)(void *ctx, uint64_t lba, uint32_t count,``
-    the same shape part.c uses, for the same reason: it makes this testable against a buffer instead of a disk
-
-``struct mkfs_result { uint64_t blocks;            /* 1 KiB each */``
-    what the geometry came out as.
-
-``bool mkfs_ext4(mkfs_io write, void *ctx, uint64_t sectors, const char *label, uint32_t now, struct mkfs_result *out, const char **error);``
-    format `sectors` 512-byte sectors starting at lba 0 of whatever `write` writes to.
-
-``#define MKFS_MIN_SECTORS 512``
-    the smallest disk this can format, in sectors.
 
 
 the path interface
@@ -1029,7 +950,7 @@ the source interface
 the source tree this kernel was built from, out on the boot medium and read
 a sector at a time by whoever asks. it is *reachable* rather than resident:
 the ramdisk is loaded whole and never freed, and the source is read on the
-day you install the machine and rarely again.
+day somebody unpacks it and rarely again.
 
 ``#define SOURCE_NAME_MAX 128``
     the source this machine was built from, still on the medium it booted from.

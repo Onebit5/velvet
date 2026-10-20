@@ -370,6 +370,8 @@ bool source_digest(uint8_t out[20])
 
 #include <velvet/disk.h>
 #include <velvet/kprintf.h>
+#include <velvet/vfs.h>
+#include <velvet/path.h>
 
 /*
  * take whichever drive philemon booted from, which is the one his table
@@ -390,6 +392,112 @@ void source_init(void)
     kprintf("source     : %zu files, %lu KiB at lba %lu, read from the "
             "medium and never loaded\n",
             source_count(), source_bytes() / 1024, source_lba());
+}
+
+/* one buffer, reused down the recursion. */
+static uint8_t copy_buf[4096];
+
+static void join(char *out, size_t max, const char *dir, const char *name)
+{
+    size_t n = 0;
+    while (dir[n] != '\0' && n < max - 2) {
+        out[n] = dir[n];
+        n++;
+    }
+    if (n > 0 && out[n - 1] != '/') {
+        out[n++] = '/';
+    }
+    for (size_t i = 0; name[i] != '\0' && n < max - 1; i++) {
+        out[n++] = name[i];
+    }
+    out[n] = '\0';
+}
+
+static bool copy_file(const char *from, const char *to, const char **error)
+{
+    struct vfs_file in;
+    if (!vfs_open(from, &in)) {
+        *error = "could not read a file that was there a moment ago";
+        return false;
+    }
+
+    struct vfs_file out;
+    if (!vfs_create(to, &out)) {
+        *error = "could not create a file where it was going";
+        return false;
+    }
+
+    for (uint64_t at = 0; at < in.size; ) {
+        uint64_t want = in.size - at;
+        if (want > sizeof copy_buf) {
+            want = sizeof copy_buf;
+        }
+        int64_t got = vfs_read(&in, at, copy_buf, want);
+        if (got <= 0) {
+            *error = "a read stopped short part way through a file";
+            return false;
+        }
+        int64_t put = vfs_write(&out, at, copy_buf, (uint64_t)got);
+        if (put != got) {
+            *error = "a write stopped short, the disk may be full";
+            return false;
+        }
+        at += (uint64_t)got;
+    }
+    return true;
+}
+
+/* make sure every directory in a path exists, up to but not including the last component. */
+static bool make_parents(char *path, const char **error)
+{
+    for (size_t i = 1; path[i] != '\0'; i++) {
+        if (path[i] != '/') {
+            continue;
+        }
+        path[i] = '\0';
+
+        struct vfs_file existing;
+        bool there = vfs_open(path, &existing);
+        if (!there && !vfs_mkdir(path)) {
+            *error = "could not make a directory where it was going";
+            path[i] = '/';
+            return false;
+        }
+        path[i] = '/';
+    }
+    return true;
+}
+
+size_t source_unpack(const char *from, const char *to,
+                     void (*report)(const char *what), const char **error)
+{
+    size_t copied = 0;
+
+    for (size_t i = 0; ; i++) {
+        struct vfs_file e;
+        if (!vfs_readdir(from, i, &e)) {
+            break;
+        }
+        if (e.is_dir) {
+            continue;       /* the archive lists every file under it anyway */
+        }
+
+        char src_path[PATH_MAX], dst_path[PATH_MAX];
+        join(src_path, sizeof src_path, from, e.name);
+        join(dst_path, sizeof dst_path, to, e.name);
+
+        if (!make_parents(dst_path, error)) {
+            return copied;
+        }
+        if (!copy_file(src_path, dst_path, error)) {
+            return copied;
+        }
+        if (report != NULL) {
+            report(dst_path);
+        }
+        copied++;
+    }
+    return copied;
 }
 
 #endif
