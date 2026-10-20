@@ -329,7 +329,7 @@ const uint64_t source_stamp_bytes = 0;
 /* the card, as the shell sees it. */
 static bool card_there, card_up, card_interrupts;
 static uint8_t card_irq;
-static ipv4 dhcp_router;
+static ipv4 card_router;
 static uint64_t card_ints, card_not_ours;
 
 bool e1000_present(void)
@@ -369,22 +369,9 @@ bool net_is_up(void)
     return card_up;
 }
 
-/* the client the shell reads. */
-static struct dhcp shell_dhcp;
-const struct dhcp *net_dhcp(void)
-{
-    return &shell_dhcp;
-}
-void net_dhcp_start(void)
-{
-}
-void net_dhcp_stop(void)
-{
-    shell_dhcp.state = DHCP_OFF;
-}
 ipv4 net_router(void)
 {
-    return dhcp_router;
+    return card_router;
 }
 
 /* the connection table the shell walks. */
@@ -401,21 +388,6 @@ int net_tcp_listen(uint16_t port)
 {
     (void)port; return -1;
 }
-/* the resolver, refusing. */
-static enum dns_result resolve_says = DNS_REFUSED;
-static ipv4 resolve_gives;
-enum dns_result net_resolve(const char *name, ipv4 *out)
-{
-    /* deliberately does *not* short-circuit an address. */
-    (void)name;
-    *out = resolve_gives;
-    return resolve_says;
-}
-void net_dns_stats(uint64_t *a, uint64_t *b, uint64_t *c)
-{
-    *a = 0; *b = 0; *c = 0;
-}
-
 bool net_tcp_shut(int owner, int h)
 {
     (void)owner; (void)h; return false;
@@ -441,14 +413,9 @@ void net_tcp_forget(int i)
 {
     if (i >= 0 && i < TCP_CONN_MAX) { memset(&shell_conns[i], 0, sizeof shell_conns[i]); }
 }
-static ipv4 dhcp_dns;
-ipv4 net_dns(void)
+bool net_up(ipv4 a, ipv4 m, ipv4 r)
 {
-    return dhcp_dns;
-}
-bool net_up(ipv4 a, ipv4 m)
-{
-    (void)a; (void)m; return false;
+    (void)a; (void)m; (void)r; return false;
 }
 ipv4 net_address(void)
 {
@@ -1508,19 +1475,20 @@ int main(void)
     CHECK(strstr(out, "by the card") == NULL,
           "and does not claim both at once");
 
-    /*
-     * the name server, which `ifconfig` has to show: when a name will
-     * not resolve, "was one offered at all" is the first question and
-     * there was nowhere to read the answer
-     */
-    dhcp_dns = IPV4(10, 0, 2, 3);
+    /* where anything not on this wire goes, when something said. */
+    card_router = IPV4(10, 0, 2, 2);
     run("ifconfig");
-    CHECK(strstr(out, "10.0.2.3") != NULL, "`ifconfig` names the name server");
-    dhcp_dns = 0;
+    CHECK(strstr(out, "gateway : 10.0.2.2") != NULL,
+          "`ifconfig` names the router it hands the rest of the world to");
+    card_router = 0;
     run("ifconfig");
-    CHECK(strstr(out, "none offered") != NULL,
-          "and says plainly when there is none, rather than leaving the "
-          "line out and the question open");
+    CHECK(strstr(out, "gateway") == NULL,
+          "and has no gateway line when there is none");
+
+    run("ifconfig 10.0.2.15 255.255.255.0 nowhere");
+    CHECK(strstr(out, "not a router's address") != NULL,
+          "a router that is not an address is refused before anything "
+          "is set");
 
     card_interrupts = true;
     card_ints = 41;
@@ -1537,44 +1505,10 @@ int main(void)
     CHECK(strstr(out, "somebody else") != NULL,
           "a shared line is reported rather than looking like a fault");
 
-    /* the shell's job here is to say *which* kind of no it got. */
-    resolve_says = DNS_NO_SUCH_NAME;
-    run("host nowhere.example");
-    CHECK(strstr(out, "no such name") != NULL,
-          "a name that does not exist says so");
-
-    resolve_says = DNS_NO_ADDRESS;
-    run("host mail.example");
-    CHECK(strstr(out, "no address") != NULL,
-          "and one that exists without an address is a different answer");
-
-    resolve_says = DNS_REFUSED;
-    dhcp_dns = 0;
-    run("host anything.example");
-    CHECK(strstr(out, "nobody offered") != NULL,
-          "and having no name server at all names that, rather than "
-          "blaming the name, both messages mention a name server, so "
-          "checking for those two words told the two apart not at all");
-
-    resolve_says = DNS_OK;
-    resolve_gives = IPV4(93, 184, 216, 34);
-    run("host example.com");
-    CHECK(strstr(out, "93.184.216.34") != NULL, "a name that resolves prints it");
-
-    /* an address is not a question, and must not become one. */
-    run("host 10.0.2.2");
-    CHECK(strstr(out, "is 10.0.2.2") != NULL,
-          "an address given where a name goes is simply itself");
-    CHECK(strstr(out, "93.184.216.34") == NULL,
-          "and is not sent to a name server to be told something else");
-
-    /* and the commands that take either */
-    resolve_says = DNS_NO_SUCH_NAME;
+    /* a name is a program's to look up, so the monitor takes addresses. */
     run("ping nowhere.example");
-    CHECK(strstr(out, "no such name") != NULL,
-          "`ping` takes a name, and reports the same failure the same way");
-    resolve_says = DNS_REFUSED;
-    resolve_gives = 0;
+    CHECK(strstr(out, "not an address") != NULL,
+          "`ping` refuses a name rather than sending it anywhere");
 
     /* the shell's job is to turn a name into a number and to refuse what should be refused. */
     fake_proc_exists = true;

@@ -42,7 +42,6 @@
 #include <velvet/netif.h>
 #include <velvet/ether.h>
 #include <velvet/ip.h>
-#include <velvet/http.h>
 #include <velvet/signal.h>
 #include <velvet/e1000.h>
 #include <velvet/vfs.h>
@@ -1377,16 +1376,24 @@ static void cmd_ifconfig(int argc, char **argv)
             kprintf("'%s' is not a netmask\n", argv[2]);
             return;
         }
-        /* an address set by hand ends the lease. */
-        net_dhcp_stop();
-        if (!net_up(addr, mask)) {
+        ipv4 router = 0;
+        if (argc >= 4 && !ipv4_parse(argv[3], &router)) {
+            kprintf("'%s' is not a router's address\n", argv[3]);
+            return;
+        }
+        if (!net_up(addr, mask, router)) {
             kprintf("the card would not come up\n");
             return;
         }
         ipv4_format(addr, text, sizeof text);
         kprintf("address %s", text);
         ipv4_format(mask, text, sizeof text);
-        kprintf(" netmask %s\n", text);
+        kprintf(" netmask %s", text);
+        if (router != 0) {
+            ipv4_format(router, text, sizeof text);
+            kprintf(" router %s", text);
+        }
+        kprintf("\n");
         return;
     }
 
@@ -1426,39 +1433,18 @@ static void cmd_ifconfig(int argc, char **argv)
     }
 
     if (!net_is_up()) {
-        const struct dhcp *pending = net_dhcp();
-        if (pending->state == DHCP_OFF || pending->state == DHCP_FAILED) {
-            kprintf("address : none, and none coming, %s. "
-                    "`ifconfig <address> [netmask]` sets one\n",
-                    dhcp_state_name(pending));
-        } else {
-            kprintf("address : none yet, %s\n", dhcp_state_name(pending));
-        }
+        kprintf("address : none. `ifconfig <address> [netmask [router]]` "
+                "sets one\n");
         return;
     }
     ipv4_format(net_address(), text, sizeof text);
     kprintf("address : %s", text);
     ipv4_format(net_netmask(), text, sizeof text);
-    kprintf(" netmask %s", text);
-
-    const struct dhcp *d = net_dhcp();
-    if (d->state == DHCP_OFF) {
-        kprintf(" (set by hand)\n");
-    } else {
-        kprintf(" (leased, %u seconds left)\n",
-                dhcp_lease_left(d, pit_uptime_ms()));
-    }
+    kprintf(" netmask %s\n", text);
     if (net_router() != 0) {
         ipv4_format(net_router(), text, sizeof text);
         kprintf("gateway : %s, anything not on this wire goes to "
                 "it\n", text);
-    }
-    if (net_dns() != 0) {
-        ipv4_format(net_dns(), text, sizeof text);
-        kprintf("names   : %s\n", text);
-    } else {
-        kprintf("names   : none offered, `host` cannot work without "
-                "one\n");
     }
 
     struct net_stats ns;
@@ -1481,69 +1467,7 @@ static void cmd_ifconfig(int argc, char **argv)
     }
 }
 
-/* the conversation, in the detail `ifconfig` has no room for. */
-static void cmd_dhcp(int argc, char **argv)
-{
-    if (!e1000_present()) {
-        kprintf("no network card\n");
-        return;
-    }
-
-    if (argc >= 2) {
-        if (strcmp(argv[1], "renew") == 0 || strcmp(argv[1], "start") == 0) {
-            net_dhcp_start();
-            kprintf("asking. `ifconfig` says how it went\n");
-            return;
-        }
-        if (strcmp(argv[1], "stop") == 0) {
-            net_dhcp_stop();
-            kprintf("stopped. the address stays until somebody changes "
-                    "it, the lease simply stops being renewed\n");
-            return;
-        }
-        kprintf("`dhcp renew` or `dhcp stop`\n");
-        return;
-    }
-
-    const struct dhcp *d = net_dhcp();
-    char text[32];
-
-    kprintf("state   : %s\n", dhcp_state_name(d));
-
-    if (d->address != 0 && d->state == DHCP_OFF) {
-        /* a lease that was abandoned rather than one that is held. */
-        ipv4_format(d->address, text, sizeof text);
-        kprintf("was     : %s, and given up. the address in use is "
-                "whatever `ifconfig` shows, this lease is not being "
-                "renewed and will simply expire\n", text);
-    } else if (d->address != 0) {
-        ipv4_format(d->address, text, sizeof text);
-        kprintf("address : %s", text);
-        ipv4_format(d->server, text, sizeof text);
-        kprintf(", from the server at %s\n", text);
-        kprintf("lease   : %u seconds, %u left, renewed at half\n",
-                d->lease_s, dhcp_lease_left(d, pit_uptime_ms()));
-    }
-
-    /* what was said, in both directions. */
-    kprintf("sent    : %u discover, %u request\n", d->discovers, d->requests);
-    kprintf("heard   : %u offer, %u ack, %u nak\n", d->offers, d->acks,
-            d->naks);
-
-    if (d->state == DHCP_FAILED) {
-        console_set_colors(COLOR_WARN, 0x101018);
-        kprintf("nobody answered after %u tries. there may be no server on "
-                "this wire, `ifconfig <address>` sets one by hand\n",
-                DHCP_TRIES);
-        console_set_colors(COLOR_TEXT, 0x101018);
-    }
-}
-
-/*
- * defined with the other name-handling below, and used up here by
- * `tcp connect`: anything taking an address takes a name
- * instead, and there is one function deciding what that means
- */
+/* defined below, beside `ping`, and used up here by `tcp connect`. */
 static bool address_of(const char *what, ipv4 *out);
 
 static int shell_number(const char *sp);
@@ -1794,158 +1718,6 @@ static void cmd_tcp(int argc, char **argv)
             "or `tcp close`\n");
 }
 
-/* fetch something. the point is not the web. */
-static void cmd_fetch(int argc, char **argv)
-{
-    if (argc < 2) {
-        kprintf("fetch <url> [file]\n");
-        return;
-    }
-    if (!net_is_up()) {
-        kprintf("the wire is not up\n");
-        return;
-    }
-
-    char host[128], path[256];
-    uint16_t port;
-    bool unsupported = false;
-
-    if (!http_parse_url(argv[1], host, sizeof host, &port, path,
-                        sizeof path, &unsupported)) {
-        if (unsupported) {
-            kprintf("this machine speaks http and not https, there is "
-                    "no tls here, and a client that tried plain http on "
-                    "the wrong port would simply hang\n");
-        } else {
-            kprintf("'%s' is not a url the shell can use\n", argv[1]);
-        }
-        return;
-    }
-
-    ipv4 to;
-    if (!address_of(host, &to)) {
-        return;
-    }
-
-    int h = net_tcp_open(-1, to, port);
-    if (h < 0) {
-        kprintf("no room for another connection, `tcp` shows what is "
-                "still open\n");
-        return;
-    }
-
-    /* wait for the handshake. */
-    if (net_tcp_accept(-1, h, 5000) < 0) {
-        struct tcp_conn *c = net_tcp_at(h - TCP_HANDLE_BASE);
-        kprintf("could not connect: %s\n",
-                (c != NULL && c->error != NULL) ? c->error
-                                                : "it never answered");
-        net_tcp_shut(-1, h);
-        return;
-    }
-
-    char request[512];
-    size_t n = http_get(request, sizeof request, host, path);
-    if (n == 0 || net_tcp_send(-1, h, request, n) < 0) {
-        kprintf("could not send the request\n");
-        net_tcp_shut(-1, h);
-        return;
-    }
-
-    struct http parser;
-    http_start(&parser);
-
-    /* the file is not created until there is a body byte to put in it. */
-    struct vfs_file file;
-    bool to_file = (argc >= 3);
-    bool opened = false;
-    uint64_t written = 0;
-
-    for (;;) {
-        uint8_t in[1024];
-        int64_t got = net_tcp_recv(-1, h, in, sizeof in, 5000);
-
-        if (got < 0) {
-            kprintf("it stopped answering\n");
-            break;
-        }
-        if (got == 0) {
-            /*
-             * the stream ended, which for a body with no declared
-             * length is how it is *supposed* to end
-             */
-            http_closed(&parser);
-            break;
-        }
-
-        size_t used = 0;
-        while (used < (size_t)got) {
-            uint8_t body[512];
-            size_t produced = 0;
-            size_t took = http_feed(&parser, in + used, (size_t)got - used,
-                                    body, sizeof body, &produced);
-
-            if (produced > 0) {
-                if (to_file && !opened) {
-                    if (!vfs_create(argv[2], &file)) {
-                        kprintf("cannot write to '%s', the directory it "
-                                "is in has to exist already\n", argv[2]);
-                        net_tcp_shut(-1, h);
-                        return;
-                    }
-                    opened = true;
-                }
-                if (to_file) {
-                    vfs_write(&file, written, body, produced);
-                }
-                written += produced;
-            }
-            if (took == 0) {
-                break;
-            }
-            used += took;
-        }
-        if (parser.state == HTTP_DONE || parser.state == HTTP_BROKEN) {
-            break;
-        }
-    }
-
-    net_tcp_shut(-1, h);
-
-    if (parser.status == 0) {
-        kprintf("nothing that looked like a reply came back\n");
-        return;
-    }
-
-    kprintf("%d", parser.status);
-    if (parser.content_type[0] != '\0') {
-        kprintf(", %s", parser.content_type);
-    }
-    kprintf(", %lu bytes\n", written);
-
-    if (parser.location[0] != '\0') {
-        kprintf("it points somewhere else: %s\n", parser.location);
-        kprintf("redirects are reported rather than followed, a fetch "
-                "that quietly went elsewhere would hand you something "
-                "other than what you asked for\n");
-    }
-
-    if (parser.state == HTTP_BROKEN) {
-        console_set_colors(COLOR_WARN, 0x101018);
-        kprintf("the reply was cut short. what arrived is a fragment, and "
-                "a fragment written over a whole file is worse than "
-                "nothing\n");
-        console_set_colors(COLOR_TEXT, 0x101018);
-        return;
-    }
-    if (to_file && opened) {
-        kprintf("written to %s\n", argv[2]);
-    } else if (to_file) {
-        kprintf("nothing came back to write, so %s was left alone\n",
-                argv[2]);
-    }
-}
-
 /* who else is out there. */
 static void cmd_arp(int argc, char **argv)
 {
@@ -1991,81 +1763,21 @@ static void cmd_arp(int argc, char **argv)
     }
 }
 
+/* an address, for the commands that take one. */
+static bool address_of(const char *what, ipv4 *out)
+{
+    if (ipv4_parse(what, out)) {
+        return true;
+    }
+    kprintf("'%s' is not an address\n", what);
+    return false;
+}
+
 /*
  * the smallest possible round trip, and therefore the best thing to
  * debug with: when it works the card, arp, ip and the checksum are all
  * working, and when it does not the fault is in one of four things
  */
-/* a word or an address, for the commands that take either. */
-static bool address_of(const char *what, ipv4 *out)
-{
-    /* an address is not a question. */
-    if (ipv4_parse(what, out)) {
-        return true;
-    }
-
-    enum dns_result r = net_resolve(what, out);
-
-    switch (r) {
-    case DNS_OK:
-        return true;
-    case DNS_NO_SUCH_NAME:
-        kprintf("there is no such name as '%s'\n", what);
-        return false;
-    case DNS_NO_ADDRESS:
-        kprintf("'%s' exists and has no address\n", what);
-        return false;
-    case DNS_REFUSED:
-        if (net_dns() == 0) {
-            kprintf("'%s' is a name, and nobody offered this machine a "
-                    "name server, `dhcp` says what was handed out\n",
-                    what);
-        } else {
-            kprintf("the name server would not answer about '%s'\n", what);
-        }
-        return false;
-    case DNS_MALFORMED:
-        kprintf("'%s' is neither an address nor a name\n", what);
-        return false;
-    }
-    return false;
-}
-
-/* what a name resolves to, and nothing else. */
-static void cmd_host(int argc, char **argv)
-{
-    if (argc < 2) {
-        kprintf("host <name>\n");
-        return;
-    }
-    if (!net_is_up()) {
-        kprintf("the wire is not up\n");
-        return;
-    }
-
-    ipv4 got = 0;
-    uint64_t before = pit_uptime_ms();
-    if (!address_of(argv[1], &got)) {
-        return;
-    }
-    uint64_t took = pit_uptime_ms() - before;
-
-    char text[32];
-    ipv4_format(got, text, sizeof text);
-    kprintf("%s is %s", argv[1], text);
-    if (took > 0) {
-        kprintf(" (%lu ms)", took);
-    } else {
-        kprintf(" (remembered)");
-    }
-    kprintf("\n");
-
-    uint64_t asked, answered, cached;
-    net_dns_stats(&asked, &answered, &cached);
-    kprintf("asked %lu, answered %lu, and %lu were already known\n",
-            asked, answered, cached);
-}
-
 static void cmd_ping(int argc, char **argv)
 {
     if (!net_is_up()) {
@@ -2095,14 +1807,9 @@ static void cmd_ping(int argc, char **argv)
         if (!net_ping_send(to, (uint16_t)i)) {
             sleep_ms(200);
             if (!net_ping_send(to, (uint16_t)i)) {
-                /* naming the *address* as well as what was typed. */
                 char text[32];
                 ipv4_format(to, text, sizeof text);
-                kprintf("no route to %s", text);
-                if (strcmp(text, argv[1]) != 0) {
-                    kprintf(" (which is what '%s' resolves to)", argv[1]);
-                }
-                kprintf("\n");
+                kprintf("no route to %s\n", text);
 
                 if (ip_next_hop(to, net_address(), net_netmask(),
                                 net_router()) == 0) {
@@ -2722,12 +2429,9 @@ static const struct command commands[] = {
     { "init",   "what init looks after, and how it fares", cmd_init, false, "init [start <name>]" },
     { "install","copy this system onto a drive and make it boot", cmd_install, false, "install [drive] [whole]" },
     { "src",    "the source this was built from, still on the medium", cmd_src, false, "src [verify|unpack [where [what]]]" },
-    { "ifconfig","the card, and the address on it",     cmd_ifconfig, false, "ifconfig [address [netmask]]" },
-    { "dhcp",   "the address the wire handed out",      cmd_dhcp, false, "dhcp [renew|stop]" },
-    { "tcp",    "connections, and what state they are in", cmd_tcp, false, "tcp [connect <addr or name> <port>|listen <port>|send <n> <text>|read <n>|close <n>]" },
-    { "host",   "what a name resolves to",              cmd_host, false, "host <name>" },
-    { "fetch",  "pull a file down over http",           cmd_fetch, false, "fetch <url> [file]" },
-    { "ping",   "the smallest round trip there is",     cmd_ping, false, "ping <address or name>" },
+    { "ifconfig","the card, and the address on it",     cmd_ifconfig, false, "ifconfig [address [netmask [router]]]" },
+    { "tcp",    "connections, and what state they are in", cmd_tcp, false, "tcp [connect <address> <port>|listen <port>|send <n> <text>|read <n>|close <n>]" },
+    { "ping",   "the smallest round trip there is",     cmd_ping, false, "ping <address>" },
     { "arp",    "who else is out there",                cmd_arp, false, "arp [address]" },
     { "reboot", "sever the bond and begin anew",        cmd_reboot, false, NULL },
     { "poweroff","let the velvet room fade",             cmd_poweroff, false, NULL },

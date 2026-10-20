@@ -19,8 +19,8 @@ and a toolchain belong to whatever system is built on a release of it.
 what is in here: philemon, the bootloader, and the handoff it makes; physical and
 virtual memory, with demand paging and copy on write; threads, processes, signals and
 an init; smp with a scheduler on every core; fat32, and ext4 with extents and a
-journal; ahci, e1000, ps/2, the console and the serial line; a tcp/ip stack with
-dhcp, dns and http; the source this kernel was built from, on the medium it booted
+journal; ahci, e1000, ps/2, the console and the serial line; a tcp/ip stack; the
+source this kernel was built from, on the medium it booted
 from; and the velvet room, the shell, which runs in the kernel.
 
 still a non-goal: being useful in any practical sense.

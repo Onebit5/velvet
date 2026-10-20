@@ -25,8 +25,7 @@ at a glance
       none/            an architecture that does nothing, for portable-check
     drivers/           serial, console, tty, ps/2 keyboard and mouse, pit,
                        rtc, pci, ahci, e1000, partitions, the font
-    net/               ethernet, arp, ip, icmp, udp, tcp, sockets, dhcp,
-                       dns, http
+    net/               ethernet, arp, ip, icmp, udp, tcp, sockets
     fs/                vfs, disk, bcache, ext4, fat32, jbd2, path, pipe,
                        ramdisk, source, mkfs, fsck, install
     lib/               kprintf, panic, string, hash, epoch, ksyms,

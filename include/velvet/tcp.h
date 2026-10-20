@@ -142,11 +142,11 @@ void tcp_close(struct tcp_conn *c);
 void tcp_reset(struct tcp_conn *c, uint64_t now_ms);
 
 /*
- * the same shape as dhcp, and for the same reason: told the time and
- * handed segments, it *returns* what to send. tcp is far harder to test
- * than dhcp and the payoff is correspondingly bigger, a retransmission
- * timer, a two-minute wait and a four-billion-byte sequence wrap are all
- * things a real clock will never show you
+ * a state machine with no clock of its own: told the time and handed
+ * segments, it *returns* what to send. that is what makes it testable,
+ * since a retransmission timer, a two-minute wait and a
+ * four-billion-byte sequence wrap are all things a real clock will never
+ * show you
  */
 void tcp_input(struct tcp_conn *c, const struct tcp_segment *seg,
                const uint8_t *payload, uint64_t now_ms);

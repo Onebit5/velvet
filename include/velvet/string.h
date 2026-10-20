@@ -19,8 +19,6 @@ int    memcmp(const void *a, const void *b, size_t n);
 size_t strlen(const char *s);
 int    strcmp(const char *a, const char *b);
 
-int    strcasecmp(const char *a, const char *b);
-
 size_t strnlen(const char *s, size_t max);
 char *strcpy(char *dst, const char *src);
 char *strncpy(char *dst, const char *src, size_t n);

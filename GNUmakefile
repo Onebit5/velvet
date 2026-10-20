@@ -504,8 +504,8 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/shell $(T)/pipe $(T)/bcache \
              $(T)/ext4 $(T)/part $(T)/console \
              $(T)/mouse $(T)/init $(T)/mkfs \
-             $(T)/install $(T)/net $(T)/dhcp \
-             $(T)/tcp $(T)/dns $(T)/http \
+             $(T)/install $(T)/net \
+             $(T)/tcp \
              $(T)/signal $(T)/ansi \
              $(T)/termios \
              $(T)/epoch $(T)/pressure $(T)/hash \
@@ -586,28 +586,10 @@ $(T)/mkfs:     tests/test_mkfs.c     fs/mkfs.c \
 # the fixtures that matter are real captured packets: a header I
 # invent and a parser I invent agree with each other and with nothing
 # else on earth
-# a response arrives as whatever pieces tcp felt like delivering, so the
-# central test is not "does this parse" but "does the split point
-# matter": every fixture is driven through split at every byte offset
-$(T)/http:     tests/test_http.c     net/http.c \
-               tests/fixtures/http_captured.h \
-               net/net.c lib/string.c
-# the first protocol here whose other end is somebody else's software,
-# so most of the suite is malformed replies, and nearly all of that is
-# name compression, where a pointer may point backwards, forwards, or at
-# itself, and nothing in the format forbids a cycle
-$(T)/dns:      tests/test_dns.c      net/dns.c \
-               net/net.c lib/string.c
 # the largest state machine in the kernel, and the one whose bugs are
 # least visible from outside: a stack that gets the close sequence
 # wrong works perfectly for every connection anybody watches
 $(T)/tcp:      tests/test_tcp.c      net/tcp.c \
-               net/net.c lib/string.c
-# the first protocol here that remembers anything, so it gets a suite of
-# its own: the interesting behaviour is in the *sequence*, and a clock
-# that is an ordinary variable is what makes an eight-second backoff and
-# a twelve-hour lease testable at all
-$(T)/dhcp:     tests/test_dhcp.c     net/dhcp.c \
                net/net.c lib/string.c
 $(T)/net:      tests/test_net.c      net/net.c \
                net/ether.c net/arp.c \
@@ -750,10 +732,9 @@ $(T)/shell:    tests/test_shell.c    lib/string.c \
                fs/install.c fs/mkfs.c \
                drivers/part.c lib/hash.c fs/fsck.c \
                net/net.c net/arp.c \
-               net/dhcp.c net/tcp.c \
-               net/dns.c net/ip.c mm/pressure.c \
+               net/tcp.c \
+               net/ip.c mm/pressure.c \
                sched/signal.c \
-               net/http.c \
                shell/shell.c
 $(T)/shell:    SRCS = tests/test_shell.c lib/string.c \
                       fs/ramdisk.c \
@@ -765,9 +746,9 @@ $(T)/shell:    SRCS = tests/test_shell.c lib/string.c \
                       fs/install.c fs/mkfs.c \
                       drivers/part.c lib/hash.c fs/fsck.c \
                       net/net.c net/arp.c \
-                      net/dhcp.c net/tcp.c \
-                      net/dns.c net/ip.c \
-                      net/http.c sched/signal.c \
+                      net/tcp.c \
+                      net/ip.c \
+                      sched/signal.c \
                       mm/pressure.c
 
 # every test depends on every kernel header.
@@ -966,7 +947,7 @@ checkfmt:
 fuzz: $(T)/fuzz_parsers
 	@$(T)/fuzz_parsers
 
-$(T)/fuzz_parsers: tools/fuzz_parsers.c net/dns.c net/http.c \
+$(T)/fuzz_parsers: tools/fuzz_parsers.c \
                    net/tcp.c net/net.c lib/string.c
 	@mkdir -p $(@D)
 	$(HOSTCC) $(HOSTFLAGS) -fsanitize=undefined -fsanitize-trap=undefined \

@@ -58,10 +58,6 @@ are all here, and they *have* to exist, because gcc can emit calls to
 ``memcpy``/``memset`` behind your back even in freestanding mode (struct
 copies, and so on).
 
-``strcasecmp`` is here because dns needs it. a name is case-insensitive
-and a server echoes the question back with whatever case it chose, some
-varying it deliberately to make a reply harder to forge.
-
 checksums
 ---------
 
@@ -254,9 +250,6 @@ that caused it is how a bug becomes a corrupted disk.
 
 ``void  *memcpy(void *dst, const void *src, size_t n);``
     the usual suspects. no libc here so the kernel rolls its own.
-
-``int    strcasecmp(const char *a, const char *b);``
-    the same, ignoring case.
 
 ``size_t strnlen(const char *s, size_t max);``
     the rest of the set, which came in when the two implementations became one.

@@ -121,16 +121,6 @@ int strncmp(const char *a, const char *b, size_t n)
     return 0;
 }
 
-int strcasecmp(const char *a, const char *b)
-{
-    for (;;) {
-        unsigned char x = (unsigned char)*a++, y = (unsigned char)*b++;
-        if (x >= 'A' && x <= 'Z') { x = (unsigned char)(x + 32); }
-        if (y >= 'A' && y <= 'Z') { y = (unsigned char)(y + 32); }
-        if (x != y || x == '\0') { return (int)x - (int)y; }
-    }
-}
-
 char *strchr(const char *s, int c)
 {
     for (;; s++) {

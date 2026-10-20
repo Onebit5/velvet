@@ -13,9 +13,7 @@
 
 #include <velvet/net.h>
 #include <velvet/arp.h>
-#include <velvet/dhcp.h>
 #include <velvet/tcp.h>
-#include <velvet/dns.h>
 
 /*
  * the interface: the one place that knows there is both a card and a
@@ -31,19 +29,18 @@
  * here: this machine and whatever else is on the wire.
  */
 
-bool net_up(ipv4 address, ipv4 netmask);
+/*
+ * what this machine is on the wire, and where whatever is not on it goes.
+ * a router of 0 is none: only this wire can be reached
+ */
+bool net_up(ipv4 address, ipv4 netmask, ipv4 router);
 bool net_is_up(void);
 
 ipv4 net_address(void);
 ipv4 net_netmask(void);
 const struct mac *net_mac(void);
 
-void net_dhcp_start(void);
-void net_dhcp_stop(void);
-const struct dhcp *net_dhcp(void);
-
 ipv4 net_router(void);
-ipv4 net_dns(void);
 
 /*
  * a frame arrived. dispatches by ethertype and then by protocol, and
@@ -113,10 +110,6 @@ int net_tcp_listen(uint16_t port);
 struct tcp_conn *net_tcp_at(int i);
 
 void net_tcp_forget(int i);
-
-enum dns_result net_resolve(const char *name, ipv4 *out);
-
-void net_dns_stats(uint64_t *asked, uint64_t *answered, uint64_t *cached);
 
 /*
  * icmp echo is the smallest possible round trip, so it is the first

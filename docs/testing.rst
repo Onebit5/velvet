@@ -70,9 +70,9 @@ the failing case. all of them:
    ``crash`` and ``resize`` suites stop the machine at every write one of
    those operations takes and demand a filesystem at each one.
 
-``net``, ``dhcp``, ``tcp``, ``dns``, ``http``
-   checksums, headers and sockets, checked against packets captured from the
-   rfcs rather than invented here.
+``net``, ``tcp``
+   checksums, headers, sockets and connections, checked against packets
+   captured from the rfcs rather than invented here.
 
 ``shell``, ``tty``, ``install``, ``philemon``, ``hash``
    the shell's parsing and dispatch, the terminal discipline, the
@@ -239,21 +239,18 @@ the fuzzer
 ----------
 
 ``make fuzz`` builds ``tools/fuzz_parsers.c`` with ubsan in trap mode and
-feeds random bytes, and random mutations of a valid seed, to the four parsers
+feeds random bytes, and random mutations of a valid seed, to the two parsers
 that take input from the wire or from a disk:
 
-- ``dns_parse_response``, the only place here that believes a stranger
-- ``http_feed``, fed in pieces of one to eight bytes, since a response
-  arrives as whatever tcp felt like delivering
 - ``tcp_parse``, including lengths shorter than the header it is reading
 - ``ustar_octal``, with fields of the wrong length and a size that never ends
 
-two hundred thousand rounds of each takes about four seconds. The seed is
+two hundred thousand rounds of each takes about a second and a half. The seed is
 fixed, so a run that finds something can be repeated exactly:
 
     bin/tests/fuzz_parsers 0x<seed>
 
-As it stands all four survive it: no crash, no hang and no trap.
+As it stands both survive it: no crash, no hang and no trap.
 
 It checks its seeds before it starts and refuses to run if one is refused,
 which is not decoration: the first version of it wrote a tcp segment out by

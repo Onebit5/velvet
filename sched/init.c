@@ -209,9 +209,10 @@ static void network_service(void *arg)
     (void)arg;
     net_service_ready();
 
-    /* ask the wire for an address. */
-    net_dhcp_start();
-
+    /*
+     * with no address until something gives it one. until then the
+     * machine listens to the wire and says nothing on it
+     */
     for (;;) {
         net_poll();
         sleep_ms(NET_FALLBACK_MS);

@@ -65,8 +65,7 @@ the subsystems
   ext4, the journal, the block cache, partitions, pipes.
 - `drivers <subsystems/drivers.rst>`_: console, serial, terminal, keyboard,
   mouse, timers, pci, sata, partitions.
-- `networking <subsystems/net.rst>`_: ethernet through tcp, sockets, dhcp,
-  dns, http.
+- `networking <subsystems/net.rst>`_: ethernet through tcp, and sockets.
 - `the library <subsystems/lib.rst>`_: printing, strings, checksums,
   dates, symbols.
 - `the shell <subsystems/shell.rst>`_: the velvet room terminal.

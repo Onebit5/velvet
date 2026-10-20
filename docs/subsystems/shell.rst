@@ -84,10 +84,7 @@ alt+5 lands you at the monitor's prompt, ``monitor@velvet[5]:/#``:
     install   copy this system onto a drive and make it boot
     src       the source this was built from, still on the medium
     ifconfig  the card, and the address on it
-    dhcp      the address the wire handed out
     tcp       connections, and what state they are in
-    host      what a name resolves to
-    fetch     pull a file down over http
     ping      the smallest round trip there is
     arp       who else is out there
     reboot    sever the bond and begin anew
