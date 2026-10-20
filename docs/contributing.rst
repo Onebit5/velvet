@@ -345,9 +345,9 @@ and this project has already paid for that lesson more than once.
   should have caught it. if there is no such suite, that is the finding.
 - the test asserts on observed behaviour, not on the implementation. where
   somebody else's implementation exists, test against that:
-  ``tests/test_inflate.c`` against zlib, ``tests/test_epoch.c`` against the
-  host's ``timegm``, and ``tests/test_hash.c`` against python, zlib and git
-  through ``tools/hashcheck.py``.
+  ``tests/test_epoch.c`` against the host's ``timegm``, and
+  ``tests/test_hash.c`` against python, zlib and git through
+  ``tools/hashcheck.py``.
 
 documentation
 -------------

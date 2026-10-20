@@ -24,12 +24,7 @@ the toolchain to velvetOS, which is where those programs are. what is here
 checks the kernel and the formats the kernel reads.
 
 ``hashcheck.py``
-   the three sums against python, ``zlib`` and git itself.
-
-``zlibcheck.py``
-   deflate and inflate against python's ``zlib`` at all ten levels, because
-   a decompressor tested only against this project's compressor has been
-   tested against one third of the format and the third it wrote itself.
+   the two sums against python, ``zlib`` and git itself.
 
 ``readext4.py``
    read an ext4 or ext2 image and complain about it. written from the

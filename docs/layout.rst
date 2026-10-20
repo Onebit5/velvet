@@ -30,8 +30,8 @@ at a glance
                        dns, http
     fs/                vfs, disk, bcache, ext4, fat32, jbd2, path, pipe,
                        ramdisk, source, mkfs, fsck, install
-    lib/               kprintf, panic, string, hash, deflate/inflate,
-                       epoch, ksyms, backtrace
+    lib/               kprintf, panic, string, hash, epoch, ksyms,
+                       backtrace
     mm/                pmm, buddy, slab, kmalloc, vmm, addrspace, pressure
     sched/             threads, run queue, context switch, processes,
                        signals, init, locks

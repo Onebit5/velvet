@@ -74,10 +74,9 @@ the failing case. all of them:
    checksums, headers and sockets, checked against packets captured from the
    rfcs rather than invented here.
 
-``shell``, ``tty``, ``install``, ``philemon``, ``hash``, ``inflate``
+``shell``, ``tty``, ``install``, ``philemon``, ``hash``
    the shell's parsing and dispatch, the terminal discipline, the
-   installer's ordering, the loader's elf parsing, and the three checksums
-   and deflate.
+   installer's ordering, the loader's elf parsing, and the two checksums.
 
 the ``shell`` suite mounts ``bin/ramdisk.tar``, the medium the build just
 made, and completes names against what is really on it.
@@ -88,9 +87,8 @@ the foreign-implementation checks
 a check written by the code it checks proves nothing. where another
 implementation exists, the project tests against that instead:
 
-``zlibcheck`` / ``hashcheck``
-   deflate and inflate against python's ``zlib``; sha-1, crc32 and adler32
-   against python, ``zlib`` and git itself.
+``hashcheck``
+   sha-1 and crc32 against python, ``zlib`` and git itself.
 
 ``fsckcheck`` / ``fsck`` / ``mkfsck`` / ``growcheck``
    break a filesystem on purpose and demand this project's fsck finds it;

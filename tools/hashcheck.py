@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""the three sums, against three other people's implementations.
+"""the two sums, against three other people's implementations.
 
 the fourth tool checked this way, and the one where a published test
 vector looks like it ought to be enough. it is not. a vector proves the
@@ -48,7 +48,6 @@ def main():
 
     lengths = list(range(0, 200))
     lengths += [255, 256, 257, 511, 512, 513, 1000]
-    lengths += [5551, 5552, 5553]       # where adler32 has to reduce
     lengths += [65535, 65536, 65537]
 
     bad = 0
@@ -70,13 +69,7 @@ def main():
             print("  crc32 of %d bytes: ours %s, zlib %s" % (n, got, want))
             bad += 1
 
-        want = "%08x" % zlib.adler32(data)
-        got = ours("--adler32", data)
-        if got != want:
-            print("  adler32 of %d bytes: ours %s, zlib %s" % (n, got, want))
-            bad += 1
-
-        checked += 3
+        checked += 2
 
         # and the same bytes arriving badly. 64 is the block size, so 63
         # and 65 are where a buffer is kept for one byte too few or one

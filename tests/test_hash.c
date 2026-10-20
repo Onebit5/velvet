@@ -2,7 +2,7 @@
 /*
  * tests/test_hash.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * the three sums, against the numbers everybody else got.
+ * the two sums, against the numbers everybody else got.
  */
 
 #include <stdio.h>
@@ -112,49 +112,6 @@ static void test_crc32(void)
     CHECK(once == split, "crc32 in two goes is crc32 in one");
 }
 
-static void test_adler32(void)
-{
-    CHECK(adler32_of("", 0) == 1u,
-          "adler32 of nothing is 1, not 0, the low half starts at one");
-    CHECK(adler32_of("abc", 3) == 0x024d0127u, "adler32 of abc");
-    CHECK(adler32_of("Wikipedia", 9) == 0x11e60398u,
-          "adler32 of the example everybody uses");
-
-    const char *all = "the quick brown fox";
-    uint32_t once = adler32_of(all, strlen(all));
-    uint32_t split = adler32_more(adler32_start(), all, 4);
-    split = adler32_more(split, all + 4, strlen(all) - 4);
-    CHECK(once == split, "adler32 in two goes is adler32 in one");
-
-    /*
-     * longer than the 5552 bytes it may go without taking a modulus,
-     * which is the only interesting thing about the arithmetic
-     */
-    uint8_t *big = malloc(20000);
-    memset(big, 0xff, 20000);
-    uint32_t whole = adler32_of(big, 20000);
-    uint32_t parts = adler32_start();
-    for (int i = 0; i < 20; i++) {
-        parts = adler32_more(parts, big + i * 1000, 1000);
-    }
-    CHECK(whole == parts, "and past the point where it has to reduce");
-
-    /* the same input against an answer from *outside* this file, which the line above cannot be. */
-    CHECK(whole == 0x9f51d664u,
-          "adler32 of twenty thousand 0xff, as zlib has it");
-    free(big);
-
-    uint8_t *mixed = malloc(70000);
-    for (int i = 0; i < 70000; i++) {
-        mixed[i] = (uint8_t)(i * 7 + 3);
-    }
-    CHECK(adler32_of(mixed, 70000) == 0x8e7b36c1u,
-          "and of seventy thousand mixed bytes");
-    free(mixed);
-}
-
-
-
 static uint8_t *slurp(const char *path, size_t *len)
 {
     FILE *f = strcmp(path, "-") == 0 ? stdin : fopen(path, "rb");
@@ -217,10 +174,6 @@ int main(int argc, char **argv)
             printf("%08x\n", crc32_of(data, len));
             return 0;
         }
-        if (strcmp(argv[1], "--adler32") == 0) {
-            printf("%08x\n", adler32_of(data, len));
-            return 0;
-        }
         /*
          * the same file fed in pieces of whatever size was asked for,
          * so the check can prove that how the data arrives makes no
@@ -246,7 +199,6 @@ int main(int argc, char **argv)
     test_sha1_vectors();
     test_sha1_lengths();
     test_crc32();
-    test_adler32();
 
     if (failures > 0) {
         printf("  %d failed\n", failures);

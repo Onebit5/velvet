@@ -649,9 +649,9 @@ and compiles the *real* sources as an ordinary linux program.
   run reports every bad case rather than the first.
 - a panic path in the code under test gets a ``panic()`` stub that exits, so
   the suite fails instead of taking the runner down.
-- test the real output where there is one. ``tests/test_inflate.c`` runs
-  against zlib's bytes, ``tests/test_epoch.c`` against the host's own
-  ``timegm``. a second
+- test the real output where there is one. ``tests/test_hash.c`` runs
+  against zlib's and git's sums, ``tests/test_epoch.c`` against the host's
+  own ``timegm``. a second
   opinion from somebody else's implementation is worth more than a fixture
   this project wrote to agree with itself.
 

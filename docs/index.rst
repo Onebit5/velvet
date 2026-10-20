@@ -70,7 +70,7 @@ the subsystems
 - `networking <subsystems/net.rst>`_: ethernet through tcp, sockets, dhcp,
   dns, http.
 - `the library <subsystems/lib.rst>`_: printing, strings, checksums,
-  deflate, dates, symbols.
+  dates, symbols.
 - `the shell <subsystems/shell.rst>`_: the velvet room terminal.
 - `the system calls <syscalls.rst>`_: the abi between ring 3 and the kernel,
   every call with the arguments it takes and what it gives back.

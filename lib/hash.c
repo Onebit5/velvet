@@ -2,7 +2,7 @@
 /*
  * lib/hash.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * the three sums this machine has any use for.
+ * the two sums the kernel has any use for.
  */
 
 #include <velvet/hash.h>
@@ -52,31 +52,6 @@ uint32_t crc32_more(uint32_t so_far, const void *data, size_t len)
 uint32_t crc32_of(const void *data, size_t len)
 {
     return crc32_more(crc32_start(), data, len);
-}
-
-/* two running sums: one of the bytes, one of the sums. */
-uint32_t adler32_more(uint32_t so_far, const void *data, size_t len)
-{
-    const uint8_t *p = data;
-    uint32_t a = so_far & 0xffff;
-    uint32_t b = (so_far >> 16) & 0xffff;
-
-    while (len > 0) {
-        size_t chunk = len < 5552 ? len : 5552;
-        len -= chunk;
-        while (chunk-- > 0) {
-            a += *p++;
-            b += a;
-        }
-        a %= 65521;
-        b %= 65521;
-    }
-    return (b << 16) | a;
-}
-
-uint32_t adler32_of(const void *data, size_t len)
-{
-    return adler32_more(adler32_start(), data, len);
 }
 
 /*

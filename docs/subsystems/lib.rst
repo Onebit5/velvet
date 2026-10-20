@@ -2,8 +2,8 @@ the library
 ===========
 
 ``lib/`` is the things the rest of the kernel would otherwise
-each write badly: printing, panicking, strings, the three checksums, deflate,
-dates, and the symbols a panic names itself with.
+each write badly: printing, panicking, strings, the two checksums, dates,
+and the symbols a panic names itself with.
 
 printing
 --------
@@ -71,8 +71,8 @@ varying it deliberately to make a reply harder to forge.
 checksums
 ---------
 
-``hash.c`` is crc32, adler32 and sha-1, which get lumped together as
-"hashes" and answer different questions:
+``hash.c`` is crc32 and sha-1, which get lumped together as "hashes" and
+answer different questions:
 
 - **crc32** answers "did this arrive intact". arithmetic in a polynomial
   field, chosen so that the errors a wire or a disk actually makes. a
@@ -80,47 +80,19 @@ checksums
   likely to. it is *not* a hash in the security sense: making a second file
   with the same crc32 is easy on purpose, and gpt uses it because a disk
   does not lie deliberately.
-- **adler32** answers the same question and answers it worse, and is here
-  for one reason: a zlib stream ends with one, so reading a compressed git
-  object means checking one.
-- **sha-1** answers "is this the same thing". a git repository is a store
-  addressed by the hash of what is in it. the name of an object *is* its
-  sha-1, so this is the format's idea of identity, not a check bolted on.
+- **sha-1** answers "is this the same thing". the kernel carries the
+  sha-1 of the source archive it was built from, and checks the archive on
+  its medium against it (`the source on the medium <fs.rst>`_).
 
 sha-1 is broken, and the header says so: two different files with the same
-sha-1 have been published. git uses it anyway, for the same reason it always
-did; this is a content address rather than a signature, and a repository
-is not a place where somebody else chooses both files. the machine has to
-speak git, and git speaks sha-1.
+sha-1 have been published. it is good enough here because the stamp is a
+check rather than a signature: it catches a medium that was half written or
+put together from two builds, and nothing in it is defended against somebody
+who chooses both files.
 
-the routines are streaming, because a git object can be larger than anything
+the routines are streaming, because an archive can be larger than anything
 worth holding at once, and because the whole point of a checksum over a
 stream is to compute it while the bytes go by.
-
-deflate
--------
-
-``deflate.c`` / ``inflate.c`` are here because **every object in a git
-repository is compressed**. not optionally, not as a setting. the file on
-disk *is* a zlib stream, so reading a repository means implementing this
-whether or not anything else wants compression. it arrived as a prerequisite
-rather than as a feature.
-
-deflate is two independent ideas stacked:
-
-- **lz77** writes anything that appeared before as "go back this far, copy
-  this many" rather than writing it again. that is why text compresses and
-  random bytes do not.
-- **huffman** gives the symbols that come up often short codes and the rare
-  ones long codes, so the common case costs fewer bits. the codes are
-  *canonical*, which means the table is not transmitted, only the length
-  of each code is, and both sides work out the same codes from the lengths
-  by the same rule. that is the trick that keeps the header small.
-
-a stream is a series of blocks, and each block picks its own answer: stored,
-fixed huffman, or dynamic huffman. a zlib stream wraps that in two bytes of
-header and an adler32 of the *uncompressed* bytes, which is why adler32
-was written before anything wanted it.
 
 dates
 -----
@@ -175,29 +147,6 @@ environment is *for*. what a program does with it is velvetOS's, in its
 ``docs/subsystems/userland.rst``.
 
 
-the deflate interface
----------------------
-
-deflate is here for one reason: every object in a git repository is a zlib
-stream, not optionally, so reading a repository means implementing this
-whether or not anything else ever wants compression. the two ideas inside it
-are lz77, which writes a repeat as "go back this far, copy this many", and
-huffman, whose codes are canonical, so only each code's length is sent.
-
-``long inflate(const void *in, size_t in_len, void *out, size_t out_cap)``
-    the compressed data alone, as RFC 1951 describes it and as a member
-    inside a zip contains.
-
-``long zlib_inflate(const void *in, size_t in_len, void *out, size_t out_cap)``
-    a zlib stream: two bytes of header, the same data, and the adler32 of the
-    uncompressed bytes checked on the way out. this is the one a git object
-    needs.
-
-both return the bytes produced or a negative error, and the caller says how
-much room there is. a decompressor that cannot be told when to stop writes
-past the end of a buffer the day somebody hands it a hostile file.
-
-
 the epoch interface
 -------------------
 
@@ -231,9 +180,9 @@ goes up.
 the hash interface
 ------------------
 
-three sums that get lumped together as hashes and answer different
-questions, which is why all three are here rather than whichever one came
-first. each of them can be fed a piece at a time, because a git object can be
+two sums that get lumped together as hashes and answer different
+questions, which is why both are here rather than whichever one came
+first. each of them can be fed a piece at a time, because an archive can be
 larger than anything worth holding at once.
 
 ``void sha1_of(const void *data, size_t len, uint8_t out[20])``
@@ -241,19 +190,13 @@ larger than anything worth holding at once.
     ``struct sha1``, whose state the caller carries between calls.
 
 ``void sha1_hex(const uint8_t digest[20], char out[41])``
-    twenty bytes as the forty characters everybody writes down. this is the
-    one that names a git object, since the name of an object *is* its sha-1.
+    twenty bytes as the forty characters everybody writes down, which is
+    how the stamp and the medium's sum are shown side by side.
 
 ``crc32``
     did this arrive intact: the reflected crc32 everybody means by the name,
     the one gpt, png, zip and gzip use. ``crc32_start()`` is the seed and
     ``crc32_more`` is handed back what the last call returned.
-
-``adler32``
-    the same question answered worse, here because a zlib stream ends with
-    one, so reading a compressed git object means checking one.
-    ``adler32_start()`` is the seed, which is 1 and not 0.
-
 
 the kprintf interface
 ---------------------

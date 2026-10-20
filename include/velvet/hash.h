@@ -2,7 +2,7 @@
 /*
  * include/velvet/hash.h
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * the three sums this machine has any use for.
+ * the two sums the kernel has any use for.
  */
 
 /* the design notes for hash.h are in docs/subsystems/mm.rst */
@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* three sums that get lumped together as hashes and answer different questions. */
+/* two sums, lumped together as hashes, that answer different questions. */
 
 struct sha1 {
     uint32_t h[5];
@@ -33,9 +33,5 @@ void sha1_hex(const uint8_t digest[20], char out[41]);
 #define crc32_start() 0u
 uint32_t crc32_more(uint32_t so_far, const void *data, size_t len);
 uint32_t crc32_of(const void *data, size_t len);
-
-#define adler32_start() 1u
-uint32_t adler32_more(uint32_t so_far, const void *data, size_t len);
-uint32_t adler32_of(const void *data, size_t len);
 
 #endif

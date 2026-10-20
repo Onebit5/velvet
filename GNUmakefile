@@ -511,7 +511,7 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/signal $(T)/ansi \
              $(T)/termios \
              $(T)/epoch $(T)/pressure $(T)/hash \
-             $(T)/inflate $(T)/crash \
+             $(T)/crash \
              $(T)/resize $(T)/switch $(T)/source \
              $(T)/proc
 
@@ -622,16 +622,10 @@ $(T)/install:  tests/test_install.c  fs/install.c \
                lib/string.c
 $(T)/part:     tests/test_part.c     drivers/part.c \
                lib/string.c lib/hash.c
-# sha-1, crc32 and adler32. a suite when run with no arguments and a
-# hashing tool when run with some, which is how tools/hashcheck.py
-# drives it against python, zlib and git
+# sha-1 and crc32. a suite when run with no arguments and a hashing
+# tool when run with some, which is how tools/hashcheck.py drives it
+# against python, zlib and git
 $(T)/hash:     tests/test_hash.c     lib/hash.c \
-               lib/string.c
-# deflate and inflate. a suite with no arguments, a compressor or a
-# decompressor with some, which is how tools/zlibcheck.py runs it
-# against python's zlib and against a real git repository
-$(T)/inflate:  tests/test_inflate.c  lib/inflate.c \
-               lib/deflate.c lib/hash.c \
                lib/string.c
 # the six python build tools, rewritten in C. not suites: they are
 # programs, and nothing they produce can judge itself, so they build
@@ -821,15 +815,7 @@ toolcheck: $(TOOL_BINS) $(BINDIR)/$(KERNEL) $(BINDIR)/boot/philemon.bin \
            $(BINDIR)/boot/philemon64.bin $(RAMDISK) $(SOURCE) ext4-image
 	@python3 tools/toolcheck.py
 
-# deflate against python's zlib, both ways round, at every compression
-# level: the level decides which of the three block types comes out,
-# so a decompressor checked only against our own compressor has seen one
-# third of the format. plus the loose objects of a real git repository
-.PHONY: zlibcheck
-zlibcheck: $(T)/inflate
-	@python3 tools/zlibcheck.py
-
-# the three sums against python, zlib and git. a published vector only
+# the two sums against python, zlib and git. a published vector only
 # ever tests one buffer hashed in one go, which is the case that cannot
 # fail, so this feeds three hundred lengths through in pieces of 1, 7,
 # 63, 64 and 65 bytes as well
@@ -947,12 +933,6 @@ test: checkfmt checkarch portable-check $(BINDIR)/$(KERNEL) $(BOOTIMG) \
 	fi; \
 	printf '  %-10s ' toolcheck; \
 	if out=$$(python3 tools/toolcheck.py 2>&1); then \
-		echo 'ok'; \
-	else \
-		echo 'FAILED'; echo "$$out" | sed 's/^/    /'; fail=1; \
-	fi; \
-	printf '  %-10s ' zlibcheck; \
-	if out=$$(python3 tools/zlibcheck.py 2>&1); then \
 		echo 'ok'; \
 	else \
 		echo 'FAILED'; echo "$$out" | sed 's/^/    /'; fail=1; \
