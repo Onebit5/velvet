@@ -27,10 +27,10 @@ usage: srccheck.py [--with NAME=DIR]... [image]
 
   --with NAME=DIR   a checkout git here does not know about, whose tracked
                     files are part of the tree all the same: what the
-                    archive holds under NAME/ is DIR on disk. velvetOS
+                    archive holds under NAME/ is DIR on disk. a tree that
                     fetches this kernel into obj/velvet/ and ships it as
-                    kernel/, so it passes --with kernel=obj/velvet. a bare
-                    --with DIR means DIR=DIR
+                    kernel/ passes --with kernel=obj/velvet. a bare --with
+                    DIR means DIR=DIR
 """
 
 import hashlib

@@ -12,7 +12,7 @@
 # memory, the scheduler, the disks, the journal, a resize, fsck, and the
 # source on the medium. ring 3 is checked by the selftests, `make
 # kselftest`, and by whatever system ships this kernel with programs on
-# it, velvetOS's boot test being the first of those.
+# it.
 #
 #   usage: tools/boottest.sh [velvet.img]
 

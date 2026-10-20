@@ -70,10 +70,10 @@ the targets
    reached from outside; the forwarding is the *only* way in, so from another
    terminal it is ``nc -u localhost 5556`` and not the guest's own address.
 
-   the shell's builtins all work. a name that is not a builtin is looked
-   for as a program, and this image carries none, so ``ls`` answers that it
-   is not something you can type. booting the kernel with programs on it is
-   what velvetOS is for.
+   the image asks which selftests to run, and ``none`` leaves the machine
+   up. alt+5, or ``ctrl+\`` then 5 on serial, is the kernel's monitor,
+   where its builtins all work. it runs no programs, and booting the kernel
+   with programs on it is what a system built on it is for.
 
 ``make disk``
    throw ``disk.img`` away and build a fresh one. ``make run`` builds it once
@@ -129,12 +129,12 @@ why ``arch/`` is worth anything. see `the architecture boundary
 building it from another tree
 -----------------------------
 
-velvetOS builds a release of this repository, which its build clones into
-``obj/velvet/``, with this makefile, from the outside:
+a tree that ships this kernel builds a release of it with this makefile,
+from the outside, wherever it cloned it to:
 
 .. code-block:: sh
 
-   make -C obj/velvet BINDIR=$PWD/bin/kernel OBJROOT=$PWD/obj/kernel \
+   make -C path/to/velvet BINDIR=$PWD/bin/kernel OBJROOT=$PWD/obj/kernel \
         SOURCE=$PWD/bin/source.tar kernel philemon tools
 
 ``BINDIR`` and ``OBJROOT``
@@ -146,15 +146,13 @@ velvetOS builds a release of this repository, which its build clones into
    the archive whose sha-1 is stamped into the kernel. left alone it is this
    tree's own archive, built by this makefile. a system that ships the kernel
    inside a bigger source tree passes that tree's archive instead, because
-   the stamp is a claim about the source shipped *beside* the kernel, and
-   for velvetOS that is all of velvetOS. see `the source on the medium
-   <subsystems/fs.rst>`_.
+   the stamp is a claim about the source shipped *beside* the kernel. see
+   `the source on the medium <subsystems/fs.rst>`_.
 
 ``sources.mk``
    what the kernel is made of. a build that compiles the kernel with other
-   tools, the way velvetOS's self-hosting build compiles it with its own
-   assembler and linker, includes this file rather than keeping a list of
-   its own.
+   tools, an assembler and a linker of its own for instance, includes this
+   file rather than keeping a list of its own.
 
 the include path and the version
    the same build needs the kernel's include path, ``include/`` and
@@ -166,7 +164,7 @@ the include path and the version
 ``$(OBJROOT)/x86_64/kernel.objects``
    every object the kernel was linked from, in link order, written beside
    the kernel at each link, so another linker can be handed exactly the same
-   inputs. velvetOS's ``kernelcheck`` uses it.
+   inputs.
 
 the suites and the python checkers find their images under ``bin/tests/``,
 so ``make test`` is run here with ``BINDIR`` left alone.
@@ -207,8 +205,5 @@ notes
 - there is no ``make iso`` target any more. the image is written by
   philemon in ``tools/mkboot.py`` and boots directly; the old iso went away
   in 0.1.12, when philemon replaced the bootloader before it.
-- the kernel is built by this project's own make, assembler and linker in
-  velvetOS, which is where those tools are. see velvetOS's
-  ``docs/building.rst``.
 
 .. _testing: testing.rst

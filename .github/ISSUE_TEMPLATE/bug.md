@@ -8,9 +8,9 @@ assignees: ''
 
 <!-- one bug per issue, please. if you have found two, open two.
 
-     this is the kernel's tracker. a bug in a program, the libc, the
-     toolchain or git belongs to velvetOS; if you cannot tell which side it is
-     on, open it here and say so. -->
+     this is the kernel's tracker. a bug in a program, a libc or a
+     toolchain belongs to the system that ships it; if you cannot tell which
+     side it is on, open it here and say so. -->
 
 ## what happens
 
@@ -35,10 +35,11 @@ make run
 
 - version: the banner prints `velvet v...`, and `make kernelrelease`
   prints the one a checkout would build
-- commit: `git rev-parse --short HEAD`, or, if you saw it in velvetOS, the
-  release it builds (`KERNEL_VERSION` in its `kernel-release.mk`)
+- commit: `git rev-parse --short HEAD`, or, if you saw it in a system
+  built on velvet, the release that system ships, which the banner prints
 - host: `uname -a`, and the versions of gcc and nasm
-- seen on this repository's own image (`make run` here), or on velvetOS?
+- seen on this repository's own image (`make run` here), or on a system
+  built on it, and which one?
 - qemu settings, if they are not the defaults. `make run` uses `CPUS=4 MEM=2G`
 
 ## the output

@@ -13,9 +13,8 @@ starts here and runs unmodified. not linux's insides: no modules, no driver api.
 that plan is the 0.6.x series of [ROADMAP.md](ROADMAP.md), and the non-goals are at the
 top of it.
 
-it is the kernel of [velvetOS](https://github.com/Onebit5/velvetOS), which builds on a
-release of it and puts the programs, the libc and the toolchain on top. until 0.4.0 the
-two were one tree; this is the half that runs in ring 0, and before it.
+it is a kernel and nothing more: what runs in ring 0, and before it. the programs, a libc
+and a toolchain belong to whatever system is built on a release of it.
 
 what is in here: philemon, the bootloader, and the handoff it makes; physical and
 virtual memory, with demand paging and copy on write; threads, processes, signals and
@@ -73,8 +72,8 @@ make kernelrelease   # print the version
 the image this tree builds carries no programs but its selftests and an `/init` that runs
 them, so what you get is a question: which selftests to run. name some, or `all`, and it
 runs them as guest and powers off. `none` leaves the machine up, and alt+5 (ctrl+\ then 5
-on serial) is the kernel's monitor, where its builtins all work. for the machine with
-programs on it, build velvetOS.
+on serial) is the kernel's monitor, where its builtins all work. a machine with programs
+on it is a system built on this kernel.
 
 another tree builds the kernel with `make -C path/to/velvet BINDIR=... OBJROOT=...
 SOURCE=... kernel philemon tools`; [docs/building.rst](docs/building.rst) says what each
@@ -83,9 +82,8 @@ of those is for.
 ## releases
 
 a release is a tag, `vX.Y.Z`, cut from `master` when a roadmap entry is done, and
-never moved once it is pushed: velvetOS names the release it builds on by its version
-alone, in its `kernel-release.mk`, so a tag that moved would hand it a different
-kernel under the same name.
+never moved once it is pushed: a tree built on a release names it by its version alone,
+so a tag that moved would hand it a different kernel under the same name.
 [docs/versioning.rst](docs/versioning.rst) has the rest.
 
 ## documentation
@@ -94,12 +92,12 @@ the full documentation is in [`docs/`](docs/index.rst), split into pages
 about the project and pages about the code:
 
 - [**code style**](docs/coding-style.rst): how to write the code, name things, comment, and handle errors; where a header lives; the TODO/FIXME convention, and `make lint`
-- [**contributing**](docs/contributing.rst): which repository a change goes to, the workflow, commit messages, sign-off, review, patches by email, and the rule that **ci is the gate**
+- [**contributing**](docs/contributing.rst): what belongs here, the workflow, commit messages, sign-off, review, patches by email, and the rule that **ci is the gate**
 - [**building**](docs/building.rst): the toolchain, every make target, running it, and building it from another tree
 - [**testing**](docs/testing.rst): the host suites, the checks against other implementations, and the boot test
 - [**selftests**](docs/dev-tools/kselftest.rst): running them, writing one, and what a failing one means
 - [**layout**](docs/layout.rst): the source tree, the headers, and the subsystem map
-- [**releases**](docs/versioning.rst): how versions are cut, and how a release reaches velvetOS
+- [**releases**](docs/versioning.rst): how versions are cut, and what a release promises
 - [**the system calls**](docs/syscalls.rst): the abi between ring 3 and the kernel
 
 and one page per subsystem under [`docs/subsystems/`](docs/subsystems/index.rst):
@@ -109,8 +107,8 @@ and one page per subsystem under [`docs/subsystems/`](docs/subsystems/index.rst)
 [net](docs/subsystems/net.rst), [lib](docs/subsystems/lib.rst),
 [shell](docs/subsystems/shell.rst), [tools](docs/subsystems/tools.rst).
 
-the kernel's history from 0.4.0 on is [CHANGELOG.md](CHANGELOG.md). before that it is
-velvetOS's changelog, which is the history of the two of them together.
+the kernel's history from 0.4.0 on is [CHANGELOG.md](CHANGELOG.md), which also says where
+the history before that is kept.
 
 ## naming
 

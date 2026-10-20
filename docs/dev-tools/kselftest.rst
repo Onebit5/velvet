@@ -289,4 +289,4 @@ an accident, because some program already depends on it.
 
 a selftest changes only when the promise does. that is a decision about
 the abi, made on purpose: the commit that makes it says so, and says what
-programs have to do about it, starting with velvetOS's.
+programs have to do about it.

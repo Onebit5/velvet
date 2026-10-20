@@ -1,20 +1,19 @@
 # contributing
 
-velvet is a 64-bit kernel for x86_64, written in C and booted by a bootloader
-of its own, and the kernel of [velvetOS](https://github.com/Onebit5/velvetOS).
-contributions are welcome, and they do not have to be code: a bug report that
+velvet is a 64-bit kernel for x86_64, written in C and booted by a bootloader of its
+own. contributions are welcome, and they do not have to be code: a bug report that
 reproduces something the machine gets wrong is worth as much as a patch, and so is
 the test that catches it next time. the fastest way in is to build it, boot it, and
 find the moment where what happens is not what should.
 
-**first, the right repository.** this one is for what runs in ring 0 or before it:
-the subsystems, the shell, philemon, the syscall layer, and the suites and tools
-for those. the programs, the libc, the toolchain and git are velvetOS's. a change
-that needs both, a new syscall being the usual one, lands here first and in velvetOS
-once it pins a kernel that has it.
+**first, what belongs here.** what runs in ring 0 or before it: the subsystems, the
+monitor, philemon, the syscall layer, and the suites and tools for those. programs, a
+libc and a toolchain are not here; they belong to the system built on the kernel. a new
+syscall lands here with the selftest that holds the kernel to it, and a program can use
+it from the first release that has it.
 
 the full guide is [`docs/contributing.rst`](docs/contributing.rst). it covers
-which repository a change goes to, the three ways to contribute, what a pull request
+what belongs here, the three ways to contribute, what a pull request
 has to do, the commit message format, the sign-off, how review works, and one rule
 that outranks the rest: **ci is the gate**. a change that does not pass it is not
 merged, however good it is, because a tree that does not build is itself the bug.

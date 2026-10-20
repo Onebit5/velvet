@@ -18,8 +18,8 @@
 - [ ] `make boottest` passes, if it changes what the machine does
 - [ ] `make kselftest` passes, and a bug a program can see comes with a
       selftest that fails before the fix
-- [ ] if it changes the syscalls or anything else a program sees, the
-      velvetOS half is described above, so it can follow once this is in
+- [ ] if it changes the syscalls or anything else a program sees, what a
+      program does about it is described above
 - [ ] a new feature brings its documentation in `docs/`
 - [ ] signed off with `git commit -s`
 - [ ] any model assistance disclosed with an `Assisted-by:` trailer

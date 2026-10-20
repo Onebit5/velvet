@@ -37,9 +37,8 @@ language and toolchain
 
 C, and only C
    the kernel is C11 (``-std=gnu11``) and freestanding. no hosted libc, no
-   ``<stdio.h>``, no ``main``. the programs that run on it are velvetOS's,
-   and link against velvetOS's own libc, which is the same C but has fewer
-   excuses. there is no C++ in this project and adding one is a discussion,
+   ``<stdio.h>``, no ``main``. the programs that run on it are not in this
+   tree, and link against a libc of their own. there is no C++ in this project and adding one is a discussion,
    not a commit.
 
 fixed-width types by default

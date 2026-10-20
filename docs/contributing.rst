@@ -2,8 +2,8 @@ contributing
 ============
 
 velvet is a 64-bit kernel for x86_64, written in C and booted by a
-bootloader of its own. it is the kernel of velvetOS, and a machine built to
-be understood rather than deployed. contributions are welcome, and they go through the same door as
+bootloader of its own, and a machine built to be understood rather than
+deployed. contributions are welcome, and they go through the same door as
 everything else: an issue, an email, or a pull request on github that
 builds, boots, and passes CI. this page is the door.
 
@@ -12,25 +12,19 @@ and it is not optional, for the same reason the compiler flags are not
 optional: a change that works but does not fit is a change somebody else has
 to fix.
 
-which repository
-----------------
+what belongs here
+-----------------
 
-the kernel and the system built on it are two repositories, and a change
-goes to the one whose code it is.
+everything that runs in ring 0 or before it: the subsystems, the monitor,
+philemon, the syscall layer, the host suites for any of those, and the
+tools that build and check them. programs, a libc, a toolchain and what a
+system puts on its medium are not here. they belong to the system built on
+this kernel, and a change to them goes there.
 
-**here**: everything that runs in ring 0 or before it. the subsystems, the
-shell, philemon, the syscall layer, the host suites for any of those, and
-the tools that build and check them.
-
-**velvetOS**: everything that runs in ring 3 or builds the machine from
-outside it. the programs, the libc, the assembler, linker, make and ``ar``,
-git, and what goes on the medium.
-
-a change that needs both, a new syscall being the usual one, lands here
-first, because velvetOS can only use it once a release has it and
-velvetOS's ``kernel-release.mk`` names that release. say in the pull
-request what the other half will be, and open that one in velvetOS when
-this one is merged.
+a new syscall, or anything else a program can see, lands here with a
+selftest that holds the kernel to it, and the pull request says what a
+program does with it. a program can use it from the first release that
+has it.
 
 ways to contribute
 ------------------
@@ -322,11 +316,10 @@ the second job, ``build-and-test``, installs the toolchain and then, in order:
    that broke it is what gets fixed: the kernel does not break userspace.
    `kernel selftests <dev-tools/kselftest.rst>`_ has the rest.
 
-what this CI cannot see is the programs velvetOS ships and the kernel built
-by velvetOS's own tools, because both are velvetOS's. velvetOS's CI runs
-them on every kernel it pins, so a change here that breaks a program the
-selftests do not cover is found the moment velvetOS moves its pin, and is a
-bug here even though the failure is reported there.
+what this CI cannot see is the programs a system ships on top of the
+kernel. a change here that breaks one of them where no selftest looked is
+still a bug here, even when the failure is reported somewhere else: the
+selftests are the promise written down, not the whole of it.
 
 `testing`_ is the reference for all of these, including how to run a single
 suite and what a failure looks like.

@@ -12,6 +12,6 @@
 #
 # read by the GNUmakefile, by tools/checkarch.py, tools/portable.py and
 # tools/toolcheck.py, and by anything that builds this kernel from outside
-# it. velvetOS's self-hosting build includes this file rather than keeping
-# a copy of the list, because two copies of it would drift.
+# it, which includes this file rather than keeping a copy of the list,
+# because two copies of it would drift.
 KERNEL_PORTABLE := include init drivers fs lib mm net sched shell

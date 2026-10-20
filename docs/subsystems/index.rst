@@ -22,6 +22,5 @@ reference the block cache and the journal, and the syscall layer described
 in scheduling and processes is the other half of `the system calls
 <../syscalls.rst>`_.
 
-what runs on top of the kernel is not here. the libc, the programs, the
-assembler, the linker, make and git are velvetOS's, the system built on this
-kernel, and its ``docs/subsystems/`` has a page for each.
+what runs on top of the kernel is not here: a libc, programs, and the tools
+that build them belong to the system built on it.

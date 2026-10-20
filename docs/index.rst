@@ -5,10 +5,8 @@ velvet is a tiny 64-bit kernel for x86_64, written in C, booted by a
 bootloader of its own. this is its documentation: what each part is, why it
 is the way it is, and how to work on it.
 
-it is the kernel of velvetOS, and until 0.4.0 the two were one tree. the
-system built on top of it, the libc, the programs, the assembler, linker and
-make that build this kernel, and git, is velvetOS, which builds on a
-release of this repository, cloned into its ``obj/velvet/``.
+it is a kernel and nothing more. a libc, programs, and the tools that build
+them belong to a system built on a release of this one, and are not here.
 
 the documentation is split in two. the pages here at the root are *about the
 project*: how to build it, how to test it, how to write and send a change.

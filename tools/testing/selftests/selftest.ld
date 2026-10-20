@@ -1,7 +1,7 @@
 /*
  * tools/testing/selftests/selftest.ld
  * where a selftest lives: down in the low half, where a program lives,
- * at the address velvetOS links its own programs at. no higher half and
+ * at 0x400000, where a static x86_64 program is linked. no higher half and
  * no -mcmodel=kernel, because a selftest is a program like any other
  */
 

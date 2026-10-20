@@ -17,16 +17,15 @@ KERNELRELEASE = $(VERSION).$(PATCHLEVEL).$(SUBLEVEL)
 #   make kernelrelease -> print the version
 #   make clean
 #
-# building from somewhere else. velvetOS builds this kernel out of its own
-# tree, and says where things go rather than letting them land in this
-# checkout:
+# building from somewhere else. a tree that ships this kernel builds it
+# out of its own tree, and says where things go rather than letting them
+# land in this checkout:
 #
-#   make -C obj/velvet BINDIR=... OBJROOT=... SOURCE=... kernel philemon tools
+#   make -C velvet BINDIR=... OBJROOT=... SOURCE=... kernel philemon tools
 #
 # BINDIR and OBJROOT are where the outputs go. SOURCE is the archive whose
 # hash is stamped into the kernel, which is the whole tree shipped beside
-# it, for velvetOS that is velvetOS, this directory included, and not
-# only this directory. left alone, it is this tree's own archive.
+# it, this directory included. left alone, it is this tree's own archive.
 
 KERNEL := velvet
 
@@ -64,9 +63,8 @@ NASM := nasm
 # x86_64 is the only one, and the mechanism for there being more than
 # one is kept deliberately.
 #
-# an aarch64 port was written and removed again: 0.2.20 in velvetOS's
-# CHANGELOG.md is where it is told. what
-# it found while it existed is still here and is most of why 0.2.20's
+# an aarch64 port was written and removed again, in 0.2.20. what it
+# found while it existed is still here and is most of why 0.2.20's
 # boundary is worth anything: a portable file building an x86 stack
 # frame, kmain naming a machine, and a serial driver that turned out to
 # be a terminal with a chip stuck to it. none of that needed the port to
@@ -194,7 +192,7 @@ $(OBJ): | $(VERSION_H)
 #
 # and what was linked is written down beside it, in the order it went
 # in, for anything that wants to link the same kernel again with another
-# linker: velvetOS's kernelcheck hands exactly this list to its own
+# linker and compare the two.
 $(BINDIR)/$(KERNEL): $(OBJ) $(OBJDIR)/srcstamp.o arch/$(ARCH)/linker.ld \
                       tools/gensyms.py
 	@mkdir -p $(@D) $(OBJDIR)

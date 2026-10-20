@@ -409,8 +409,7 @@ elf
 ---
 
 ``elf.c`` loads a program, with the ramdisk and the disk as its image
-sources. the programs themselves are velvetOS's, and its
-``docs/subsystems/userland.rst`` is the program side.
+sources. the programs themselves are not in this tree.
 
 the ext4 interface
 --------------------

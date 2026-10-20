@@ -145,7 +145,7 @@ drawn around drivers before there is a second machine to draw it against is
 a guess.**
 
 one of them stopped being a guess. an aarch64 port was written and then
-removed (0.2.20 in velvetOS's ``CHANGELOG.md`` tells it), and while it
+removed, in 0.2.20, and while it
 existed it answered the question
 for the serial driver: ``drivers/serial.c`` was a terminal with a chip stuck
 to it. an 8250 is not an x86 chip. *reaching* it through a port space is,

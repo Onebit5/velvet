@@ -21,21 +21,14 @@ how a release happens
 
 the tag and the release are the version. no commit in the history names it.
 
-and then the kernel is shipped, which is a step in another repository.
-velvetOS builds on a release of this one, named by its version in
-velvetOS's ``kernel-release.mk``, and a release here reaches a system
-only when velvetOS moves that file to the new version (``make
-kernel-update`` there does it) and its own CI boots the result. until
-then the release exists and nothing runs it. so **a tag here is never
-moved once it is pushed**: velvetOS names a release by its version alone
-and clones whatever the tag is, so a tag that moved would hand every
-build after it a different kernel under the same name. a fix to a
-release is the next release.
+a system built on this kernel names the release it builds on by its
+version alone, and clones whatever the tag is. so **a tag here is never
+moved once it is pushed**: a tag that moved would hand every build after
+it a different kernel under the same name. a fix to a release is the next
+release.
 
-the two numbers are not the same number. until 0.4.0 the kernel and the
-system were one tree with one version; from 0.4.0 each is released on its
-own, so velvetOS 0.4.3 may well ship velvet 0.4.1, and either can move
-without the other. the shared history is why both started at 0.4.0.
+the number is this kernel's own. a system built on it has a number of its
+own, and moves to a new release of this one when it is ready.
 
 the 0.x milestones
 ------------------
@@ -85,7 +78,7 @@ the top of the ``GNUmakefile``
    ``top``, ``arcana`` and ``persona`` all print that one macro, so they
    can never disagree about which kernel they are running. ``make
    kernelrelease`` prints it. it is the kernel's number and nobody else's:
-   the system has its own, in velvetOS's ``etc/os-release``.
+   a system built on it has its own.
 
 all three have to agree at the moment a release is cut. a version in one and
 not the others is the kind of inconsistency that looks fine until a machine

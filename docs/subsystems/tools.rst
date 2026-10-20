@@ -19,9 +19,7 @@ most of the checkers exist for one reason, stated in `contributing
 proves nothing. where another implementation of a format exists, the project
 tests against that instead.
 
-the checkers for the assembler, the linker, make, ``ar`` and git went with
-the toolchain to velvetOS, which is where those programs are. what is here
-checks the kernel and the formats the kernel reads.
+what is here checks the kernel and the formats the kernel reads.
 
 ``hashcheck.py``
    the two sums against python, ``zlib`` and git itself.
@@ -140,7 +138,8 @@ the boot test
    build the image, boot it headless in qemu, and **type commands at the
    shell over the serial port**, checking the answers. the medium carries
    no programs, so what it checks is what the kernel can show by itself;
-   ring 3 is checked by velvetOS's boot test, on top of a pinned kernel. it is a shell script
+   ring 3 is checked by the selftests, and a system's programs by that
+   system. it is a shell script
    rather than python because it is mostly qemu's own flags. the serial log
    is left in ``bin/*-boottest.log``, and CI uploads it with the boot image
    when a run fails. see `testing <../testing.rst>`_.

@@ -58,12 +58,6 @@ are all here, and they *have* to exist, because gcc can emit calls to
 ``memcpy``/``memset`` behind your back even in freestanding mode (struct
 copies, and so on).
 
-this is the **only** copy of these functions: velvetOS's libc compiles this
-same file hosted, out of the release it clones into ``obj/velvet/``,
-rather than keeping a second one, which is the mistake this project
-already made once with two libcs and does not need twice. so a change
-here is a change to that libc too, the day velvetOS moves to a release
-that has it.
 ``strcasecmp`` is here because dns needs it. a name is case-insensitive
 and a server echoes the question back with whatever case it chose, some
 varying it deliberately to make a reply harder to forge.
@@ -113,9 +107,7 @@ by loop rather than by argument.
 
 ``clock.c`` is the time now: when boot was, which the cmos chip said once,
 and how long the timer says it has been since. it is apart from
-``epoch.c`` because it needs the timer, which only the kernel has, while
-the arithmetic is compiled into velvetOS's programs as well, and a program
-that wants a date should not have to answer for a timer it never asks.
+``epoch.c`` because it needs the timer and the arithmetic does not.
 
 symbols and backtraces
 ----------------------
@@ -143,8 +135,7 @@ table and the shell's session (a shell is a kernel thread with no process
 entry of its own). one block of ``NAME=value`` strings, each ended by a NUL,
 with an empty string for the end of the lot, that shape is what makes the
 whole thing one ``memcpy`` to inherit, and inheriting is most of what an
-environment is *for*. what a program does with it is velvetOS's, in its
-``docs/subsystems/userland.rst``.
+environment is *for*. what a program does with it is the program's.
 
 
 the epoch interface

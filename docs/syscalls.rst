@@ -100,7 +100,7 @@ wait(pid, &status, flags). pid is a child, or -1 for any. the status is what the
 
 four calls here are for a program drawing whole screens, and a shell needs none of them: it prints a prompt, reads a line and prints an answer, and the console keeps the cursor where the printing left it. an editor cannot work that way. it paints the entire screen, puts the cursor somewhere in the middle of what it painted, and waits for one keystroke rather than a line. getkey is the interesting one, because it is *also* how raw mode arrives. there is no flag anywhere saying "this terminal is raw": asking for a line gets the line discipline with its echo and its backspace handling, and asking for a key gets the key. the two questions are different, so they are different calls, and nothing has to remember which mode anything is in
 
-what a file is, for anyone who wants to know without reading it. a program sees it under its posix name, struct stat, and velvetOS's userland/syscall.h holds that one against this one field by field at compile time, so the two cannot drift apart without the build saying so. the padding is explicit so that neither side's compiler gets to decide it
+what a file is, for anyone who wants to know without reading it. a program sees it under its posix name, struct stat, and a libc that keeps its own can hold that one against this one field by field at compile time, so the two cannot drift apart without its build saying so. the padding is explicit so that neither side's compiler gets to decide it
 
 three calls are the smallest set that lets a program use udp: claim a port, send to somebody, take what arrived. there is no `connect` and no `accept`, because udp has neither, a socket here hears from everybody and says who each datagram came from, which is what makes a udp server one port rather than a connection per talker. recvfrom does not block. it says "nothing yet" and the program sleeps and asks again, which is a poll rather than a wait, honest for a kernel with no way yet to park a thread on a socket, and it keeps the receive path out of the business of waking anybody
 
@@ -153,20 +153,16 @@ where this core's kernel stack is, for the entry stub to stand on. per core, not
 the libc side
 -------------
 
-the other side of the door is not in this tree. velvetOS, the system built
-on this kernel, keeps it in ``userland/syscall.h``: each of these wrapped in
-a function, so a program calls ``write(1, buf, len)`` rather than the
-number. the wrappers are one instruction and a return value, and the shape
-of each is the argument list above.
+the other side of the door is not in this tree. a libc wraps each of these
+in a function, so a program calls ``write(1, buf, len)`` rather than the
+number. a wrapper is one instruction and a return value, and the shape of
+each is the argument list above.
 
-the numbers are written down once. ``userland/syscall.h`` includes the
-headers in ``include/uapi/velvet/`` from the release it clones into
-``obj/velvet/`` rather than keeping a copy, so the two sides cannot
-disagree about which number is which. ``struct stat`` keeps its posix
-name there, and is checked against ``struct user_stat`` with
-``_Static_assert``\ s, size and every offset, so a layout that drifts
-fails to compile. a call added on this side is usable there once a
-release has it, velvetOS's ``kernel-release.mk`` names that release, and
-``syscall.h`` has its wrapper, which is why a new call is still a change
-to both projects, in that order.
+the numbers are written down once, in ``include/uapi/velvet/``, which is the
+part of this tree a program is meant to include. a libc that includes those
+headers from the release it builds on, rather than keeping a copy, cannot
+disagree with the kernel about which number is which, and a ``struct
+stat`` checked against ``struct user_stat`` with ``_Static_assert``\ s,
+size and every offset, fails to compile when a layout drifts. a call added
+here is usable there from the first release that has it.
 

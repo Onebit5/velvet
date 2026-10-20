@@ -100,13 +100,6 @@ implementation exists, the project tests against that instead:
    working tree, and require the archive's sha-1 to appear inside the kernel
    shipped beside it.
 
-the checks against nasm, ``ld``, GNU make, GNU ``ar`` and real git are
-velvetOS's, with the assembler, linker, make, ``ar`` and git they check.
-one of them is about this kernel: velvetOS's ``kernelcheck`` links the
-kernel's own objects with velvetOS's linker and with ``ld``, and its
-``selfhost`` builds the whole kernel with velvetOS's tools and requires the
-same bytes this makefile's build produces.
-
 the static checks
 ~~~~~~~~~~~~~~~~~
 
@@ -157,9 +150,8 @@ types, both disks mounted, the journal started, a ``resize`` that grows
 the work filesystem into its partition, ``fsck`` finding nothing twice
 running, and the source on the medium verified against the stamp and
 unpacked onto the disk. ring 3 is the other half of the machine: the
-selftests below check what the kernel promises it, and velvetOS's boot
-test checks the programs it ships, on top of whatever kernel velvetOS has
-pinned.
+selftests below check what the kernel promises it, and the programs a
+system ships are that system's to check.
 
 ``kselftest``
 -------------
@@ -290,7 +282,7 @@ So the way to tell the build worked is the same as for the suites:
     objdump -d bin/velvet | grep -c ud2
 
 At 0.4.0 that was 13275 checks, and the boot test of the time, 95 checks
-over the kernel and velvetOS's programs together, passed with them armed, on
+over the kernel and the programs it then shipped with, passed with them armed, on
 one cpu and on two: the boot, the memory map, paging, both cores, the trap
 path, the disk and keyboard drivers, the allocators, the filesystems,
 syscalls, ring 3, signals and the shell.

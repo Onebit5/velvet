@@ -71,10 +71,10 @@
 /*
  * what a file is, for anyone who wants to know without reading it.
  *
- * a program sees it under its posix name, struct stat, and velvetOS's
- * userland/syscall.h holds that one against this one field by field
- * at compile time, so the two cannot drift apart without the build
- * saying so. the padding is explicit so that neither side's compiler
+ * a program sees it under its posix name, struct stat, and a libc
+ * that keeps its own can hold that one against this one field by
+ * field at compile time, so the two cannot drift apart without its
+ * build saying so. the padding is explicit so that neither side's compiler
  * gets to decide it
  */
 struct user_stat {

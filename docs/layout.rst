@@ -7,8 +7,7 @@ the root *is* the kernel: the subsystem directories sit at the top, the way
 they do in other kernels, and beside them are the bootloader, the host
 suites, the tools and the medium the kernel is booted and tested on. a tree
 that builds on this one clones a release of it into a directory of its
-own (velvetOS uses ``obj/velvet/``) and sees every path here with that
-directory in front.
+own and sees every path here with that directory in front.
 
 at a glance
 -----------
@@ -100,7 +99,7 @@ compiled from, and the build adds exactly one directory under ``arch/``.
 the root holds more than the kernel, ``boot/``, ``tests/`` and ``tools/``
 among it, so nothing globs the root: the makefile, ``tools/checkarch.py``,
 ``tools/portable.py`` and ``tools/toolcheck.py`` all read that one list, and
-so does velvetOS's self-hosting build. a new file in an existing directory
+so can a build of the kernel from outside it. a new file in an existing directory
 costs no edit anywhere; a new directory is one word in ``sources.mk``.
 
 headers
