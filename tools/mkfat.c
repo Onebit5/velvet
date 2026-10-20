@@ -99,7 +99,7 @@ static void format(uint32_t total, const char *label)
     uint8_t boot[SECTOR];
     memset(boot, 0, sizeof boot);
     boot[0] = 0xeb; boot[1] = 0x58; boot[2] = 0x90;
-    memcpy(boot + 3, "VELVETOS", 8);
+    memcpy(boot + 3, "VELVET  ", 8);
     put16(boot + 11, SECTOR);
     boot[13] = SEC_PER_CLUSTER;
     put16(boot + 14, RESERVED);
@@ -269,9 +269,12 @@ static void copy_tree(const char *host_dir, const char *fs_dir)
 int main(int argc, char **argv)
 {
     if (argc < 4) {
-        fprintf(stderr, "usage: mkfat <image> <root-dir> <megabytes>\n");
+        fprintf(stderr, "usage: mkfat <image> <root-dir> <megabytes> "
+                        "[label]\n");
         return 2;
     }
+    /* what the volume calls itself, which is the caller's to say. */
+    const char *label = (argc > 4) ? argv[4] : "VELVET";
     uint64_t megabytes = strtoull(argv[3], NULL, 10);
     uint32_t total = (uint32_t)(megabytes * 1024 * 1024 / SECTOR);
 
@@ -289,7 +292,7 @@ int main(int argc, char **argv)
     }
 
     printf("%s: ", argv[1]);
-    format(total, "VELVETOS");
+    format(total, label);
 
     memset(&fs, 0, sizeof fs);
     if (!fat32_mount(&fs, image_read, image_write, NULL)) {

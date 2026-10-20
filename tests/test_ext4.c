@@ -160,7 +160,7 @@ int main(void)
 
     CHECK(fs.block_size == 1024, "with 1 KiB blocks");
     CHECK(fs.inode_size == 128, "and 128-byte inodes");
-    CHECK(strcmp(fs.label, "velvetos") == 0, "and the label it was given");
+    CHECK(strcmp(fs.label, "velvet") == 0, "and the label it was given");
 
 
 

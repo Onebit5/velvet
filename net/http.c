@@ -147,7 +147,7 @@ size_t http_get(char *out, size_t max, const char *host, const char *path)
     size_t at = 0;
     const char *parts[] = {
         "GET ", path, " HTTP/1.0\r\nHost: ", host,
-        "\r\nUser-Agent: velvetOS\r\nConnection: close\r\n\r\n"
+        "\r\nUser-Agent: velvet\r\nConnection: close\r\n\r\n"
     };
 
     for (size_t i = 0; i < sizeof parts / sizeof parts[0]; i++) {

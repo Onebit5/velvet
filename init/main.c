@@ -198,7 +198,10 @@ void kmain(const struct ph_handoff *handoff)
                 "which is enough\n", VFS_BOOT);
     }
 
-    /* live, or installed. a drive carrying philemon's table at sector 32 is a velvetOS boot medium. */
+    /*
+     * live, or installed. a drive carrying philemon's table at sector 32
+     * is a boot medium
+     */
     {
         int home = disk_system_drive();
         if (home < 0) {

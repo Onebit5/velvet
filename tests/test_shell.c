@@ -704,7 +704,7 @@ void disk_cache_stats(struct bcache_stats *out)
 
 const char *disk_label(size_t w)
 {
-    (void)w; return "VELVETOS";
+    (void)w; return "VELVET";
 }
 const char *disk_model(void)
 {
@@ -1632,15 +1632,15 @@ int main(void)
      */
 
     run("install");
-    CHECK(strstr(out, "not running from a velvetOS boot medium") != NULL,
+    CHECK(strstr(out, "not running from a boot medium") != NULL,
           "`install` with nothing to copy says so rather than trying");
 
     run("install 0");
-    CHECK(strstr(out, "not running from a velvetOS boot medium") != NULL,
+    CHECK(strstr(out, "not running from a boot medium") != NULL,
           "and naming a drive does not change that");
 
     run("install nonsense");
-    CHECK(strstr(out, "not running from a velvetOS boot medium") != NULL,
+    CHECK(strstr(out, "not running from a boot medium") != NULL,
           "nor does naming something that is not a drive");
 
 
@@ -2084,7 +2084,7 @@ int main(void)
     CHECK(strstr(out, "442") != NULL, "and how many symbols it carries");
 
     run("persona");
-    CHECK(strstr(out, "velvet@velvetOS") != NULL, "persona has a header");
+    CHECK(strstr(out, "monitor@velvet") != NULL, "persona has a header");
     CHECK(strstr(out, "Imaginary CPU") != NULL, "and reports the cpu");
     CHECK(strstr(out, "1280x800") != NULL, "and the resolution");
     CHECK(strstr(out, "4 threads") != NULL, "and the thread count");

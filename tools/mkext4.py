@@ -437,7 +437,7 @@ def main():
         return 1
 
     out, root, mb = sys.argv[1], sys.argv[2], int(sys.argv[3])
-    label = sys.argv[4] if len(sys.argv) > 4 else "velvetos"
+    label = sys.argv[4] if len(sys.argv) > 4 else "velvet"
 
     total_blocks = (mb * 1024 * 1024) // BLOCK_SIZE
     img = Image(total_blocks)

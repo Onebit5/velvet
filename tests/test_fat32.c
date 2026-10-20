@@ -103,7 +103,7 @@ int main(int argc, char **argv)
 
 
     CHECK(fat32_mount(&fs, img_read, img_write, &fd), "the image mounts");
-    CHECK(strcmp(fs.label, "VELVETOS") == 0, "the volume label came through");
+    CHECK(strcmp(fs.label, "VELVET") == 0, "the volume label came through");
     CHECK(fs.root_cluster == 2, "the root is where the boot sector says");
     CHECK(fs.num_fats == 2, "two copies of the table");
     CHECK(fat32_cluster_bytes(&fs) == 512, "512-byte clusters");

@@ -94,7 +94,7 @@ bool install_system(const struct install_io *io, uint32_t now, bool split,
 
     uint64_t system_end = install_system_end(io->src_read, io->ctx);
     if (system_end == 0) {
-        *error = "there is no velvetOS boot medium to copy from";
+        *error = "there is no boot medium to copy from";
         return false;
     }
 
@@ -177,7 +177,7 @@ bool install_system(const struct install_io *io, uint32_t now, bool split,
     struct shifted shift = { io, first, part_sectors };
 
     struct mkfs_result r;
-    if (!mkfs_ext4(shifted_write, &shift, part_sectors, "velvetos",
+    if (!mkfs_ext4(shifted_write, &shift, part_sectors, "velvet",
                    now, &r, error)) {
         return false;
     }

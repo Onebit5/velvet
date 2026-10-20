@@ -854,10 +854,10 @@ static void cmd_persona(int argc, char **argv)
 
         switch (i) {
         case 0:
-            kprintf("velvet@velvetOS");
+            kprintf("monitor@velvet");
             break;
         case 1:
-            kprintf("-------------");
+            kprintf("--------------");
             break;
         case 2:
             kprintf("arcana    the Computer, rank %s", VELVET_VERSION);
@@ -1197,8 +1197,8 @@ static void cmd_install(int argc, char **argv)
     /* which drive carries this system. */
     int source = disk_system_drive();
     if (source < 0) {
-        kprintf("this machine is not running from a velvetOS boot medium, "
-                "so there is nothing to copy\n");
+        kprintf("this machine is not running from a boot medium, so "
+                "there is nothing to copy\n");
         return;
     }
 

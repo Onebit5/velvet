@@ -418,7 +418,7 @@ static void say_goodbye(enum init_stop how)
         kprintf("The innermost power of the Computer\n");
         kprintf("Arcana hath been set free.\n\n");
         kprintf("the kernel bestows upon thee the ability to\n");
-        kprintf("create velvetOS, the ultimate form\n");
+        kprintf("create thine own system, the ultimate form\n");
         kprintf("of the Computer's Arcana...\n\n");
         pit_busy_wait(3000);
     } else {

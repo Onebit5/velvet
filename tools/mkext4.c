@@ -204,7 +204,7 @@ int main(int argc, char **argv)
     const char *root = argv[2];
     uint64_t megabytes = strtoull(argv[3], NULL, 10);
     /* what the filesystem calls itself. */
-    const char *label = (argc > 4) ? argv[4] : "velvetos";
+    const char *label = (argc > 4) ? argv[4] : "velvet";
     uint64_t sectors = megabytes * 1024 * 1024 / SECTOR;
 
     image = fopen(path, "w+b");

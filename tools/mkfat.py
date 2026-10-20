@@ -12,7 +12,7 @@ agree with each other and are both wrong. so this aims at the spec
 rather than at my parser, and TESTING.md says to mount the result on
 linux, if a driver nobody here wrote can read it, the layout is right.
 
-usage: mkfat.py <output.img> <source-dir> [size-in-mib]
+usage: mkfat.py <output.img> <source-dir> [size-in-mib] [label]
 """
 
 import os
@@ -59,7 +59,7 @@ def not_bootable_stub(message):
 
 
 NOT_BOOTABLE = not_bootable_stub(
-    'velvetOS: this disk holds files, not a system. boot the cd.')
+    'this disk holds a filesystem and no bootloader')
 
 
 def layout(total_sectors):
@@ -228,10 +228,10 @@ class Image:
                 self.fat[current] = nxt
                 current = nxt
 
-    def write(self, path, label='VELVETOS'):
+    def write(self, path, label='VELVET'):
         boot = bytearray(SECTOR)
         boot[0:3] = b'\xeb\x58\x90'
-        boot[3:11] = b'VELVETOS'
+        boot[3:11] = b'VELVET  '
         struct.pack_into('<HBHBHHBHHHII', boot, 11,
                          SECTOR, SEC_PER_CLUSTER, RESERVED, NUM_FATS,
                          0,                      # root entries (fat32: 0)
@@ -288,7 +288,7 @@ class Image:
             f.write(b'\0')
 
 
-def build(out_path, src_dir, size_mib):
+def build(out_path, src_dir, size_mib, label='VELVET'):
     total_sectors = (size_mib * 1024 * 1024) // SECTOR
     img = Image(total_sectors)
 
@@ -316,7 +316,7 @@ def build(out_path, src_dir, size_mib):
             walk(full, child, cluster, False)
 
     walk(src_dir, 2, 0, True)
-    img.write(out_path)
+    img.write(out_path, label)
 
     used = img.next_free - 2
     print('%s: %d MiB, %d clusters of %dB, %d used, %d sectors per fat'
@@ -328,4 +328,7 @@ if __name__ == '__main__':
     if len(sys.argv) < 3:
         sys.exit(__doc__)
     size = int(sys.argv[3]) if len(sys.argv) > 3 else 64
-    build(sys.argv[1], sys.argv[2], size)
+    label = sys.argv[4] if len(sys.argv) > 4 else 'VELVET'
+    if len(label) > 11 or not label.isascii():
+        sys.exit('mkfat.py: a label is at most 11 ascii characters')
+    build(sys.argv[1], sys.argv[2], size, label)

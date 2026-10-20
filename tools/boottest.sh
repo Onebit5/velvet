@@ -165,7 +165,7 @@ check 'slab caches'      'kmalloc-'
 # the bare word turns up in the source listing too, and a check that a
 # file name can satisfy is not a check of the cache
 check 'thread cache'     'thread      '
-check 'disk at the root' 'ext4 "velvetos" mounted at /'
+check 'disk at the root' 'ext4 "velvet" mounted at /'
 # the disk the machine boots has a log on it, and mounting it is
 # supposed to replay that log and then write through it. a machine that
 # quietly fell back to mounting read-only would pass every check that
@@ -195,7 +195,8 @@ check 'fsck runs'        'inodes,'
 check 'fsck is happy'    'nothing wrong with it'
 check 'mount table'      'a module the bootloader handed the kernel'
 check 'arcana works'     'COMPUTER ARCANA'
-check 'persona works'    'velvet@velvetOS'
+# not its header, monitor@velvet, which every prompt above already says
+check 'persona works'    'threads bound to the wheel'
 check 'dmesg works'      "cr3 is the kernel's"
 
 # and did it stay alive rather than falling over
