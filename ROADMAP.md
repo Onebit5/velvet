@@ -1,23 +1,18 @@
 # where this is going
 
-velvet's plan, from 0.4.0 on. 0.4.0 is the release that made the kernel a
-project of its own, out of velvetOS, and everything before it is recorded
-there: until then the kernel and the system were one tree with one roadmap
-and one changelog, and a number below 0.4.0 anywhere in this document is a
-version from that history, in velvetOS's CHANGELOG.md.
+velvet's plan, from 0.4.0 on, the release that made the kernel a project
+of its own. a number below 0.4.0 anywhere in this document is a version
+from before then, and [CHANGELOG.md](CHANGELOG.md) says where that history
+is kept.
 
 what follows is a lot of small steps rather than one heroic one. each
 entry below should be a version on its own: buildable, bootable, and worth
-a paragraph in the changelog. the numbers are velvet's own and run without
-gaps. velvetOS is released separately, with numbers of its own, and a
-velvetOS release names the velvet release it is built on. where an entry
-here waits on one there, or the other way round, it says which, by project
-and number.
+a paragraph in the changelog. the numbers run without gaps.
 
 this is the kernel's plan and only the kernel's. accounts, passwords,
-logins, shells, libraries and installers are velvetOS's, even where they
-are why the kernel needs something; the kernel's part is the mechanism
-underneath, and an entry here says which velvetOS entry it is for.
+logins, shells, libraries and installers belong to the system built on top
+of it, even where they are why the kernel needs something; an entry here is
+the mechanism underneath, and says what a program can do with it.
 
 0.4.x is the kernel's half of a machine that rebuilds itself. 0.5.x is
 what the kernel owes a machine with more than one person on it, 0.6.x is
@@ -36,17 +31,15 @@ emulated, and 0.8.x is a kernel that can say what it is doing.
   code load here), and neither is the part of its userspace interface that
   exists for linux's own scale: namespaces, cgroups, `io_uring`, bpf.
 - **an architecture nobody can test.** an aarch64 port was written and
-  removed again (0.2.20 in velvetOS's changelog tells it), and the rule it
-  left is that a thing that cannot be checked here does not ship. a second
+  removed again in 0.2.20, and the rule it left is that a thing that cannot be checked here does not ship. a second
   architecture comes back when there is a machine to check it on.
 
 ## 0.4.x: the machine builds itself
 
-velvetOS's 0.4.x is a machine that can rebuild itself from its own disk,
-and its last step, velvetOS 0.4.4, has the machine build a kernel, install
-it and reboot into it. these are the kernel's half of that: a boot that
-can choose between two kernels, and one that cannot be lost to a kernel
-that does not come up.
+a machine that rebuilds itself from its own disk ends by building a
+kernel, installing it and rebooting into it. these are the kernel's half of
+that: a boot that can choose between two kernels, and one that cannot be
+lost to a kernel that does not come up.
 
 **0.4.3 a boot it can choose between.** philemon starts the kernel at one
 fixed place, which is right while there is only one kernel and wrong the
@@ -55,24 +48,25 @@ naming which kernel to start, and to say so when the answer is missing.
 *ends when two kernels are on one disk, either can be chosen, and neither
 has to know the other exists.*
 
-**0.4.4 an update that goes wrong costs one reboot.** velvetOS 0.4.4
-without this is a machine that can brick itself with one bad build. a new
+**0.4.4 an update that goes wrong costs one reboot.** a system that
+installs its own kernels is, without this, a machine that can brick itself
+with one bad build. a new
 kernel runs on probation: philemon counts the boots it has given it, and
 if the system has not said one of them was good before they run out, the
 boot after starts the kernel that was there before. when a boot counts
 as good, a prompt, a login, a service up, is the system's to decide and
-not the kernel's, and velvetOS's init is what says it (0.4.4 there).
+not the kernel's, and the system's init is what says it.
 *ends when a deliberately broken kernel is installed, fails, and the
 machine comes back up on the old one without anyone touching it.*
 
 ## 0.5.x: a machine for more than one person
 
 0.4.x is about what the machine can do. this is the first series about who
-it belongs to, and most of what that means to a person is velvetOS's: the
-account files, the shadow file and the login that reads it, `who`,
-`grant`, tls and the log of who did what are all in velvetOS's 0.5.x. what
-is here is what those stand on, and what the kernel has to enforce
-because nothing in ring 3 can.
+it belongs to, and most of what that means to a person is programs: the
+account files, the shadow file and the login that reads it, `who`, a way
+to act as somebody else, tls and the log of who did what. what is here is
+what those stand on, and what the kernel has to enforce because nothing in
+ring 3 can.
 
 there have been users since 0.1.5 and a session per console since 0.2.16,
 and both entries were careful about what they did not mean. the
@@ -91,7 +85,7 @@ permission."** every entry below deletes a clause of that sentence.
 
 **0.5.0 something genuinely unpredictable.** this machine has no source of
 randomness at all, and this series cannot be finished without one: a salt
-for velvetOS's shadow file, a vault key, an address that moves, and every
+for a shadow file, a vault key, an address that moves, and every
 nonce in a tls handshake. a csprng in `lib/`, seeded from `rdseed` where
 the cpu admits to having it, from timing jitter where it does not, and
 reseeded from the arrival times of interrupts, which is the one thing a
@@ -119,17 +113,16 @@ gains a `capable()` check so the kernel stops asking "is this uid 0",
 which it asks by name in the vfs and in the ramdisk driver, and starts
 asking "is this allowed to mount a disk". and `exec`
 honours the setuid bit, which nothing in this tree knows how to set
-today, for velvetOS's `grant` (0.5.3 there) to stand on. which uid is
-called what, and which groups exist, is velvetOS's to say (0.5.0 there).
+today, for a program that acts as somebody else to stand on. which uid
+is called what, and which groups exist, is the system's to say.
 the kernel's own login went in 0.4.2, and the kernel deals in numbers.
 
 **0.5.2 the primitives, and the first thing here that a right answer does
 not prove.** the ones the kernel itself uses: aes-xts, the cipher a vault
 (0.5.3) is written in, and sha-256 and hmac for the verifier in a vault's
-header. they go in `lib/`, beside `hash.c`. tls's are not here: aes-gcm,
-hkdf and x25519 are what velvetOS's tls (0.5.4 there) is made of, nothing
-in the kernel speaks tls, and arithmetic the kernel does not use is
-velvetOS's to keep, beside the argon2 its shadow file already wants.
+header. they go in `lib/`, beside `hash.c`. tls's are not here: nothing
+in the kernel speaks tls, and arithmetic the kernel does not use is a
+library's to keep.
 checked in isolation and against everybody: published vectors, and
 python's `hashlib` and `cryptography` over the same inputs, which is
 `hashcheck.py` doing again what it did for sha-1 in 0.3.17.
@@ -148,9 +141,8 @@ out of a comparison and no branch on a secret.
 0.2.13's block cache already sits, and it got there by being handed the
 two function pointers fat32 was already using, so the seam exists and has
 been load-bearing for a while. a vault is a large file that, given a key,
-mounts as a directory: aes-xts, with the key handed in from ring 3, where
-velvetOS derives it from a password with its shadow file's hasher (0.5.1
-there). the header is a salt and a verifier and nothing else. **the key
+mounts as a directory: aes-xts, with the key handed in from ring 3, which
+derives it from a password however it likes. the header is a salt and a verifier and nothing else. **the key
 never touches the disk**: powered off, the whole of it is noise.
 
 this is better than full disk encryption for a machine like this one, and
@@ -175,10 +167,10 @@ fault a security feature rather than only a bug**: an exploit that
 assumes a location crashes instead, and the kernel says so.
 
 the program's own base is the one that cannot move yet, and the
-dependency is worth naming rather than discovering: velvetOS's
-`toolchain/linker.ld` links every program at a fixed address, so a
-program that can be loaded anywhere is position-independent code, which
-is the compiler's problem and therefore velvetOS's. same for stack
+dependency is worth naming rather than discovering: a program linked at a
+fixed address stays there, so a program that can be loaded anywhere is
+position-independent code, which is the compiler's problem and not the
+kernel's. same for stack
 canaries: every build in this tree has `-fno-stack-protector` on it, and
 turning that around is a flag rather than a version.
 
@@ -210,8 +202,8 @@ left is the other direction: a program writing to the kernel's log, which
 is the orderly version of the serial-port logging this project has leaned
 on since 0.1.x. and a file can be made append-only to everybody but the
 kernel, with the kernel holding to it, because a log the logged-in can
-edit is not a log. velvetOS's auditing (0.5.5 there) is what keeps its
-record of logins and `grant` in such a file.
+edit is not a log. a system's record of who logged in, and who acted as
+whom, is what such a file is for.
 
 **what this series deliberately does not reach.** no acls and no
 mandatory access control, because owner-group-other with a `capable()`
@@ -230,10 +222,9 @@ the reason is the one every checker in this project rests on, an outside
 answer. a system call interface invented here can only ever be checked
 against itself; linux's has been written against by everybody, and the
 same static binary run on both machines says, call by call, where this
-kernel differs. velvetOS comes along at no cost: its programs include the
-kernel's `include/uapi/velvet/` rather than keeping copies of it, so when
-the numbers change, moving to the new release and rebuilding is the whole
-migration.
+kernel differs. a program that includes `include/uapi/velvet/` rather
+than a copy of it comes along at no cost: when the numbers change,
+rebuilding against the new release is the whole migration.
 
 the target is what a static program built against musl actually calls,
 which is a short and checkable list, and posix where linux follows posix.
@@ -278,8 +269,8 @@ it wrote all want the offset in the call rather than in the descriptor.
 **0.6.3 floating point in ring 3.** this kernel is built `-mno-80387
 -mno-sse` because there is **no fpu state in the context switch**, and a
 program that uses an `xmm` register today is a program whose arithmetic
-another thread can quietly corrupt. velvetOS's libc wants `strtod` and
-`%f`, which is how this was first noticed, but the x86_64 psabi is the
+another thread can quietly corrupt. a libc wants `strtod` and `%f`,
+which is how this was first noticed, but the x86_64 psabi is the
 reason it cannot wait: every float and double is passed in an `xmm`
 register, so no program built elsewhere gets far without one. `fxsave` and
 `fxrstor` around a switch, `xsave` where the cpu has it, and the kernel
@@ -317,8 +308,8 @@ a word and a handler to run. linux's are `rt_sigaction`, `rt_sigprocmask`,
 a `siginfo`, and a frame on the program's stack laid out exactly the way
 linux lays it out, read back by `rt_sigreturn` through the `sa_restorer`
 the libc passes in, which is how a handler finds its way home. the
-trampoline in velvetOS's `userland/syscall.h` is velvet's own version of
-the same idea, and goes when this arrives. *ends when a handler in a
+return trampoline a program brings along today is this kernel's own
+version of the same idea, and is not needed once this arrives. *ends when a handler in a
 binary built on linux runs here, interrupts a blocking read, and the read
 reports `EINTR`.*
 
@@ -332,7 +323,7 @@ anything remote.
 
 **0.6.8 `/proc`, laid out the way linux lays it out.** 0.4.1's `/proc` is
 the kernel's own reports, in the words its shell printed them, which is
-enough for velvetOS's `ps` and for nothing written elsewhere. software
+enough for a `ps` written against them and for nothing written elsewhere. software
 written elsewhere reads a directory per process, `/proc/self`, and files
 such as `stat` and `meminfo` in formats a great deal of code parses, and
 reading them is also how this version finds out how much of the kernel's
@@ -342,8 +333,8 @@ state is still only reachable from inside the kernel.
 does not start at its own entry point: it names a loader in `PT_INTERP`,
 and the kernel maps that too and starts there, with `AT_BASE`, `AT_PHDR`
 and `AT_ENTRY` in the auxiliary vector saying where everything went.
-velvetOS's dynamic linking (velvetOS 0.6.5) needs exactly this from the
-kernel, and so does every program on a linux machine that was not built
+a libc's dynamic linking needs exactly this from the kernel, and so does
+every program on a linux machine that was not built
 static. *ends when a dynamically linked program and its loader, both
 copied off a linux machine, start here.*
 
@@ -379,8 +370,8 @@ point of the series. the cancelled arm port is the precedent and the
 warning: a thing that cannot be tested here does not ship, so each of
 these has to be testable here *and* confirmed there. what reaching that
 hardware means for the system, an installer that writes a disk the
-firmware will boot and the time from somewhere that knows it, is in
-velvetOS's 0.7.x.
+firmware will boot and the time from somewhere that knows it, is the
+system's.
 
 **0.7.0 uefi.** philemon reads the disk through the bios and asks vbe for a
 framebuffer, which is `int 10h`, which does not exist on firmware made
@@ -427,8 +418,8 @@ frequency has to be measured rather than assumed, the lapic timer
 calibrated against something that is not itself, and the rtc read with its
 drift admitted. and the clock becomes something ring 3 can set and slew,
 because a laptop whose coin cell died is a machine that rejects the entire
-internet until somebody tells it what year it is, and the somebody is
-velvetOS's ntp client (0.7.1 there).
+internet until somebody tells it what year it is, and the somebody is an
+ntp client.
 
 **0.7.6 power.** `machine_poweroff` writes 0x2000 to port 0x604 and then to
 0xb004, which is qemu and bochs, and on real hardware neither does
@@ -461,10 +452,8 @@ first three real machines will each say something nobody predicted.
 this kernel has been able to say *what* went wrong since 0.1.x: a panic
 with a symbolised backtrace, `bt`, `ps`, `top`, a memory column, a count
 of syscalls by kind. what it cannot say is why, or where the time went, or
-what a program was doing at the moment it stopped. velvetOS's 0.4.x names
-the gap in its closing paragraph (no debugger) and leaves it there; the
-debugger is velvetOS's (0.8.0 there), and what it needs from the kernel
-is in this series.
+what a program was doing at the moment it stopped. a debugger is a
+program, and what it needs from the kernel is in this series.
 
 the outside answers here are unusually good, and one of them has been
 sitting in the build the whole time: **the kernel is compiled with `-g`
@@ -497,7 +486,7 @@ always refused, one process reaching into another's address space, which
 is why it is a version rather than a program, and why it wants 0.5.1's
 `capable()` underneath it, so that reaching in is a permission somebody
 holds rather than a thing that is possible. the debugger that uses it is
-velvetOS's.
+a program.
 
 **0.8.3 a gdb stub.** the remote serial protocol, over the wire or the
 serial line, so that *real gdb* attaches to this kernel. it is the
@@ -513,7 +502,7 @@ and what came back, with every string a call was handed copied out as the
 call read it, since by the time anybody reads the stream the program may
 have written over it. that is the kernel's half, and it is all numbers.
 turning them into words, a path, a set of flag names, the file a
-descriptor is, is a program's work, velvetOS's tracer (0.8.1 there).
+descriptor is, is a program's work: a tracer's.
 
 **0.8.5 a profiler.** sampling on the lapic timer, which has been per-cpu
 since 0.2.2, and unwinding from wherever the interrupt happened to land,
