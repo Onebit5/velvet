@@ -258,7 +258,7 @@ const char *pci_device_name(uint16_t vendor, uint16_t device)
     return NULL;
 }
 
-#ifndef VELVETOS_HOSTED
+#ifndef VELVET_HOSTED
 
 #include <asm/io.h>
 #include <asm/irq.h>

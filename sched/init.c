@@ -121,7 +121,7 @@ const char *init_state_name(enum service_state s)
 
 
 
-#ifndef VELVETOS_HOSTED
+#ifndef VELVET_HOSTED
 
 #include <velvet/sched.h>
 #include <velvet/thread.h>
@@ -602,4 +602,4 @@ bool init_boot(void)
     return true;
 }
 
-#endif /* VELVETOS_HOSTED */
+#endif /* VELVET_HOSTED */

@@ -52,7 +52,7 @@
 #include <velvet/init.h>
 
 /* and the four that only a pc has. */
-#if defined(VELVETOS_ARCH_X86_64)
+#if defined(VELVET_ARCH_X86_64)
 #include <asm/cpuinfo.h>
 #include <asm/smp.h>
 #include <asm/syscall.h>
@@ -701,7 +701,7 @@ static void cmd_ioapic(int argc, char **argv)
 {
     (void)argc; (void)argv;
 
-#if !defined(VELVETOS_ARCH_X86_64)
+#if !defined(VELVET_ARCH_X86_64)
     kprintf("there are no apics on this machine. the interrupts it has "
             "arrive the only way they can\n");
 #else
@@ -748,7 +748,7 @@ static void cmd_top(int argc, char **argv)
         sched_dump();
 
         /* which doors ring 3 actually uses. */
-#if defined(VELVETOS_ARCH_X86_64)
+#if defined(VELVET_ARCH_X86_64)
         kprintf("\nsyscalls\n ");
         bool any = false;
         for (unsigned i = 0; i < SYSCALL_COUNT; i++) {
@@ -823,7 +823,7 @@ static void cmd_persona(int argc, char **argv)
     };
 
     char brand[49];
-#if defined(VELVETOS_ARCH_X86_64)
+#if defined(VELVET_ARCH_X86_64)
     cpu_brand(brand);
 #else
     /*

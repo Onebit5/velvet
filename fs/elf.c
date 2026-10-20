@@ -198,7 +198,7 @@ bool elf_describe(const void *image, uint64_t size,
     return true;
 }
 
-#ifndef VELVETOS_HOSTED
+#ifndef VELVET_HOSTED
 
 #include <velvet/pmm.h>
 
@@ -283,4 +283,4 @@ struct elf_load_result elf_load(const void *image, uint64_t size,
     return r;
 }
 
-#endif /* VELVETOS_HOSTED */
+#endif /* VELVET_HOSTED */

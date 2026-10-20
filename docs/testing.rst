@@ -21,7 +21,7 @@ what it needs as an argument:
 - ``serial_feed()`` takes a byte.
 - ``run_line()`` takes a string.
 
-host builds define ``VELVETOS_HOSTED``, which turns ``irq_save()`` /
+host builds define ``VELVET_HOSTED``, which turns ``irq_save()`` /
 ``irq_restore()`` into no-ops. userspace is not allowed to ``cli`` and has
 nothing to lock out anyway. that is what lets the real spinlocks,
 allocators and scheduler run in a test process. see `testability
@@ -230,8 +230,8 @@ anything and should not be listed as a check until somebody works out why.
 ``ubsan`` works in trap mode, which needs no runtime:
 
     make HOSTFLAGS="-std=gnu11 -Wall -Wextra -Wno-stringop-truncation \
-        -Wno-stringop-overread -g -DVELVETOS_HOSTED -I. -Iinclude \
-        -Iarch/x86_64/include -Iobj/include -DVELVETOS_ARCH_X86_64 \
+        -Wno-stringop-overread -g -DVELVET_HOSTED -I. -Iinclude \
+        -Iarch/x86_64/include -Iobj/include -DVELVET_ARCH_X86_64 \
         -fsanitize=undefined -fsanitize-trap=undefined \
         -fno-sanitize-recover=all" <the suites>
 

@@ -224,7 +224,7 @@ void pmm_init_from_map(const struct ph_memmap_entry *entries, size_t count,
 }
 
 /* the plumbing, which needs a real boot to have happened. */
-#ifndef VELVETOS_HOSTED
+#ifndef VELVET_HOSTED
 
 void pmm_init(void)
 {

@@ -242,7 +242,7 @@ const struct acpi_ioapic *acpi_ioapic_for_gsi(const struct acpi_info *info,
     return best;
 }
 
-#ifndef VELVETOS_HOSTED
+#ifndef VELVET_HOSTED
 
 #include <velvet/pmm.h>
 #include <velvet/kprintf.h>

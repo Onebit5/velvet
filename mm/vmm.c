@@ -261,7 +261,7 @@ bool vmm_unmap_page(uint64_t pml4, uint64_t virt)
  * everything below talks to the actual cpu, so the host tests skip it
  * and exercise the portable half above instead
  */
-#ifndef VELVETOS_HOSTED
+#ifndef VELVET_HOSTED
 
 #include <asm/msr.h>
 #include <asm/mmu.h>
@@ -494,4 +494,4 @@ void vmm_show(void)
     vmm_dump(0x0000dead00000000ull);
 }
 
-#endif /* VELVETOS_HOSTED */
+#endif /* VELVET_HOSTED */

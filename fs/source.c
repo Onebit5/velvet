@@ -366,7 +366,7 @@ bool source_digest(uint8_t out[20])
     return true;
 }
 
-#ifndef VELVETOS_HOSTED
+#ifndef VELVET_HOSTED
 
 #include <velvet/disk.h>
 #include <velvet/kprintf.h>

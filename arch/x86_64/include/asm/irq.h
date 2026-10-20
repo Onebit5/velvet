@@ -22,7 +22,7 @@
  * hook a device's handler onto one of the 16 irq lines and unmask it.
  * defined in interrupts.c, next to the dispatch that calls it
  */
-#ifdef VELVETOS_HOSTED
+#ifdef VELVET_HOSTED
 ARCH_INLINE void irq_install(uint8_t line, void (*handler)(void))
 {
     (void)line; (void)handler;
@@ -31,7 +31,7 @@ ARCH_INLINE void irq_install(uint8_t line, void (*handler)(void))
 void irq_install(uint8_t line, void (*handler)(void));
 #endif
 
-#ifdef VELVETOS_HOSTED
+#ifdef VELVET_HOSTED
 
 /*
  * host tests run in userspace, where `cli` gets you shot on sight, and

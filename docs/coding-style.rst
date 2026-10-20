@@ -544,7 +544,7 @@ not reach for the parts that touch hardware. preserve that seam:
   rather than reading a port; ``serial_feed()`` takes a byte; ``run_line()``
   takes a string. the test then fabricates the input and calls the real
   function.
-- **``VELVETOS_HOSTED``** is defined for host builds and turns ``irq_save``
+- **``VELVET_HOSTED``** is defined for host builds and turns ``irq_save``
   / ``irq_restore`` into no-ops, because userspace is not allowed to
   ``cli``. a new hardware-touching path that has no host seam should say so
   out loud, in the commit, rather than silently becoming untestable.

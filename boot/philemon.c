@@ -323,7 +323,7 @@ uint64_t ph_find_rsdp(const void *ebda, const void *bios_area)
 
 
 
-#ifndef VELVETOS_HOSTED
+#ifndef VELVET_HOSTED
 
 static void outb(uint16_t port, uint8_t value)
 {
@@ -511,4 +511,4 @@ void philemon_main(void)
 
 #pragma GCC diagnostic pop
 
-#endif  /* VELVETOS_HOSTED */
+#endif  /* VELVET_HOSTED */

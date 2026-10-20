@@ -61,7 +61,7 @@ void rtc_decode(struct rtc_time *t, uint8_t status_b)
     t->year = (uint16_t)(t->year + 2000);
 }
 
-#ifndef VELVETOS_HOSTED
+#ifndef VELVET_HOSTED
 
 /*
  * the clock is read through an index port and a data port, and two
@@ -122,4 +122,4 @@ void rtc_read(struct rtc_time *out)
     spin_unlock_irq(&rtc_lock, flags);
 }
 
-#endif /* VELVETOS_HOSTED */
+#endif /* VELVET_HOSTED */

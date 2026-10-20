@@ -108,7 +108,7 @@ uint64_t mouse_resyncs(void)
 
 
 
-#ifndef VELVETOS_HOSTED
+#ifndef VELVET_HOSTED
 
 #define PS2_DATA    0x60
 #define PS2_STATUS  0x64
@@ -336,4 +336,4 @@ uint8_t mouse_buttons(void)
     return held;
 }
 
-#endif /* VELVETOS_HOSTED */
+#endif /* VELVET_HOSTED */

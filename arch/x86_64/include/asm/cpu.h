@@ -36,7 +36,7 @@
 #define CLOCK_TICK_HZ SMP_TICK_HZ
 
 
-#ifdef VELVETOS_HOSTED
+#ifdef VELVET_HOSTED
 
 ARCH_INLINE void cpu_relax(void)
 {
@@ -136,7 +136,7 @@ ARCH_INLINE uint64_t cpu_stack_pointer(void)
  */
 void cpu_stop(void) __attribute__((noreturn));
 
-#ifndef VELVETOS_HOSTED
+#ifndef VELVET_HOSTED
 /*
  * the processors: what they are, which the firmware listed, which woke
  * and which are taking work. what `cpus` prints and /proc/cpuinfo is

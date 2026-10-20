@@ -19,7 +19,7 @@
  * <asm/mmu.h>.
  */
 
-#ifndef VELVETOS_HOSTED
+#ifndef VELVET_HOSTED
 
 /*
  * cr3. every instruction after this one is fetched through the tables at

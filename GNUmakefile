@@ -112,7 +112,7 @@ CFLAGS := -g -Wall -Wextra -std=gnu11 \
 	-ffreestanding -fno-stack-protector -fno-stack-check -fno-lto -fno-PIC \
 	-Iinclude -Iarch/$(ARCH)/include -I$(OBJROOT)/include \
 	-MMD -MP -fno-omit-frame-pointer \
-	-DVELVETOS_ARCH_$(shell echo $(ARCH) | tr a-z A-Z)
+	-DVELVET_ARCH_$(shell echo $(ARCH) | tr a-z A-Z)
 
 # x86: the -mno-* soup is because I cant use fpu/sse in the kernel (no
 # context saving yet), and no red zone because interrupts would trash it
@@ -489,11 +489,11 @@ disk:
 # that touch hardware: pmm_init_from_map() takes a memory map instead of
 # asking the loader, keyboard_feed() takes a scancode instead of reading a
 # port, and so on. that lets all of this run as ordinary linux programs.
-# VELVETOS_HOSTED turns irq_save/irq_restore into no-ops, since userspace
+# VELVET_HOSTED turns irq_save/irq_restore into no-ops, since userspace
 # gets shot for saying cli.
 
 HOSTCC    := gcc
-HOSTFLAGS := -std=gnu11 -Wall -Wextra -Wno-stringop-truncation -Wno-stringop-overread -g -DVELVETOS_HOSTED -I. -Iinclude -Iarch/x86_64/include -I$(OBJROOT)/include -DVELVETOS_ARCH_X86_64
+HOSTFLAGS := -std=gnu11 -Wall -Wextra -Wno-stringop-truncation -Wno-stringop-overread -g -DVELVET_HOSTED -I. -Iinclude -Iarch/x86_64/include -I$(OBJROOT)/include -DVELVET_ARCH_X86_64
 
 TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/vmm $(T)/gdt \
@@ -1018,7 +1018,7 @@ ARCH_CC    := $(CROSS)gcc
 ARCH_UPPER := $(shell echo $(ARCH) | tr a-z A-Z)
 ARCH_FLAGS := -std=gnu11 -Wall -Wextra -g -ffreestanding \
               -fno-stack-protector -fno-stack-check -fno-omit-frame-pointer \
-              -DVELVETOS_ARCH_$(ARCH_UPPER) -Iinclude -Iarch/$(ARCH)/include -c
+              -DVELVET_ARCH_$(ARCH_UPPER) -Iinclude -Iarch/$(ARCH)/include -c
 
 .PHONY: arch-check
 arch-check:

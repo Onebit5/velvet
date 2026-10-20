@@ -41,7 +41,7 @@ CFLAGS = [
     "-std=gnu11", "-Wall", "-Wextra", "-g",
     "-ffreestanding", "-fno-stack-protector", "-fno-stack-check",
     "-fno-PIC", "-fno-omit-frame-pointer",
-    "-DVELVETOS_ARCH_NONE",
+    "-DVELVET_ARCH_NONE",
     # the contract in place of an architecture, by include path the same
     # way the real build picks x86_64, and the version the build writes
     "-I" + os.path.join(KERNEL, "include"),

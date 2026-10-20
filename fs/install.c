@@ -207,7 +207,7 @@ bool install_system(const struct install_io *io, uint32_t now, bool split,
 
 /* everything above works on sectors and can be pointed at a lump of memory. */
 
-#ifndef VELVETOS_HOSTED
+#ifndef VELVET_HOSTED
 
 #include <velvet/vfs.h>
 #include <velvet/path.h>
@@ -321,4 +321,4 @@ size_t install_copy_tree(const char *from, const char *to,
     return copied;
 }
 
-#endif /* VELVETOS_HOSTED */
+#endif /* VELVET_HOSTED */

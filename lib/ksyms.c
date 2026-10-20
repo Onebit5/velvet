@@ -38,7 +38,7 @@ const char *ksym_lookup_in(const struct ksym *table, size_t count,
     return &names[table[lo].name_off];
 }
 
-#ifndef VELVETOS_HOSTED
+#ifndef VELVET_HOSTED
 const char *ksym_lookup(uint64_t addr, uint64_t *offset)
 {
     return ksym_lookup_in(ksym_table, ksym_count, ksym_names, addr, offset);

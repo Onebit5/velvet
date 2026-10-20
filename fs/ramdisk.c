@@ -123,7 +123,7 @@ size_t   ramdisk_count(void)
     return file_count;
 }
 
-#ifndef VELVETOS_HOSTED
+#ifndef VELVET_HOSTED
 
 #include <velvet/kprintf.h>
 

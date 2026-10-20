@@ -509,7 +509,7 @@ uint64_t addrspace_frames(struct addrspace *as)
     return count;
 }
 
-#ifndef VELVETOS_HOSTED
+#ifndef VELVET_HOSTED
 
 void addrspace_switch(struct addrspace *as)
 {
