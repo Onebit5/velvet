@@ -15,6 +15,38 @@ a kernel that booted.
 
 ---
 
+- **0.4.3**: a kernel and nothing more. **the kernel is nobody's client.**
+  it leased its own address with dhcp at boot, looked names up with a
+  resolver of its own and fetched files over http, each of them a
+  program's work done in ring 0. `dhcp.c`, `dns.c` and `http.c` are gone,
+  with their suites and their halves of the fuzzer, and the stack under
+  them stays: ethernet, arp, ip, icmp, udp, tcp and the sockets. the
+  machine boots with no address and says nothing on the wire until it is
+  given one. the monitor's `ifconfig` gives it one by hand, and takes a
+  router as well, since the lease was the only thing that ever set one;
+  `dhcp`, `host` and `fetch` are gone, and `ping` and `tcp` take an
+  address rather than a name. a program cannot yet hand the kernel what a
+  client of its own found out, which is 0.4.4.
+
+  **nor its installer.** `install` copied the medium onto another drive
+  and made it boot, and putting a system on a disk is a system's work:
+  `install.c` is gone. the formatter it called left the kernel image for
+  `tools/mkfs.c`, where `mkext4` and the suites still format with it, and
+  the tree copy `src unpack` shared with it is `source_unpack`, in
+  `source.c`. the calls that read and write any drive by sector stay in
+  `disk.c`, for 0.4.4 to give a program.
+
+  **and it names no system.** deflate, inflate and adler32 left `lib/`,
+  since only git ever called them, and `strcasecmp` went with dns. the
+  hosted and arch macros are `VELVET_HOSTED` and `VELVET_ARCH_*`; what the
+  kernel and its tools format is labelled `velvet`, or `VELVET` on fat32,
+  unless the caller says otherwise, and `mkfat` takes a label now as
+  `mkext4` did; the monitor's persona is `monitor@velvet`, and a reboot
+  grants the ability to create thine own system. the documentation, the
+  roadmap and the templates describe what is built on this kernel without
+  naming anything built on it: what belongs here, a selftest with whatever
+  a program can see, and a release named by its version and never moved.
+
 - **0.4.2**: the kernel steps back. **a medium with no `/init` is a
   panic**, saying why, rather than a set of logins the kernel made up:
   which consoles get a login and what a session is are the system's to

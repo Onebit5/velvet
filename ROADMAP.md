@@ -38,17 +38,36 @@ emulated, and 0.8.x is a kernel that can say what it is doing.
 
 a machine that rebuilds itself from its own disk ends by building a
 kernel, installing it and rebooting into it. these are the kernel's half of
-that: a boot that can choose between two kernels, and one that cannot be
-lost to a kernel that does not come up.
+that: a program that can reach a drive at all, a boot that can choose
+between two kernels, and one that cannot be lost to a kernel that does not
+come up.
 
-**0.4.3 a boot it can choose between.** philemon starts the kernel at one
+**0.4.4 what a client and an installer need.** since 0.4.3 the machine
+boots with no address and nothing in the kernel asks the wire for one, and
+nothing in the kernel copies a system onto a disk. both are a program's
+work now, and neither program can be written yet. a dhcp client needs a
+call that sets the address, the netmask and the router, root's, and a
+datagram to 255.255.255.255 that leaves as an ethernet broadcast whether or
+not there is an address to send it from, since its first message goes out
+before there is one. the kernel's own client went round the stack to do
+that; this makes it what the stack does. an installer needs a drive with no
+filesystem on it yet: read and written by sector, root's, refused for the
+drive mounted at `/`, with the medium the machine booted from read the same
+way. `disk.c` has done exactly that for the monitor's installer since
+0.2.21, and what is new is a program asking. a resolver and an http client
+need nothing: udp and tcp are calls already. *ends when a dhcp client in
+ring 3 leases an address from qemu's server and pings the router with it,
+and a program copies the medium onto a blank drive that then boots on its
+own.*
+
+**0.4.5 a boot it can choose between.** philemon starts the kernel at one
 fixed place, which is right while there is only one kernel and wrong the
 moment an install can write a second. it learns to read a small file
 naming which kernel to start, and to say so when the answer is missing.
 *ends when two kernels are on one disk, either can be chosen, and neither
 has to know the other exists.*
 
-**0.4.4 an update that goes wrong costs one reboot.** a system that
+**0.4.6 an update that goes wrong costs one reboot.** a system that
 installs its own kernels is, without this, a machine that can brick itself
 with one bad build. a new
 kernel runs on probation: philemon counts the boots it has given it, and
