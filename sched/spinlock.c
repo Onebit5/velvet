@@ -30,7 +30,7 @@ static uint32_t whoami(void)
 #define MAX_CORES 32
 static volatile uint32_t held_rank[MAX_CORES];
 
-/* every lock, so the shell can show which ones are actually contended */
+/* every lock, so the ones that are actually contended can be found */
 #define MAX_LOCKS 32
 static struct spinlock *registry[MAX_LOCKS];
 static volatile uint32_t registered;

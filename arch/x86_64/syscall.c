@@ -47,28 +47,6 @@
 #define RFLAGS_DF (1ull << 10)
 #define RFLAGS_TF (1ull << 8)
 
-static uint64_t call_counts[SYSCALL_COUNT];
-
-static const char *const call_names[SYSCALL_COUNT] = {
-    "exit", "write", "read", "uptime", "yield", "sleep",
-    "open", "close", "getpid", "spawn", "wait", "readdir", "getuid",
-    "create", "chdir", "getcwd", "mkdir", "rmdir",
-    "unlink", "rename", "stat",
-    "getkey", "screen", "cursor", "clear", "fork", "mmap", "munmap",
-    "chmod", "chown", "symlink", "readlink", "getenv", "setenv",
-    "socket", "sendto", "recvfrom",
-};
-
-uint64_t syscall_times_called(unsigned nr)
-{
-    return (nr < SYSCALL_COUNT) ? call_counts[nr] : 0;
-}
-
-const char *syscall_name(unsigned nr)
-{
-    return (nr < SYSCALL_COUNT) ? call_names[nr] : "?";
-}
-
 /* implemented in syscall.asm */
 extern void syscall_entry(void);
 
@@ -2267,7 +2245,6 @@ int64_t syscall_dispatch(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
                          uint64_t a3, uint64_t a4, struct user_regs *regs)
 {
     if (nr < SYSCALL_COUNT) {
-        call_counts[nr]++;
     }
 
     /*

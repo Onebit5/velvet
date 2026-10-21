@@ -45,8 +45,8 @@ void slab_cache_init(struct slab_cache *cache, const char *name,
      * instant both find obj_size zero and both run the rest of this, so
      * the second links the same node in twice: cache->next ends up
      * pointing at the cache, and every walk of all_caches then runs
-     * forever, which is what the shell's slab command and the heap
-     * counters do. kmalloc's own classes get away with it because they
+     * forever, which is what /proc/slabinfo and the heap counters
+     * do. kmalloc's own classes get away with it because they
      * are built long before a second core exists; addrspace_create calls
      * this lazily on the first fork. take the slab lock across the whole
      * of it.

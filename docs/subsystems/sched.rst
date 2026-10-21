@@ -580,15 +580,6 @@ is a decision nobody ever checks.
 ``void init_stop_machine(enum init_stop how) __attribute__((noreturn));``
     ask init to take the machine down.
 
-``bool init_stopping(void);``
-    is the machine on its way down?
-
-``void init_snapshot(struct init_table *out);``
-    a copy of the table, for `init` to print.
-
-``bool init_restart(const char *name);``
-    restart a service by name, for `init start <name>`.
-
 
 the sched interface
 ---------------------
@@ -653,9 +644,6 @@ ready, goes to sleep, or stops existing.
     it, which is the walker a panic uses with nothing on fire, and which
     names functions
     by where the kernel keeps them
-
-``size_t sched_thread_count(void);``
-    how many threads are in the ring, dead ones included
 
 ``bool sched_thread_alive(int id);``
     is there still a thread with this id that has not finished?

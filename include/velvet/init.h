@@ -105,10 +105,4 @@ enum init_stop {
 
 void init_stop_machine(enum init_stop how) __attribute__((noreturn));
 
-bool init_stopping(void);
-
-void init_snapshot(struct init_table *out);
-
-bool init_restart(const char *name);
-
 #endif

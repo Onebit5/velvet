@@ -40,24 +40,10 @@ void mouse_decoder_init(struct mouse_decoder *d, unsigned packet_size);
 bool mouse_decode(struct mouse_decoder *d, uint8_t byte,
                   struct mouse_event *out);
 
-
-
 /* find one, wake it up, and start listening. */
 void mouse_init(void);
 
-bool mouse_present(void);
-bool mouse_has_wheel(void);
-
-/*
- * where the pointer is, in characters rather than pixels, this is a
- * text console and a pointer that could sit between two cells would be
- * pointing at nothing
- */
-void mouse_position(size_t *col, size_t *row);
-uint8_t mouse_buttons(void);
-
-/* how many packets have arrived, and how many were thrown away for arriving out of step. */
-uint64_t mouse_packets(void);
+/* how many packets were thrown away for arriving out of step. */
 uint64_t mouse_resyncs(void);
 
 #endif

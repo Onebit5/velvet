@@ -123,18 +123,13 @@ static uint8_t *tx_buf[TX_COUNT];
 static size_t rx_next;          /* where the driver will look next */
 static size_t tx_next;          /* where the driver will write next */
 
-/*
- * who to wake when something arrives, and whether the card has ever
- * managed to tell the project anything
- */
+/* who to wake when something arrives. */
 static void (*on_arrival)(void);
-static bool interrupts_arrived;
 
-static struct e1000_stats stats;
 
 /*
- * the rings are touched from a shell command and, later, from anything
- * that sends, one lock over the whole card, which is the right grain
+ * the rings are touched by the poll thread and by anything that sends,
+ * one lock over the whole card, which is the right grain
  * for a machine with one of them
  */
 static struct spinlock e1000_lock = SPINLOCK("e1000", LOCK_RANK_DEVICE);
@@ -152,16 +147,6 @@ static void reg_write(unsigned off, uint32_t v)
 void e1000_on_arrival(void (*fn)(void))
 {
     on_arrival = fn;
-}
-
-bool e1000_interrupts_working(void)
-{
-    return interrupts_arrived;
-}
-
-uint8_t e1000_irq_line(void)
-{
-    return irq_line;
 }
 
 /*
@@ -183,12 +168,8 @@ static void e1000_irq(void)
     uint32_t cause = reg_read(REG_ICR);
     if ((cause & ICR_WANTED) == 0) {
         /* a pci line is shared. */
-        stats.not_ours++;
         return;
     }
-
-    stats.interrupts++;
-    interrupts_arrived = true;
 
     if (on_arrival != NULL) {
         on_arrival();
@@ -405,7 +386,6 @@ bool e1000_init(void)
      * loses the first one, which on a quiet wire may be the only one
      * for a while
      */
-    memset(&stats, 0, sizeof stats);
 
     irq_line = d->irq_line;
     if (irq_line == 0 || irq_line >= 16) {
@@ -436,13 +416,6 @@ const char *e1000_model(void)
     return model;
 }
 
-void e1000_get_stats(struct e1000_stats *out)
-{
-    uint64_t flags = spin_lock_irq(&e1000_lock);
-    *out = stats;
-    spin_unlock_irq(&e1000_lock, flags);
-}
-
 
 
 bool e1000_send(const void *frame, size_t len)
@@ -457,7 +430,6 @@ bool e1000_send(const void *frame, size_t len)
 
     /* the card sets DD when it has finished with a descriptor. */
     if ((d->status & TXD_STAT_DD) == 0) {
-        stats.send_dropped++;
         spin_unlock_irq(&e1000_lock, flags);
         return false;
     }
@@ -476,7 +448,6 @@ bool e1000_send(const void *frame, size_t len)
     /* and only now move the tail. */
     reg_write(REG_TDT, (uint32_t)tx_next);
 
-    stats.sent++;
     spin_unlock_irq(&e1000_lock, flags);
     return true;
 }
@@ -510,10 +481,8 @@ size_t e1000_receive(void *out, size_t max)
          */
         /* a frame spread over more than one descriptor. */
         if ((d->status & RXD_STAT_EOP) == 0 || len > max) {
-            stats.receive_dropped++;
         } else {
             memcpy(out, rx_buf[rx_next], len);
-            stats.received++;
             got = len;
         }
 

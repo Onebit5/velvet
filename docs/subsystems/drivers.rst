@@ -73,9 +73,7 @@ sleeps on the wait queue, which is how a shell sits at a prompt all day
 burning zero cycles. it wakes for an interrupt too: a reader whose
 process is interrupted with no key waiting gets -1 and takes nothing, so
 the next key typed is still there for whoever reads it, and a key that
-is there is handed over, interrupt or not. ``input_peek()`` looks without consuming, so a waiter
-can watch for one particular key while leaving the rest of the queue for
-whoever it was meant for.
+is there is handed over, interrupt or not.
 
 the keyboard and the mouse
 --------------------------

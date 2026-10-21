@@ -60,16 +60,6 @@ bool net_send_ip(ipv4 to, uint8_t protocol, const void *payload, size_t len);
 
 bool net_arp_request(ipv4 who);
 
-const struct arp_cache *net_arp_cache(void);
-
-struct net_stats {
-    uint64_t frames_in, frames_out;
-    uint64_t arp_in, arp_out;
-    uint64_t ip_in, icmp_in, udp_in, tcp_in;
-    uint64_t dropped_not_mine, dropped_bad;
-};
-void net_get_stats(struct net_stats *out);
-
 /*
  * the table lives here rather than in socket.c because a datagram is
  * delivered on the poll thread and taken on somebody else's, and one
@@ -107,20 +97,5 @@ int  net_tcp_state(int owner, int handle);
 
 int net_tcp_connect(ipv4 to, uint16_t port);
 int net_tcp_listen(uint16_t port);
-struct tcp_conn *net_tcp_at(int i);
-
-void net_tcp_forget(int i);
-
-/*
- * icmp echo is the smallest possible round trip, so it is the first
- * thing worth having and the best thing to debug with: when it works the
- * card, arp, ip and the checksum are all working, and when it does not
- * the fault is in one of four things rather than forty.
- *
- * the reply arrives on the poll thread, so a caller sends and then waits
- * for the sequence number to come back rather than being handed one
- */
-bool net_ping_send(ipv4 to, uint16_t seq);
-bool net_ping_seen(uint16_t seq, uint64_t *when_ms);
 
 #endif

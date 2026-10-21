@@ -107,11 +107,6 @@ uint64_t interrupts_timer_rate(void)
     return timer_rate;
 }
 
-bool interrupts_on_apic(void)
-{
-    return timer_on_lapic;
-}
-
 void irq_install(uint8_t line, void (*handler)(void))
 {
     if (line >= 16) {
@@ -449,10 +444,11 @@ bool interrupts_use_apic(void)
  * out is that the keyboard stops. a machine with no keyboard cannot be
  * told to try something else.
  *
- * so it lives behind a command instead. from a shell that already works
- * you can ask for it, and if the keyboard goes quiet a reboot puts you
- * back exactly where you were. that is a worse default and a much
- * better way to find out.
+ * so it lives behind a call instead, made from a machine that already
+ * works, where a keyboard gone quiet costs a reboot and nothing else.
+ * that is a worse default and a much better way to find out. the
+ * kernel's monitor made the call until 0.4.4, and nothing makes it now,
+ * so the machine stays on the 8259 until something can ask.
  */
 bool interrupts_use_ioapic(void)
 {

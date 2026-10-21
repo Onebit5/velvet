@@ -811,10 +811,8 @@ void process_fd_advance(int pid, int fd, uint64_t n)
 
 /*
  * the block itself is pure arithmetic over a run of strings and lives
- * in lib/env.c, because the shell needs exactly the same operations and
- * has no process to perform them on, it is a kernel thread, so its
- * environment lives in its session. one implementation, two callers, and
- * no chance of them disagreeing about what "already set" means
+ * in lib/env.c, where a suite can hold it to what "already set" means
+ * without a process table to stand it in
  */
 
 bool process_set_env(int pid, const char *block, size_t len)

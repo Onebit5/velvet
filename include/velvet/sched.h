@@ -79,8 +79,6 @@ void sched_show_threads(void);
  */
 void sched_proc_init(void);
 
-size_t sched_thread_count(void);
-
 bool sched_thread_alive(int id);
 
 enum sched_kill_result {

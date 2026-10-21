@@ -104,21 +104,6 @@ int input_getchar(void)
     return c;
 }
 
-int input_peek(void)
-{
-    uint64_t flags = spin_lock_irq(&input_lock);
-    struct ring *r = mine();
-    int c = (r->tail == r->head) ? -1 : r->buf[r->tail];
-    spin_unlock_irq(&input_lock, flags);
-    return c;
-}
-
-bool input_haskey(void)
-{
-    struct ring *r = mine();
-    return r->tail != r->head;
-}
-
 int input_getchar_blocking(void)
 {
     struct ring *r = mine();

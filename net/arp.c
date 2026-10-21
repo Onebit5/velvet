@@ -133,18 +133,3 @@ size_t arp_count(const struct arp_cache *c, uint64_t now_ms)
     return n;
 }
 
-bool arp_at(const struct arp_cache *c, size_t index, uint64_t now_ms,
-            struct arp_entry *out)
-{
-    size_t seen = 0;
-    for (size_t i = 0; i < ARP_CACHE_MAX; i++) {
-        if (!fresh(&c->e[i], now_ms)) {
-            continue;
-        }
-        if (seen++ == index) {
-            *out = c->e[i];
-            return true;
-        }
-    }
-    return false;
-}

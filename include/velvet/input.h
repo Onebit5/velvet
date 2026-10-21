@@ -3,8 +3,8 @@
  * include/velvet/input.h
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
  * where every source of typing meets. the ps/2 keyboard pushes here, and
- * so does the serial port, so the shell neither knows nor cares whether
- * you are sitting at the machine or telnetted into its soul.
+ * so does the serial port, so whoever reads neither knows nor cares
+ * whether you are sitting at the machine or telnetted into its soul.
  */
 
 #ifndef VELVET_INPUT_H
@@ -31,14 +31,10 @@
 void input_push(int key);
 
 int  input_getchar(void);           /* next key, or -1 if nothing waiting */
-bool input_haskey(void);
-
-/* the next key without consuming it. */
-int  input_peek(void);
 
 /*
  * wait for a key. the calling thread sleeps on a waitq and costs
- * nothing until an irq wakes it, which is how the shell can sit at a
+ * nothing until an irq wakes it, which is how a program can sit at a
  * prompt all day without burning a single cycle. -1 instead when the
  * caller's process is interrupted with no key waiting
  */

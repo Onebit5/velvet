@@ -60,12 +60,6 @@ uint64_t interrupts_timer_rate(void);
 bool interrupts_use_ioapic(void);
 
 /*
- * true once the move has happened. mostly so `dmesg` and the shell can
- * say which hardware is actually carrying the interrupts
- */
-bool interrupts_on_apic(void);
-
-/*
  * hooking a handler onto a line is `irq_install`, in <asm/irq.h>, it is
  * the one part of this header a driver still wanted, and drivers should
  * not be reading a file that spells out rax through r15 to get it
@@ -82,6 +76,5 @@ bool interrupts_on_apic(void);
  * not made to say so twice
  */
 #include <asm/irq.h>
-
 
 #endif

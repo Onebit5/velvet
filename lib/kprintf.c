@@ -104,20 +104,6 @@ void klog_printf(const char *fmt, ...)
     va_end(ap);
 }
 
-void klog_dump(void)
-{
-    /*
-     * printing the log through kprintf would append to the log, so walk
-     * it straight to the console instead
-     */
-    size_t start = klog_wrapped ? klog_head : 0;
-    size_t count = klog_wrapped ? KLOG_SIZE : klog_head;
-
-    for (size_t i = 0; i < count; i++) {
-        console_putchar(klog[(start + i) % KLOG_SIZE]);
-    }
-}
-
 size_t klog_copy(char *str_buf, size_t sz_size)
 {
     /*

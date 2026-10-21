@@ -159,7 +159,7 @@ struct pci_bar pci_decode_bar(uint32_t raw)
      * which this function never sees and no caller joins back on, so a
      * device whose firmware parked it above 4 GiB gets mapped at
      * whatever the low half happened to be, usually zero, which is not a
-     * window at all. the shell prints the flag next to an address that
+     * window at all. /proc/pci prints the flag next to an address that
      * is half of one, skips the bar entirely when the low half is zero,
      * and then prints the high half as though it were another bar. the
      * two dwords have to be joined before the address means anything.

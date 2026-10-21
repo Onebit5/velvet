@@ -28,8 +28,6 @@ void kprintf_serial_filter(bool (*fn)(void));
 /* like kprintf, but never to the screen, the log and the serial line only. */
 void klog_printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
-void klog_dump(void);
-
 /*
  * a ring of everything printed, so quieting the screen doesnt actually
  * throw anything away. 32k is a few hundred lines, which covers boot

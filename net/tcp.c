@@ -671,20 +671,3 @@ bool tcp_finished(const struct tcp_conn *c, uint64_t now_ms)
     return false;
 }
 
-const char *tcp_state_name(enum tcp_state s)
-{
-    switch (s) {
-    case TCP_CLOSED:       return "closed";
-    case TCP_LISTEN:       return "listening";
-    case TCP_SYN_SENT:     return "connecting";
-    case TCP_SYN_RECEIVED: return "answering a connection";
-    case TCP_ESTABLISHED:  return "established";
-    case TCP_FIN_WAIT_1:   return "closing, waiting to be acknowledged";
-    case TCP_FIN_WAIT_2:   return "closing, waiting for the other end";
-    case TCP_CLOSING:      return "closing, both at once";
-    case TCP_TIME_WAIT:    return "finished, waiting for stragglers";
-    case TCP_CLOSE_WAIT:   return "the other end has finished";
-    case TCP_LAST_ACK:     return "finished, waiting to be acknowledged";
-    }
-    return "?";
-}

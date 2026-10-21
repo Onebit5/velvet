@@ -66,27 +66,6 @@ size_t e1000_receive(void *out, size_t max);
 /* called from the interrupt, so it may do almost nothing: wake a thread and return. */
 void e1000_on_arrival(void (*fn)(void));
 
-/* whether the card is actually delivering them. */
-bool e1000_interrupts_working(void);
-
-/* the line the firmware handed it, or 0 if it got none. */
-uint8_t e1000_irq_line(void);
-
-/* what has gone past, for `ifconfig`. */
-struct e1000_stats {
-    uint64_t sent, received;
-    uint64_t send_dropped, receive_dropped;
-
-    /*
-     * how many times the card raised one, and how many of those turned
-     * out to belong to somebody else on a shared line. the second number
-     * being large is a sign the line is busy rather than that anything
-     * is wrong
-     */
-    uint64_t interrupts, not_ours;
-};
-void e1000_get_stats(struct e1000_stats *out);
-
 const char *e1000_model(void);
 
 #endif

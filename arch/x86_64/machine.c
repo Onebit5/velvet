@@ -134,7 +134,7 @@ void machine_bring_up_late(void)
     kprintf("idt         : 256 gates armed, exceptions get caught now\n");
     kprintf("pic         : 8259 remapped to vectors 32-47, ghosts filtered\n");
     kprintf("keyboard    : ps/2 on irq1, me layout, listening\n");
-    kprintf("serial in   : com1 on irq4, the shell answers over the wire too\n");
+    kprintf("serial in   : com1 on irq4, and what is typed there counts\n");
     kprintf("timer       : pit channel 0 at %u hz, %ums per tick\n",
             PIT_HZ, 1000 / PIT_HZ);
     kprintf("\n");

@@ -188,9 +188,6 @@ port.
     whether what is being printed should also go down the serial line, so a
     program's output can be kept out of the kernel's log.
 
-``void klog_dump(void)``
-    everything kprintf has printed, oldest first. this is what ``dmesg`` is.
-
 ``size_t klog_copy(char *str_buf, size_t sz_size)``
     the newest ``sz_size`` bytes of the log, oldest first, into
     ``str_buf``: how many that was. the log is left as it was, so every

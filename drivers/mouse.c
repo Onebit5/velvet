@@ -34,7 +34,7 @@
 #define FLAG_X_OVER   0x40
 #define FLAG_Y_OVER   0x80
 
-static uint64_t packets, resyncs;
+static uint64_t resyncs;
 
 void mouse_decoder_init(struct mouse_decoder *d, unsigned packet_size)
 {
@@ -56,7 +56,6 @@ bool mouse_decode(struct mouse_decoder *d, uint8_t byte,
         return false;
     }
     d->at = 0;
-    packets++;
 
     uint8_t flags = d->packet[0];
     memset(out, 0, sizeof *out);
@@ -97,10 +96,6 @@ bool mouse_decode(struct mouse_decoder *d, uint8_t byte,
     return true;
 }
 
-uint64_t mouse_packets(void)
-{
-    return packets;
-}
 uint64_t mouse_resyncs(void)
 {
     return resyncs;
@@ -314,26 +309,6 @@ void mouse_init(void)
 
     kprintf("mouse      : ps/2%s, %u-byte packets\n",
             wheel ? " with a wheel" : "", size);
-}
-
-bool mouse_present(void)
-{
-    return present;
-}
-bool mouse_has_wheel(void)
-{
-    return wheel;
-}
-
-void mouse_position(size_t *col, size_t *row)
-{
-    if (col) *col = pointer_col;
-    if (row) *row = pointer_row;
-}
-
-uint8_t mouse_buttons(void)
-{
-    return held;
 }
 
 #endif /* VELVET_HOSTED */

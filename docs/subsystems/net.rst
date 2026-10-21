@@ -175,9 +175,6 @@ its netmask and its router.
 ``int net_tcp_connect(ipv4 to, uint16_t port);``
     connections live in a fixed table here, driven by the poll thread.
 
-``void net_tcp_forget(int i);``
-    tidy away a connection that has finished.
-
 
 the tcp interface
 -------------------
@@ -287,7 +284,7 @@ it, and whoever does answers with their hardware address.
     remember one. replaces an existing answer for the same address, since the newest claim is the one everybody acts on
 
 ``size_t arp_count(const struct arp_cache *c, uint64_t now_ms);``
-    walk it, for the shell command that lists what else is out there
+    how many answers are still believed
 
 
 the ether interface

@@ -79,7 +79,5 @@ bool arp_lookup(const struct arp_cache *c, ipv4 ip, uint64_t now_ms,
                 struct mac *out);
 
 size_t arp_count(const struct arp_cache *c, uint64_t now_ms);
-bool arp_at(const struct arp_cache *c, size_t index, uint64_t now_ms,
-            struct arp_entry *out);
 
 #endif

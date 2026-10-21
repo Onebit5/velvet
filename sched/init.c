@@ -169,11 +169,6 @@ static volatile bool     stop_pending;
 static volatile int      stop_how;
 static volatile unsigned stop_console;
 
-bool init_stopping(void)
-{
-    return stop_pending;
-}
-
 
 
 /* the disk, kept roughly honest. */
@@ -334,26 +329,6 @@ static void supervise(void)
             speak_on(was);
         }
     }
-}
-
-bool init_restart(const char *name)
-{
-    uint64_t flags = spin_lock_irq(&init_lock);
-    int i = init_find(&services, name);
-    bool ok = (i >= 0) && init_revive(&services, (size_t)i);
-    spin_unlock_irq(&init_lock, flags);
-
-    if (ok) {
-        ok = start_service((size_t)i);
-    }
-    return ok;
-}
-
-void init_snapshot(struct init_table *out)
-{
-    uint64_t flags = spin_lock_irq(&init_lock);
-    *out = services;
-    spin_unlock_irq(&init_lock, flags);
 }
 
 

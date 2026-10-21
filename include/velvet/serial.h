@@ -18,7 +18,7 @@ bool serial_init(void);
 void serial_putchar(char c);
 void serial_write(const char *s);
 
-/* turn on the receive interrupt so typing into the serial console drives the shell. */
+/* turn on the receive interrupt, so what is typed on the line arrives. */
 void serial_input_init(void);
 
 /* one received byte -> the input queue. */

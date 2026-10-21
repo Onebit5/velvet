@@ -27,9 +27,8 @@ static ipv4 my_ip, my_mask;
 static ipv4 my_router;
 
 static struct arp_cache cache;
-static struct net_stats stats;
 
-/* the interface's own state, which the poll thread writes and the shell reads. */
+/* the interface's state, which the poll thread writes and the calls read. */
 static struct spinlock net_lock = SPINLOCK("net", LOCK_RANK_DEVICE);
 
 /* one buffer for building, one for receiving. */
@@ -52,18 +51,6 @@ const struct mac *net_mac(void)
 {
     return e1000_mac();
 }
-const struct arp_cache *net_arp_cache(void)
-{
-    return &cache;
-}
-
-void net_get_stats(struct net_stats *out)
-{
-    uint64_t flags = spin_lock_irq(&net_lock);
-    *out = stats;
-    spin_unlock_irq(&net_lock, flags);
-}
-
 bool net_up(ipv4 address, ipv4 netmask, ipv4 router)
 {
     if (!e1000_present()) {
@@ -81,7 +68,6 @@ bool net_up(ipv4 address, ipv4 netmask, ipv4 router)
 
 /* the receive path, needed by the send path, see the loopback note in net_send_ip. */
 static void got_ip(const uint8_t *p, size_t len);
-
 
 
 static bool send_frame(const struct mac *to, uint16_t type,
@@ -108,7 +94,6 @@ static bool send_frame(const struct mac *to, uint16_t type,
     if (!e1000_send(out_frame, at + len)) {
         return false;
     }
-    stats.frames_out++;
     return true;
 }
 
@@ -120,15 +105,14 @@ bool net_arp_request(ipv4 who)
     uint8_t p[ARP_PACKET_LEN];
     arp_build(p, ARP_REQUEST, e1000_mac(), my_ip, &MAC_ZERO, who);
 
-    stats.arp_out++;
     return send_frame(&MAC_BROADCAST, ETHERTYPE_ARP, p, sizeof p);
 }
 
 /*
  * a table of connections rather than a list, for the same reason the
- * socket table is one: this runs on a poll thread and is read by a
- * shell, and a fixed table with a lock over it has no allocation to get
- * wrong at either end.
+ * socket table is one: this runs on a poll thread and is read by the
+ * calls a program makes, and a fixed table with a lock over it has no
+ * allocation to get wrong at either end.
  *
  * four of them, and that is not a small number here, each carries
  * eight kilobytes of buffers, so the table is a third of a megabyte of
@@ -178,7 +162,6 @@ static void got_tcp(ipv4 from, ipv4 to, const uint8_t *p, size_t len)
 {
     struct tcp_segment seg;
     if (!tcp_parse(p, len, from, to, &seg)) {
-        stats.dropped_bad++;
         return;
     }
 
@@ -484,28 +467,6 @@ int net_tcp_state(int owner, int handle)
     return c == NULL ? -1 : (int)c->state;
 }
 
-void net_tcp_forget(int i)
-{
-    if (i >= 0 && i < TCP_CONN_MAX) {
-        /*
-         * a finished connection is left in the table on purpose, so
-         * `tcp` can still say how it ended, "nothing is listening
-         * there" is the answer somebody wanted, and a slot that
-         * vanishes the moment it fails takes the answer with it. this
-         * is how it gets tidied away once it has been read
-         */
-        memset(&conns[i], 0, sizeof conns[i]);
-    }
-}
-
-struct tcp_conn *net_tcp_at(int i)
-{
-    if (i < 0 || i >= TCP_CONN_MAX) {
-        return NULL;
-    }
-    return &conns[i];
-}
-
 ipv4 net_router(void)
 {
     return my_router;
@@ -538,8 +499,6 @@ bool net_send_ip(ipv4 to, uint8_t protocol, const void *payload, size_t len)
                              (uint16_t)(pit_uptime_ms() & 0xffff));
         memcpy(loop + at, payload, len);
 
-        stats.frames_out++;
-        stats.frames_in++;
         got_ip(loop, at + len);
         return true;
     }
@@ -726,67 +685,12 @@ bool net_socket_send(int owner, int handle, ipv4 to, uint16_t port,
 }
 
 
-
-/*
- * what has come back. a ring of the last few, because a reply arrives on
- * the poll thread and whoever sent the request is somewhere else
- * entirely, there is no way to hand it to them directly without a
- * blocking call, and this is a great deal simpler than one
- */
-#define PING_SEEN 8
-static struct { uint16_t seq; uint64_t when_ms; bool used; } seen[PING_SEEN];
-static size_t seen_at;
-
-/*
- * an id for this machine's echoes, so a reply to somebody else's ping is
- * not counted as one of ours
- */
-#define PING_ID 0x7a7a
-
-bool net_ping_send(ipv4 to, uint16_t seq)
-{
-    uint8_t echo[ICMP_HEADER_LEN + 32];
-    /*
-     * thirty-two bytes, which is what ping has sent since 1983, and
-     * spelled without a terminator because it is a payload rather than
-     * a string. what comes back has to be these exact bytes
-     */
-    static const char payload[32] =
-        { 't','h','o','u',' ','a','r','t',' ','I','.','.','.',' ','a','n',
-          'd',' ','I',' ','a','m',' ','t','h','o','u','.','.','.','.','.' };
-
-    size_t n = icmp_build_echo(echo, ICMP_ECHO_REQUEST, PING_ID, seq,
-                               payload, sizeof payload);
-    return net_send_ip(to, IP_PROTO_ICMP, echo, n);
-}
-
-bool net_ping_seen(uint16_t seq, uint64_t *when_ms)
-{
-    uint64_t flags = spin_lock_irq(&net_lock);
-    bool found = false;
-    for (size_t i = 0; i < PING_SEEN; i++) {
-        if (seen[i].used && seen[i].seq == seq) {
-            if (when_ms != NULL) {
-                *when_ms = seen[i].when_ms;
-            }
-            found = true;
-            break;
-        }
-    }
-    spin_unlock_irq(&net_lock, flags);
-    return found;
-}
-
-
-
 static void got_arp(const uint8_t *p, size_t len)
 {
     struct arp_packet a;
     if (!arp_parse(p, len, &a)) {
-        stats.dropped_bad++;
         return;
     }
-    stats.arp_in++;
 
     /* learn from anything that speaks, request or reply. */
     uint64_t flags = spin_lock_irq(&net_lock);
@@ -797,7 +701,6 @@ static void got_arp(const uint8_t *p, size_t len)
         uint8_t reply[ARP_PACKET_LEN];
         arp_build(reply, ARP_REPLY, e1000_mac(), my_ip,
                   &a.sender_mac, a.sender_ip);
-        stats.arp_out++;
         send_frame(&a.sender_mac, ETHERTYPE_ARP, reply, sizeof reply);
     }
 }
@@ -806,49 +709,35 @@ static void got_icmp(const struct ip_header *ih, const uint8_t *p, size_t len)
 {
     struct icmp_echo e;
     if (!icmp_parse_echo(p, len, &e)) {
-        stats.dropped_bad++;
-        return;
-    }
-
-    if (e.type == ICMP_ECHO_REQUEST) {
-        /* answer it, with the payload copied straight back. */
-        uint8_t reply[ETHER_MTU];
-        if (ICMP_HEADER_LEN + e.payload_len > sizeof reply) {
-            return;
-        }
-        size_t n = icmp_build_echo(reply, ICMP_ECHO_REPLY, e.id, e.seq,
-                                   p + e.payload_at, e.payload_len);
-        net_send_ip(ih->from, IP_PROTO_ICMP, reply, n);
         return;
     }
 
     /*
-     * a reply. if it is answering one of ours, write it down where
-     * whoever asked can find it
+     * a request is answered, with the payload copied straight back. a
+     * reply answers nothing the kernel asked, since it sends no echoes
+     * of its own, and goes no further
      */
-    if (e.id != PING_ID) {
+    if (e.type != ICMP_ECHO_REQUEST) {
         return;
     }
-    uint64_t flags = spin_lock_irq(&net_lock);
-    seen[seen_at].seq = e.seq;
-    seen[seen_at].when_ms = pit_uptime_ms();
-    seen[seen_at].used = true;
-    seen_at = (seen_at + 1) % PING_SEEN;
-    spin_unlock_irq(&net_lock, flags);
+    uint8_t reply[ETHER_MTU];
+    if (ICMP_HEADER_LEN + e.payload_len > sizeof reply) {
+        return;
+    }
+    size_t n = icmp_build_echo(reply, ICMP_ECHO_REPLY, e.id, e.seq,
+                               p + e.payload_at, e.payload_len);
+    net_send_ip(ih->from, IP_PROTO_ICMP, reply, n);
 }
 
 static void got_ip(const uint8_t *p, size_t len)
 {
     struct ip_header ih;
     if (!ip_parse(p, len, &ih)) {
-        stats.dropped_bad++;
         return;
     }
-    stats.ip_in++;
 
     /* not for this machine. */
     if (up && ih.to != my_ip && ih.to != 0xffffffff) {
-        stats.dropped_not_mine++;
         return;
     }
 
@@ -868,16 +757,12 @@ static void got_ip(const uint8_t *p, size_t len)
          * through recv_buf while take_payload copies into it is the whole
          * failure: a stream comes back with bytes repeated or skipped.
          */
-        stats.tcp_in++;
         got_tcp(ih.from, ih.to, payload, payload_len);
     } else if (ih.protocol == IP_PROTO_ICMP) {
-        stats.icmp_in++;
         got_icmp(&ih, payload, payload_len);
     } else if (ih.protocol == IP_PROTO_UDP) {
-        stats.udp_in++;
         struct udp_header uh;
         if (!udp_parse(payload, payload_len, ih.from, ih.to, &uh)) {
-            stats.dropped_bad++;
             return;
         }
         /* and now there is somewhere for it to go. */
@@ -896,10 +781,8 @@ void net_receive(const uint8_t *frame, size_t len)
 {
     struct ether_header eh;
     if (!ether_parse(frame, len, &eh)) {
-        stats.dropped_bad++;
         return;
     }
-    stats.frames_in++;
 
     const uint8_t *payload = frame + ETHER_HEADER_LEN;
     size_t payload_len = len - ETHER_HEADER_LEN;

@@ -137,7 +137,7 @@ bool vmm_map_range(uint64_t pml4, uint64_t virt, uint64_t phys,
 
 /*
  * the software walk. this is what lets the kernel check its work before
- * trusting it to cr3, and what backs the shell's `vmm` command
+ * trusting it to cr3, and what backs /proc/vmm
  */
 static uint64_t *walk_to_leaf(uint64_t pml4, uint64_t virt, uint64_t *out_entry,
                               bool *out_huge)
@@ -361,8 +361,8 @@ void vmm_init(void)
     /*
      * the framebuffer is not in the memory map at all, it is a window
      * a pci device answers to, and the firmware does not describe it as
-     * memory. so it has to be mapped by name, or the first thing the
-     * shell prints faults on a screen that was working a moment ago
+     * memory. so it has to be mapped by name, or the first thing printed
+     * to it faults on a screen that was working a moment ago
      * under the loader's tables
      */
     const struct boot_framebuffer *fb = &boot_handoff()->fb;

@@ -87,7 +87,7 @@ struct tcp_conn {
     /*
      * the pid that opened it, so a program that dies does not leave a
      * connection nobody can reach and nothing will close. -1 for one the
-     * kernel opened on its own account, which is what the shell does
+     * kernel opened on its own account
      */
     int owner;
 
@@ -155,7 +155,5 @@ size_t tcp_tick(struct tcp_conn *c, uint64_t now_ms, uint8_t *out,
                 size_t max);
 
 bool tcp_finished(const struct tcp_conn *c, uint64_t now_ms);
-
-const char *tcp_state_name(enum tcp_state s);
 
 #endif

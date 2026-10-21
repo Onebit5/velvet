@@ -88,7 +88,7 @@ struct fd_disk {
 
 struct process {
     int      pid;               /* 0 means the slot is free */
-    int      parent;            /* pid of whoever started it, 0 for the shell */
+    int      parent;            /* who started it, 0 for the kernel */
 
     int      pgid;
     int      uid;               /* who it runs as. 0 is the master */
@@ -204,12 +204,7 @@ bool process_env_get(int pid, const char *name, char *out, size_t max);
 
 bool process_env_set(int pid, const char *name, const char *value);
 
-/*
- * split out because the shell is a kernel thread with no process entry
- * of its own, and its environment therefore lives in its session. one
- * implementation, two callers, and no chance of them disagreeing about
- * what "already set" means
- */
+/* split out into lib/env.c, where it is pure arithmetic over a block */
 bool env_block_get(const char *block, size_t len, const char *name,
                    char *out, size_t max);
 bool env_block_set(char *block, size_t *len, size_t max, const char *name,

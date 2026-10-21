@@ -15,10 +15,10 @@
  * table of pointers would need every one of them rewritten on the way
  * into a child.
  *
- * it lives here rather than in process.c because the shell needs exactly
- * these operations and has no process to perform them on, so one
- * implementation serves two callers. every operation is a walk, which is
- * fine for tens of entries read at typing speed
+ * it lives here rather than in process.c because it is pure arithmetic
+ * over a run of strings, and needs no process to be tested. every
+ * operation is a walk, which is fine for tens of entries read at typing
+ * speed
  */
 
 

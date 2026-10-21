@@ -587,16 +587,6 @@ void sched_proc_init(void)
     proc_register("environ", PROC_PUBLIC, sched_show_environ);
 }
 
-size_t sched_thread_count(void)
-{
-    uint64_t flags = spin_lock_irq(&sched_lock);
-    size_t n = 0;
-    struct thread *t = current;
-    do { n++; t = t->next; } while (t != current);
-    spin_unlock_irq(&sched_lock, flags);
-    return n;
-}
-
 bool sched_thread_alive(int id)
 {
     uint64_t flags = spin_lock_irq(&sched_lock);
