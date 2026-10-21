@@ -172,50 +172,6 @@ def check(work):
                 bad += 1
             checked += 1
 
-    ours = os.path.join(ROOT, "bin", "tests", "mkboot")
-    pieces = [os.path.join(ROOT, p) for p in
-              ("bin/boot/philemon.bin", "bin/boot/philemon64.bin",
-               "bin/velvet", "bin/ramdisk.tar")]
-    if os.path.exists(ours) and all(os.path.exists(p) for p in pieces):
-        theirs_img = os.path.join(work, "theirs.img")
-        mine_img = os.path.join(work, "mine.img")
-        run(["python3", "tools/mkboot.py", theirs_img] + pieces)
-        run([ours, mine_img] + pieces)
-        a = open(theirs_img, "rb").read() if os.path.exists(theirs_img) else b""
-        b = open(mine_img, "rb").read() if os.path.exists(mine_img) else b""
-        if a != b or not a:
-            print("  mkboot: the images differ (%d bytes vs %d)"
-                  % (len(a), len(b)))
-            for i in range(min(len(a), len(b))):
-                if a[i] != b[i]:
-                    print("      first at 0x%x: python %02x, ours %02x"
-                          % (i, a[i], b[i]))
-                    break
-            bad += 1
-        checked += 1
-
-        # and the refusal. the assembly and the C describe the same
-        # memory in two files that cannot include each other, and a
-        # number that drifts in one of them is a machine that hangs with
-        # nothing on the screen, so the image must not get written
-        tree = os.path.join(work, "drifted")
-        import shutil as sh
-        for rel in ("boot/philemon.inc", "include/velvet/philemon.h",
-                    "boot/philemon.asm"):
-            os.makedirs(os.path.dirname(os.path.join(tree, rel)),
-                        exist_ok=True)
-            sh.copy(os.path.join(ROOT, rel), os.path.join(tree, rel))
-        path = os.path.join(tree, "boot", "philemon.inc")
-        text = open(path).read().replace("PT_BASE", "PT_BASE_UNUSED", 1)
-        open(path, "w").write(text + "\nPT_BASE equ 0x9999\n")
-        r = subprocess.run([ours, os.path.join(work, "no.img")] + pieces,
-                           capture_output=True, cwd=ROOT,
-                           env=dict(os.environ, MKBOOT_ROOT=tree))
-        if r.returncode == 0 or b"in the assembly but" not in r.stderr:
-            print("  mkboot wrote an image with the constants drifted apart")
-            bad += 1
-        checked += 1
-
     #
     # two formatters that allocate blocks in a different order produce
     # two perfectly good filesystems. demanding identical bytes would be

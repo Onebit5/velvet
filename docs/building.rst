@@ -7,10 +7,11 @@ configure step and no dependencies to fetch beyond a handful of programs.
 requirements
 ------------
 
-- ``gcc``, the machine's compiler, for the kernel, philemon's 64-bit half,
-  the host suites and the C tools
-- ``nasm``, for the ``.asm`` sources under ``arch/x86_64/`` and philemon's
-  first stage
+- ``gcc``, the machine's compiler, for the kernel, the host suites and the
+  C tools, and for philemon's 64-bit half
+- ``nasm``, for the ``.asm`` sources under ``arch/x86_64/``, and for
+  philemon's first stage
+- ``git``, which fetches philemon the first time an image is built
 - ``make``. GNU make, for the ``GNUmakefile``
 - ``python3``, for the checks and image builders in ``tools/``. no
   third-party packages
@@ -40,12 +41,18 @@ the targets
    just the kernel elf, ``bin/velvet``.
 
 ``make philemon``
-   just the bootloader, ``bin/boot/philemon.bin`` and
-   ``bin/boot/philemon64.bin``.
+   the loader, fetched and built: ``bin/boot/philemon.bin`` and
+   ``bin/boot/philemon64.bin``. philemon is a project of his own, and
+   ``philemon-release.mk`` names the release of him the image is written
+   with. ``tools/philemon.py`` clones that release's tag into
+   ``obj/philemon/``, once, and his own makefile builds him from there.
+   ``PHILEMON_URL=../philemon`` clones the same release out of a local
+   copy, and ``PHILEMON_SRC=../philemon`` builds a checkout of him as it
+   is, which is how the two are worked on together.
 
 ``make tools``
    the C build tools, into ``bin/tests/``: ``mkext4``, ``mkfat``,
-   ``mkboot``, ``gensyms``, ``bin2c``, ``checkfmt`` and ``fsckext4``.
+   ``gensyms``, ``bin2c``, ``checkfmt`` and ``fsckext4``.
 
 ``make kernelrelease``
    print the version: ``VERSION``, ``PATCHLEVEL`` and ``SUBLEVEL`` from the
@@ -134,7 +141,7 @@ from the outside, wherever it cloned it to:
 .. code-block:: sh
 
    make -C path/to/velvet BINDIR=$PWD/bin/kernel OBJROOT=$PWD/obj/kernel \
-        kernel philemon tools
+        kernel tools
 
 ``BINDIR`` and ``OBJROOT``
    where the outputs go. the defaults are ``bin`` and ``obj`` here; another
@@ -167,7 +174,8 @@ the build tree
 everything generated comes back out with ``make clean``:
 
 ``bin/``
-   the kernel, philemon, the ramdisk, the test binaries and the C tools.
+   the kernel, the ramdisk, the test binaries and the C tools, and in
+   ``bin/boot/`` the loader.
 
 ``obj/``
    one object tree per architecture. ``obj/x86_64/``, so switching
@@ -194,7 +202,7 @@ notes
 - the kernel builds ``-Wall -Wextra`` and takes both seriously. a warning
   nobody can justify is a bug that has not happened yet.
 - there is no ``make iso`` target any more. the image is written by
-  philemon in ``tools/mkboot.py`` and boots directly; the old iso went away
+  philemon's ``tools/mkboot.py`` and boots directly; the old iso went away
   in 0.1.12, when philemon replaced the bootloader before it.
 
 .. _testing: testing.rst

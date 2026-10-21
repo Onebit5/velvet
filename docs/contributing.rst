@@ -15,9 +15,10 @@ to fix.
 what belongs here
 -----------------
 
-everything that runs in ring 0 or before it: the subsystems, the monitor,
-philemon, the syscall layer, the host suites for any of those, and the
-tools that build and check them. programs, a libc, a toolchain and what a
+everything that runs in ring 0: the subsystems, the monitor, the boot
+protocol, the syscall layer, the host suites for any of those, and the
+tools that build and check them. the loader that runs before it is
+philemon, a project of his own, and a change to him goes there. programs, a libc, a toolchain and what a
 system puts on its medium are not here. they belong to the system built on
 this kernel, and a change to them goes there.
 

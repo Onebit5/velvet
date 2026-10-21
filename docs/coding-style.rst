@@ -22,7 +22,7 @@ scope
 applies to:
 
 - C sources and headers, everywhere in the tree: the kernel's directories,
-  ``boot/``, ``tests/`` and ``tools/``
+  ``tests/`` and ``tools/``
 - assembler sources. ``*.asm``
 - build files. ``GNUmakefile``, ``*.ld``, ``*.mk``
 - the python in ``tools/``, against the shorter rules in `python`_

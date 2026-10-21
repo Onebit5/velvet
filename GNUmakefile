@@ -9,7 +9,7 @@ KERNELRELEASE = $(VERSION).$(PATCHLEVEL).$(SUBLEVEL)
 # targets:
 #   make            -> the bootable image, velvet.img
 #   make kernel     -> just the kernel elf, bin/velvet
-#   make philemon   -> just the bootloader, bin/boot/
+#   make philemon   -> fetch and build the loader, into bin/boot/
 #   make tools      -> the C build tools, bin/tests/
 #   make run        -> boot it in qemu (CPUS=4, MEM=2G, QEMU_EXTRA=...)
 #   make test       -> the host suites and every checker
@@ -21,7 +21,7 @@ KERNELRELEASE = $(VERSION).$(PATCHLEVEL).$(SUBLEVEL)
 # out of its own tree, and says where things go rather than letting them
 # land in this checkout:
 #
-#   make -C velvet BINDIR=... OBJROOT=... kernel philemon tools
+#   make -C velvet BINDIR=... OBJROOT=... kernel tools
 #
 # BINDIR and OBJROOT are where the outputs go.
 
@@ -40,6 +40,14 @@ DISK := disk.img
 
 BINDIR  ?= bin
 OBJROOT ?= obj
+
+# the loader, and the release of him the image is written with. see the
+# rule that fetches him, further down
+include philemon-release.mk
+
+PHILEMON_RELEASE := $(OBJROOT)/philemon
+PHILEMON_SRC ?= $(PHILEMON_RELEASE)
+LOADER := $(BINDIR)/boot/philemon.bin $(BINDIR)/boot/philemon64.bin
 
 # the host suites and the C tools. the suites and the python checkers find
 # their images under bin/tests/, so `make test` is run with BINDIR left
@@ -158,7 +166,7 @@ all: $(BOOTIMG)
 kernel: $(BINDIR)/$(KERNEL)
 	@:
 
-philemon: $(BINDIR)/boot/philemon.bin $(BINDIR)/boot/philemon64.bin
+philemon: $(LOADER)
 	@:
 
 kernelrelease:
@@ -315,33 +323,39 @@ $(RAMDISK): $(SELFTEST_INIT) $(SELFTEST_BINS) $(SELFTEST_LIST) GNUmakefile
 		-C $(abspath $(BINDIR)) --no-recursion $(SELFTEST_TAR)
 
 #
-# there was a borrowed one here until 0.1.12. writing a bootloader and
-# then booting with somebody else's is not much of a bootloader, so it
-# is gone, along with the iso, the uefi path and the protocol that
-# came with it. the kernel is handed one struct now, in rdi, and knows
-# nothing about anybody's boot protocol including mine.
+# the loader is not this tree's. philemon is a project of his own, and
+# the image the tests boot is written with a release of him:
+# philemon-release.mk names it by version, tools/philemon.py clones its
+# tag into obj/philemon/, and his own makefile builds him into
+# bin/boot/. the image's format is his too, so his tools/mkboot.py
+# writes it.
+#
+#   make PHILEMON_URL=../philemon   the same release, out of a local copy
+#   make PHILEMON_SRC=../philemon   that checkout as it is
+#
+# only the image asks for him, so building the kernel alone never
+# fetches anything. the kernel is handed one struct, in rdi, and the
+# protocol is its own, in include/velvet/boot.h; tests/test_boot.c
+# holds his declaration of it against the kernel's. which release, and
+# where it is, are named at the top with the other names, for the reason
+# BOOTIMG is
+#
+# always asked, the way a tree that builds this kernel asks for it: his
+# makefile answers in a moment when nothing changed, and leaves the
+# files alone, so the image is not rewritten for the asking
+$(LOADER) &: philemon-release.mk FORCE
+ifeq ($(PHILEMON_SRC),$(PHILEMON_RELEASE))
+	@python3 tools/philemon.py fetch '$(PHILEMON_SRC)' '$(PHILEMON_URL)' \
+		'$(PHILEMON_VERSION)'
+else
+	@python3 tools/philemon.py local '$(PHILEMON_SRC)'
+endif
+	@$(MAKE) --no-print-directory -C $(PHILEMON_SRC) \
+		BINDIR=$(abspath $(BINDIR)/boot) OBJROOT=$(abspath $(OBJROOT)/loader)
 
-BOOTCC    := gcc
-BOOTCFLAGS := -std=gnu11 -ffreestanding -fno-pic -fno-stack-protector \
-              -mno-red-zone -mno-sse -mno-mmx -mno-80387 -mcmodel=small \
-              -Wall -Wextra -O2 -Iinclude
-
-$(BINDIR)/boot/philemon.bin: boot/philemon.asm boot/philemon.inc
-	@mkdir -p $(@D)
-	$(NASM) -f bin $< -o $@
-
-$(BINDIR)/boot/philemon64.bin: boot/philemon.c include/velvet/philemon.h boot/philemon.ld
-	@mkdir -p $(@D) $(OBJROOT)
-	$(BOOTCC) $(BOOTCFLAGS) -c boot/philemon.c -o $(OBJROOT)/philemon.o
-	$(LD) -T boot/philemon.ld -nostdlib -static --no-warn-rwx-segments \
-		$(OBJROOT)/philemon.o -o $(OBJROOT)/philemon.elf
-	objcopy -O binary $(OBJROOT)/philemon.elf $@
-
-$(BOOTIMG): $(BINDIR)/boot/philemon.bin $(BINDIR)/boot/philemon64.bin \
-            $(BINDIR)/$(KERNEL) $(RAMDISK) tools/mkboot.py \
-            boot/philemon.inc include/velvet/philemon.h
-	@python3 tools/mkboot.py $@ $(BINDIR)/boot/philemon.bin \
-		$(BINDIR)/boot/philemon64.bin $(BINDIR)/$(KERNEL) $(RAMDISK)
+$(BOOTIMG): $(LOADER) $(BINDIR)/$(KERNEL) $(RAMDISK)
+	@python3 $(PHILEMON_SRC)/tools/mkboot.py $@ $(LOADER) \
+		$(BINDIR)/$(KERNEL) $(RAMDISK)
 
 bootimg: $(BOOTIMG)
 
@@ -424,7 +438,7 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/addrspace $(T)/process \
              $(T)/syscall $(T)/tty $(T)/acpi $(T)/pci \
              $(T)/keyboard $(T)/serial \
-             $(T)/fat32 $(T)/vfs $(T)/philemon $(T)/boot \
+             $(T)/fat32 $(T)/vfs $(T)/boot \
              $(T)/locks $(T)/path \
              $(T)/shell $(T)/pipe $(T)/bcache \
              $(T)/ext4 $(T)/part $(T)/console \
@@ -536,8 +550,7 @@ $(T)/hash:     tests/test_hash.c     lib/hash.c \
 # build's output by accident is the failure this version is most likely
 # to have, and it would look exactly like a build that worked
 TOOL_BINS := $(T)/bin2c $(T)/checkfmt $(T)/gensyms \
-             $(T)/mkboot $(T)/mkext4 $(T)/mkfat \
-             $(T)/fsckext4
+             $(T)/mkext4 $(T)/mkfat $(T)/fsckext4
 
 tools: $(TOOL_BINS)
 	@:
@@ -548,7 +561,6 @@ $(T)/checkfmt: tools/checkfmt.c
 # asking nm, which is the point: a self-hosting machine has no more
 # binutils on it than it has python
 $(T)/gensyms:  tools/gensyms.c
-$(T)/mkboot:   tools/mkboot.c
 # not a rewrite so much as a driver: mkfs.c already formats the
 # filesystem and ext4.c already writes files, and both are tested. what
 # was missing was a way to point them at a host file and a host
@@ -621,12 +633,12 @@ $(T)/pressure: tests/test_pressure.c mm/pressure.c
 $(T)/vfs:      tests/test_vfs.c      fs/vfs.c \
                fs/ramdisk.c \
                lib/string.c
-$(T)/philemon: tests/test_philemon.c boot/philemon.c include/velvet/philemon.h
 # the protocol as the kernel declares it against the loader's own header,
 # field by field, since the two describe the same bytes and neither can
-# include the other's
-$(T)/boot:     tests/test_boot.c     include/velvet/boot.h \
-               include/velvet/philemon.h
+# include the other's. his header is his release's, so the suite is
+# built after he is fetched
+$(T)/boot:     tests/test_boot.c     include/velvet/boot.h $(LOADER)
+$(T)/boot:     HOSTFLAGS += -I$(PHILEMON_SRC)/include
 $(T)/gdt:      tests/test_gdt.c      arch/x86_64/gdt.c
 $(T)/gdt:      SRCS = tests/test_gdt.c
 $(T)/keyboard: tests/test_keyboard.c drivers/keyboard.c \
@@ -677,7 +689,7 @@ $(T)/shell:    SRCS = tests/test_shell.c lib/string.c \
 # found by breaking a function in tcp.h on purpose and watching the
 # suite pass anyway. rebuilding every test when any header changes costs
 # a few seconds and removes the whole class of it.
-TEST_HEADERS := $(shell find $(KERNEL_PORTABLE) arch boot tools tests -name '*.h' 2>/dev/null)
+TEST_HEADERS := $(shell find $(KERNEL_PORTABLE) arch tools tests -name '*.h' 2>/dev/null)
 $(TEST_BINS): $(TEST_HEADERS) $(VERSION_H)
 $(TOOL_BINS): $(TEST_HEADERS)
 	@mkdir -p $(@D)
@@ -703,8 +715,7 @@ $(T)/switch: tests/test_switch.c $(OBJROOT)/tests/switch.asm.o
 
 # the C build tools against the python they replace, while both exist
 .PHONY: toolcheck
-toolcheck: $(TOOL_BINS) $(BINDIR)/$(KERNEL) $(BINDIR)/boot/philemon.bin \
-           $(BINDIR)/boot/philemon64.bin $(RAMDISK) ext4-image
+toolcheck: $(TOOL_BINS) $(BINDIR)/$(KERNEL) $(RAMDISK) ext4-image
 	@python3 tools/toolcheck.py
 
 # the two sums against python, zlib and git. a published vector only

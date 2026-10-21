@@ -36,7 +36,6 @@ at a glance
     shell/             the velvet room terminal
     init/              kmain, and the handoff the loader leaves behind
     sources.mk         which of the above the kernel is made of
-    boot/              philemon, the bootloader
     base/diskroot/     the files on the data disk in `make run` (input)
     tests/             the host suites, run by `make test`
     tools/             the checkers and image builders: the python ones, and
@@ -83,8 +82,8 @@ each kernel directory is a subsystem with a page of its own:
    * - the shell
      - ``shell/``
      - `subsystems/shell.rst <subsystems/shell.rst>`_
-   * - the bootloader
-     - ``boot/``
+   * - the boot protocol
+     - ``include/velvet/boot.h``
      - `subsystems/boot.rst <subsystems/boot.rst>`_
    * - the checkers and image builders
      - ``tools/``
@@ -95,8 +94,7 @@ what the kernel is made of
 
 ``sources.mk`` names the files and directories the portable kernel is
 compiled from, and the build adds exactly one directory under ``arch/``.
-the root holds more than the kernel, ``boot/``, ``tests/`` and ``tools/``
-among it, so nothing globs the root: the makefile, ``tools/checkarch.py``,
+the root holds more than the kernel, ``tests/`` and ``tools/`` among it, so nothing globs the root: the makefile, ``tools/checkarch.py``,
 ``tools/portable.py`` and ``tools/toolcheck.py`` all read that one list, and
 so can a build of the kernel from outside it. a new file in an existing directory
 costs no edit anywhere; a new directory is one word in ``sources.mk``.
@@ -136,9 +134,10 @@ the kernel can be booted and tested on, and a system built on the kernel
 packs its own.
 
 everything under ``bin/`` and ``obj/`` is generated and comes back out with
-``make clean``. the boot image, ``velvet.img``, is written by
-``tools/mkboot.py`` and carries philemon, the kernel and the ramdisk.
-`building`_ is the details, including how another
-tree builds the kernel into its own ``bin/`` instead.
+``make clean``, the clone of philemon in ``obj/philemon/`` included. the
+boot image, ``velvet.img``, is written by his ``tools/mkboot.py`` and
+carries him, the kernel and the ramdisk. `building`_ is the details,
+including how another tree builds the kernel into its own ``bin/``
+instead.
 
 .. _building: building.rst

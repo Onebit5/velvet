@@ -113,12 +113,15 @@ so an older reader stops at the fields it knows.
 the loader this tree builds with
 --------------------------------
 
-``boot/`` is philemon, and ``tools/mkboot.py`` writes his image: his first
-sector, the rest of him, the table at block 32, then the kernel and the
-ramdisk. he declares the protocol in ``include/velvet/philemon.h`` under
-names of his own, and ``tests/test_boot.c`` holds the two declarations
-against each other field by field, because they describe the same bytes and
-neither can include the other.
+philemon is a project of his own. ``philemon-release.mk`` names the release
+of him this tree's image is written with, ``tools/philemon.py`` clones its
+tag into ``obj/philemon/``, and his ``tools/mkboot.py`` writes the image:
+his first sector, the rest of him, the table at block 32, then the kernel
+and the ramdisk. he declares the protocol in his ``include/philemon.h``
+under names of his own, and ``tests/test_boot.c`` holds the two
+declarations against each other field by field, because they describe the
+same bytes and neither can include the other. a release of him that
+disagrees with this header fails that suite before it boots anything.
 
 the boot interface
 ------------------

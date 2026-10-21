@@ -68,12 +68,6 @@ the static checks
 the image builders
 ------------------
 
-``mkboot.py``
-   build the bootable disk image for philemon: the bootloader, the table at
-   sector 32 naming where everything is, the kernel and the ramdisk. there is
-   no filesystem in the first 512 bytes, because there is barely room for
-   anything.
-
 ``mkfat.py``
    build a fat32 image and fill it from a directory. there is no
    ``mkfs.vfat`` on this machine, so this writes the filesystem by hand.
@@ -103,9 +97,10 @@ the image builders
 the C tools
 -----------
 
-six of the python builders have a C version beside them, because a
+five of the python builders have a C version beside them, because a
 self-hosting machine has no python: ``bin2c.c``, ``checkfmt.c``,
-``gensyms.c``, ``mkboot.c``, ``mkext4.c`` and ``mkfat.c``. they are built
+``gensyms.c``, ``mkext4.c`` and ``mkfat.c``. the sixth, ``mkboot``, writes
+philemon's image, and went with him. they are built
 by ``make tools`` into ``bin/tests/``, and both halves stay until the python
 can go, because ``toolcheck.py`` needs something to hold each C tool
 against.

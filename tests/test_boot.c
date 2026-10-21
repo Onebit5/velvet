@@ -11,7 +11,7 @@
 #include <stdint.h>
 
 #include <velvet/boot.h>
-#include <velvet/philemon.h>
+#include <philemon.h>
 
 static int s_i_failures;
 

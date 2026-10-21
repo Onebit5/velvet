@@ -13,10 +13,11 @@ starts here and runs unmodified. not linux's insides: no modules, no driver api.
 that plan is the 0.6.x series of [ROADMAP.md](ROADMAP.md), and the non-goals are at the
 top of it.
 
-it is a kernel and nothing more: what runs in ring 0, and before it. the programs, a libc
-and a toolchain belong to whatever system is built on a release of it.
+it is a kernel and nothing more: what runs in ring 0. the loader that runs before it is
+[philemon](https://github.com/Onebit5/philemon), a project of his own, and the programs, a
+libc and a toolchain belong to whatever system is built on a release of it.
 
-what is in here: the boot protocol, and philemon, the loader that speaks it; physical and
+what is in here: the boot protocol, which says what a loader leaves the kernel; physical and
 virtual memory, with demand paging and copy on write; threads, processes, signals and
 an init; smp with a scheduler on every core; fat32, and ext4 with extents and a
 journal; ahci, e1000, ps/2, the console and the serial line; a tcp/ip stack; and the
@@ -38,7 +39,6 @@ include/uapi/velvet/   what programs compile against: the syscall numbers,
 arch/x86_64/           the one architecture: its headers in include/asm/
                        (<asm/cpu.h>), and linker.ld
 arch/none/             an architecture that does nothing, for portable-check
-boot/                  philemon, the bootloader
 tests/ tools/          the host suites, the selftests, the checkers and the image builders
 base/                  what the boot medium and the data disk are made of
 ```
@@ -58,7 +58,7 @@ then:
 
 ```
 make lint            # the style guide, checked (whole tree, or FILES=fs/ext4.c)
-make                 # the bootable disk image, velvet.img
+make                 # the bootable disk image, velvet.img, with philemon fetched to write it
 make run             # boot it in qemu (CPUS=4, MEM=2G)
 make test            # the host test suites and the checkers (no qemu needed)
 make boottest        # boot it and drive the kernel's monitor over serial
@@ -75,7 +75,7 @@ on serial) is the kernel's monitor, where its builtins all work. a machine with 
 on it is a system built on this kernel.
 
 another tree builds the kernel with `make -C path/to/velvet BINDIR=... OBJROOT=...
-kernel philemon tools`; [docs/building.rst](docs/building.rst) says what each of those is
+kernel tools`; [docs/building.rst](docs/building.rst) says what each of those is
 for.
 
 ## releases
