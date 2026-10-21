@@ -9,7 +9,7 @@
 ; what has to be sitting there.
 ;
 ; its whole job is to climb back out into the present and jump into C.
-; philemon does the same climb at boot; this is the same walk in a
+; the loader does the same climb at boot; this is the same walk in a
 ; quarter of the space, for a core that is not the first.
 ;
 ; assembled flat and copied into place at runtime, so the addresses here

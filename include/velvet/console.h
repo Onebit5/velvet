@@ -12,7 +12,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <velvet/philemon.h>
+#include <velvet/boot.h>
 
 /*
  * framebuffer text consoles: four for whatever the system runs on them,
@@ -23,7 +23,7 @@
 #define VCONSOLE_COUNT   5
 #define VCONSOLE_MONITOR 4
 
-void console_init(const struct ph_framebuffer *fb);
+void console_init(const struct boot_framebuffer *fb);
 bool console_ready(void);
 
 /* write to whichever console the caller belongs to. */

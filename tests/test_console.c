@@ -68,7 +68,7 @@ static void say(const char *s)
 
 int main(void)
 {
-    struct ph_framebuffer info = {
+    struct boot_framebuffer info = {
         .address = (uint64_t)(uintptr_t)fb,
         .width = WIDTH,
         .height = HEIGHT,

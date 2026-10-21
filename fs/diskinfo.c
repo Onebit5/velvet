@@ -66,7 +66,8 @@ void disk_show(void)
 {
     if (!disk_ready(DISK_ROOT)) {
         kprintf("no disk. this machine has only the ramdisk, which is a tar\n");
-        kprintf("file philemon handed the kernel and which forgets everything on reboot.\n");
+        kprintf("file the loader handed the kernel, and which forgets "
+                "everything\non reboot.\n");
         kprintf("give qemu a drive and there will be somewhere to write.\n");
         return;
     }

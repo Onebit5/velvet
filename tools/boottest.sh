@@ -111,7 +111,7 @@ check 'framebuffer found'  'framebuffer :'   # serial keeps everything
 check 'idt armed'          '256 gates armed'
 check 'acpi parsed'        'acpi       :'
 check 'interrupts routed'  'interrupts :'
-check 'memory map parsed'  'memory map, as philemon found it'
+check 'memory map parsed'  'memory map, as the loader found it'
 check 'memory selftest'    'books balance'
 check 'own page tables'    "cr3 is the kernel's"
 check 'W^X applied'        'W^X on .text'

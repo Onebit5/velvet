@@ -16,7 +16,7 @@ top of it.
 it is a kernel and nothing more: what runs in ring 0, and before it. the programs, a libc
 and a toolchain belong to whatever system is built on a release of it.
 
-what is in here: philemon, the bootloader, and the handoff it makes; physical and
+what is in here: the boot protocol, and philemon, the loader that speaks it; physical and
 virtual memory, with demand paging and copy on write; threads, processes, signals and
 an init; smp with a scheduler on every core; fat32, and ext4 with extents and a
 journal; ahci, e1000, ps/2, the console and the serial line; a tcp/ip stack; and the
@@ -29,7 +29,7 @@ still a non-goal: being useful in any practical sense.
 laid out by subsystem, with no source at the root:
 
 ```
-init/                  kmain, and the handoff philemon leaves behind
+init/                  kmain, and the handoff the loader leaves behind
 mm/ sched/ fs/ net/    the subsystems, each beside the headers only it reads
 drivers/ lib/ shell/
 include/velvet/        the headers more than one subsystem reads: <velvet/vfs.h>

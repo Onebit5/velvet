@@ -78,7 +78,7 @@ the same three functions, so the screen and the file cannot drift apart.
 the ramdisk
 -----------
 
-``ramdisk.c`` is a read-only ustar tar that philemon loaded at boot. a 512
+``ramdisk.c`` is a read-only ustar tar that the loader loaded at boot. a 512
 byte header of ascii fields, the file's bytes rounded up to 512, repeat, and
 two blocks of zeroes to finish. there is no writing, no directories to speak
 of, and no allocation. ``ramdisk_open()`` hands back a pointer straight
@@ -491,7 +491,7 @@ file says which of them it means.
     which drive the mounted filesystem is on, or -1 if nothing is mounted.
 
 ``int disk_system_drive(void);``
-    which drive carries philemon's table, or -1 if none does.
+    which drive carries the boot table, or -1 if none does.
 
 ``bool disk_resize(size_t which, uint64_t blocks, struct ext4_resize *out, const char **error);``
     resize the filesystem mounted at `which` to `blocks` of its own, and
@@ -812,12 +812,12 @@ rather than filling a buffer that will never drain.
 the ramdisk interface
 -----------------------
 
-the tar philemon loaded into memory at boot: read-only, always there, and
+the tar the loader put in memory at boot: read-only, always there, and
 gone when the power goes. it is what makes the machine work when the disk
 does not, and a system's programs, and its accounts, live on it.
 
 ``struct ramdisk_file { const char *name;``
-    a read-only filesystem that is just a tar file philemon handed the kernel at boot.
+    a read-only filesystem that is just a tar file the loader handed the kernel at boot.
 
 ``uint32_t    mode;``
     the unix mode tar recorded.
@@ -826,7 +826,7 @@ does not, and a system's programs, and its accounts, live on it.
     may a process running as `uid` read this file?
 
 ``void ramdisk_init(void);``
-    take the archive philemon loaded.
+    take the archive the loader loaded.
 
 ``void ramdisk_mount(const void *base, uint64_t size);``
     point at an archive directly. the guts, so tests can hand it bytes

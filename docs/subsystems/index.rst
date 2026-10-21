@@ -6,7 +6,7 @@ it deliberately does not do. the map of the whole tree is in `layout
 <../layout.rst>`_.
 
 - `the architecture boundary <arch.rst>`_. ``arch/``
-- `philemon <boot.rst>`_. ``boot/``
+- `the boot protocol <boot.rst>`_. ``include/velvet/boot.h``, and ``boot/``
 - `memory <mm.rst>`_. ``mm/``
 - `scheduling and processes <sched.rst>`_. ``sched/``
 - `filesystems <fs.rst>`_. ``fs/``

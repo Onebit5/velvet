@@ -2,7 +2,7 @@
 /*
  * fs/ramdisk.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * the ramdisk: a tar file philemon handed over.
+ * the ramdisk: a tar file the loader handed over.
  */
 
 #include <velvet/ramdisk.h>
@@ -131,14 +131,14 @@ size_t   ramdisk_count(void)
 
 void ramdisk_init(void)
 {
-    const struct ph_handoff *h = boot_handoff();
+    const struct boot_handoff *h = boot_handoff();
     if (h->ramdisk == 0 || h->ramdisk_size == 0) {
         kprintf("ramdisk    : none supplied, the shelves are bare\n");
         return;
     }
 
     /*
-     * the bytes themselves are safe: philemon puts them in memory typed
+     * the bytes themselves are safe: the loader puts them in memory typed
      * "kernel + ramdisk", which is never reclaimed. the address arrives
      * already in the direct map, ready to read
      */

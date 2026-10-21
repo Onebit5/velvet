@@ -372,7 +372,7 @@ to a power of two, so the count freed has to be the count allocated.
     a usable pointer for a physical address, through the direct map.
 
 ``uint64_t pmm_hhdm_offset(void)``
-    where philemon mirrored physical memory for the kernel.
+    where the loader mirrored physical memory for the kernel.
 
 ``uint64_t pmm_highest_address(void)``
     the top of what is worth having in the direct map, across every memory
@@ -381,8 +381,8 @@ to a power of two, so the count freed has to be the count allocated.
     tables and buy nothing.
 
 ``uint64_t pmm_reclaim_bootloader(void)``
-    hand back the memory philemon was using for himself: his page tables,
-    his stack, his structures, once nothing points into them any more.
+    hand back the memory the loader was using for itself: its page tables,
+    its stack, its structures, once nothing points into them any more.
 
 ``uint64_t pmm_metadata_bytes(void)``
     what the allocator's own bookkeeping costs.

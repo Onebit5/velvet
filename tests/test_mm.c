@@ -45,13 +45,13 @@ int main(void)
     uint64_t hhdm = (uint64_t)arena;
 
     /* usable 4k..1MiB, a reserved hole, usable 2MiB..8MiB */
-    struct ph_memmap_entry e0 = { .base = 0x1000, .length = MiB - 0x1000,
-                                      .type = PH_MEM_USABLE };
-    struct ph_memmap_entry e1 = { .base = MiB, .length = MiB,
-                                      .type = PH_MEM_RESERVED };
-    struct ph_memmap_entry e2 = { .base = 2 * MiB, .length = 6 * MiB,
-                                      .type = PH_MEM_USABLE };
-    struct ph_memmap_entry map[3] = { e0, e1, e2 };
+    struct boot_memmap_entry e0 = { .base = 0x1000, .length = MiB - 0x1000,
+                                      .type = BOOT_MEM_USABLE };
+    struct boot_memmap_entry e1 = { .base = MiB, .length = MiB,
+                                      .type = BOOT_MEM_RESERVED };
+    struct boot_memmap_entry e2 = { .base = 2 * MiB, .length = 6 * MiB,
+                                      .type = BOOT_MEM_USABLE };
+    struct boot_memmap_entry map[3] = { e0, e1, e2 };
 
     pmm_init_from_map(map, 3, hhdm);
 
@@ -235,13 +235,13 @@ int main(void)
      * allocator is only sized to cover usable ram, those frames fall
      * off the end and reclaiming them silently does nothing
      */
-    struct ph_memmap_entry r0 = { .base = 0x1000, .length = MiB - 0x1000,
-                                      .type = PH_MEM_USABLE };
-    struct ph_memmap_entry r1 = { .base = 2 * MiB, .length = 4 * MiB,
-                                      .type = PH_MEM_USABLE };
-    struct ph_memmap_entry r2 = { .base = 6 * MiB, .length = MiB,
-                                      .type = PH_MEM_LOADER };
-    struct ph_memmap_entry rmap[3] = { r0, r1, r2 };
+    struct boot_memmap_entry r0 = { .base = 0x1000, .length = MiB - 0x1000,
+                                      .type = BOOT_MEM_USABLE };
+    struct boot_memmap_entry r1 = { .base = 2 * MiB, .length = 4 * MiB,
+                                      .type = BOOT_MEM_USABLE };
+    struct boot_memmap_entry r2 = { .base = 6 * MiB, .length = MiB,
+                                      .type = BOOT_MEM_LOADER };
+    struct boot_memmap_entry rmap[3] = { r0, r1, r2 };
 
     pmm_init_from_map(rmap, 3, hhdm);
 
@@ -275,15 +275,16 @@ int main(void)
     CHECK(pmm_total_bytes() == total_before + MiB, "and changes no numbers");
 
     /* the firmware's own tables are not in memory it calls usable. */
-    struct ph_memmap_entry t0 = { .base = 0x1000, .length = MiB - 0x1000,
-                                  .type = PH_MEM_USABLE };
-    struct ph_memmap_entry t1 = { .base = 2 * MiB, .length = 4 * MiB,
-                                  .type = PH_MEM_USABLE };
-    struct ph_memmap_entry t2 = { .base = 6 * MiB, .length = 128 * 1024,
-                                  .type = PH_MEM_RESERVED };
-    struct ph_memmap_entry t3 = { .base = 0xfd00000000ull, .length = 3ull * MiB,
-                                  .type = PH_MEM_RESERVED };
-    struct ph_memmap_entry tmap[4] = { t0, t1, t2, t3 };
+    struct boot_memmap_entry t0 = { .base = 0x1000, .length = MiB - 0x1000,
+                                  .type = BOOT_MEM_USABLE };
+    struct boot_memmap_entry t1 = { .base = 2 * MiB, .length = 4 * MiB,
+                                  .type = BOOT_MEM_USABLE };
+    struct boot_memmap_entry t2 = { .base = 6 * MiB, .length = 128 * 1024,
+                                  .type = BOOT_MEM_RESERVED };
+    struct boot_memmap_entry t3 = { .base = 0xfd00000000ull,
+                                    .length = 3ull * MiB,
+                                    .type = BOOT_MEM_RESERVED };
+    struct boot_memmap_entry tmap[4] = { t0, t1, t2, t3 };
 
     pmm_init_from_map(tmap, 4, hhdm);
 
@@ -298,10 +299,10 @@ int main(void)
      * a gap of more than a megabyte is a different part of the address
      * space, not padding
      */
-    struct ph_memmap_entry g2 = { .base = 6 * MiB + 8 * MiB,
+    struct boot_memmap_entry g2 = { .base = 6 * MiB + 8 * MiB,
                                   .length = 128 * 1024,
-                                  .type = PH_MEM_RESERVED };
-    struct ph_memmap_entry gmap[3] = { t0, t1, g2 };
+                                  .type = BOOT_MEM_RESERVED };
+    struct boot_memmap_entry gmap[3] = { t0, t1, g2 };
     pmm_init_from_map(gmap, 3, hhdm);
     CHECK(pmm_highest_address() == 6 * MiB,
           "a reserved region well clear of ram is left out of the map");

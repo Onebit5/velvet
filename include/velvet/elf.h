@@ -41,7 +41,7 @@ struct elf_load_result elf_load(const void *image, uint64_t size,
  *
  * "will still be in memory" is the whole condition, and it is why this
  * is a separate call rather than the only one. the ramdisk is a tar
- * philemon handed over and never moves; a program read off the disk is
+ * the loader handed over and never moves; a program read off the disk is
  * a copy on the heap that somebody has to free.
  */
 

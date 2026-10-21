@@ -2,7 +2,7 @@
 /*
  * init/main.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * where the kernel starts: philemon's handoff, then init.
+ * where the kernel starts: the loader's handoff, then init.
  */
 
 #include <stdint.h>
@@ -111,20 +111,20 @@ static bool writing_to_the_shown_console(void)
     return which_console() == console_active();
 }
 
-void kmain(const struct ph_handoff *handoff)
+void kmain(const struct boot_handoff *handoff)
 {
     boot_take_handoff(handoff);
 
     /*
      * boot_take_handoff has already refused to come back if the struct
-     * is not one of philemon's, which is the only check worth making
+     * does not carry the boot magic, which is the only check worth making
      * this early, there is no console and no serial to complain to
      */
 
     /* the machine, brought up by whoever knows what this machine is. */
     machine_bring_up_early();
 
-    const struct ph_framebuffer *fb = &boot_handoff()->fb;
+    const struct boot_framebuffer *fb = &boot_handoff()->fb;
     if (fb->width == 0) {
         kprintf("no video mode. serial only, which is enough to see by\n");
     } else {
@@ -197,7 +197,7 @@ void kmain(const struct ph_handoff *handoff)
     }
 
     /*
-     * live, or installed. a drive carrying philemon's table at sector 32
+     * live, or installed. a drive carrying the boot table at sector 32
      * is a boot medium
      */
     {

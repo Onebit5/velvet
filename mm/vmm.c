@@ -365,7 +365,7 @@ void vmm_init(void)
      * shell prints faults on a screen that was working a moment ago
      * under the loader's tables
      */
-    const struct ph_framebuffer *fb = &boot_handoff()->fb;
+    const struct boot_framebuffer *fb = &boot_handoff()->fb;
     if (fb->width != 0 && fb->address >= hhdm) {
         uint64_t fb_phys = fb->address - hhdm;
         uint64_t fb_size = fb->pitch * fb->height;

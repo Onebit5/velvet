@@ -34,7 +34,7 @@ at a glance
     sched/             threads, run queue, context switch, processes,
                        signals, init, locks
     shell/             the velvet room terminal
-    init/              kmain, and the handoff philemon leaves behind
+    init/              kmain, and the handoff the loader leaves behind
     sources.mk         which of the above the kernel is made of
     boot/              philemon, the bootloader
     base/diskroot/     the files on the data disk in `make run` (input)

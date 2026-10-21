@@ -338,7 +338,7 @@ int main(void)
      * the only reason their agreeing means anything.
      *
      * the disk starts with something in its first 446 bytes, because on
-     * a real machine that is philemon, the table lives *inside* the
+     * a real machine that is the loader, the table lives *inside* the
      * boot sector, which is the whole awkwardness of the mbr
      */
 

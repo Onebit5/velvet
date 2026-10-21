@@ -15,7 +15,7 @@
 #include <velvet/epoch.h>
 #include <velvet/bcache.h>
 #include <velvet/part.h>
-#include <velvet/philemon.h>
+#include <velvet/boot.h>
 
 /*
  * the filesystem keeps one sector of scratch and every path through
@@ -140,7 +140,7 @@ const char *disk_kind_name(size_t which)
 static struct disk_part table[DISK_PARTS_MAX];
 static size_t table_count;
 
-/* which drive carries philemon's table, found during the scan above. */
+/* which drive carries the boot table, found during the scan above. */
 static int system_drive = -1;
 
 /*
@@ -266,10 +266,10 @@ bool disk_mount(void)
         /* while this drive is selected anyway: is it a boot medium? */
         if (system_drive < 0) {
             uint8_t sector[PART_SECTOR];
-            if (ahci_read(NULL, PH_TABLE_LBA, 1, sector)) {
-                struct ph_table t;
+            if (ahci_read(NULL, BOOT_TABLE_LBA, 1, sector)) {
+                struct boot_table t;
                 memcpy(&t, sector, sizeof t);
-                if (t.magic == PHILEMON_MAGIC) {
+                if (t.magic == BOOT_MAGIC) {
                     system_drive = (int)i;
                 }
             }

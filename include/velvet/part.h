@@ -69,8 +69,8 @@ struct part_plan {
 
 /*
  * write an mbr describing `count` partitions, keeping whatever is in the
- * first 446 bytes, because on this machine that is philemon, and the
- * table lives *inside* the boot sector it shares with him.
+ * first 446 bytes, because on a machine that boots from it that is the
+ * loader, and the table lives *inside* the boot sector it shares with it.
  *
  * that sharing is the whole awkwardness of the mbr and the reason this
  * takes a reader as well as a writer: the sector has to be read, have

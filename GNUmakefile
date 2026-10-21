@@ -424,7 +424,7 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/addrspace $(T)/process \
              $(T)/syscall $(T)/tty $(T)/acpi $(T)/pci \
              $(T)/keyboard $(T)/serial \
-             $(T)/fat32 $(T)/vfs $(T)/philemon \
+             $(T)/fat32 $(T)/vfs $(T)/philemon $(T)/boot \
              $(T)/locks $(T)/path \
              $(T)/shell $(T)/pipe $(T)/bcache \
              $(T)/ext4 $(T)/part $(T)/console \
@@ -622,6 +622,11 @@ $(T)/vfs:      tests/test_vfs.c      fs/vfs.c \
                fs/ramdisk.c \
                lib/string.c
 $(T)/philemon: tests/test_philemon.c boot/philemon.c include/velvet/philemon.h
+# the protocol as the kernel declares it against the loader's own header,
+# field by field, since the two describe the same bytes and neither can
+# include the other's
+$(T)/boot:     tests/test_boot.c     include/velvet/boot.h \
+               include/velvet/philemon.h
 $(T)/gdt:      tests/test_gdt.c      arch/x86_64/gdt.c
 $(T)/gdt:      SRCS = tests/test_gdt.c
 $(T)/keyboard: tests/test_keyboard.c drivers/keyboard.c \

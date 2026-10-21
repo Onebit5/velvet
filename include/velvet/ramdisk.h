@@ -2,8 +2,8 @@
 /*
  * include/velvet/ramdisk.h
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * a read-only filesystem that is just a tar file philemon handed the kernel at
- * boot.
+ * a read-only filesystem that is just a tar file the loader handed the
+ * kernel at boot.
  */
 
 /* the design notes for ramdisk.h are in docs/subsystems/mm.rst */

@@ -195,7 +195,7 @@ static bool image_build(const char *str_path, int i_argc,
      * two ways in, and which one depends on a single question: will
      * this image still be here when the program runs?
      *
-     * a program off the ramdisk is a stretch of a tar philemon handed
+     * a program off the ramdisk is a stretch of a tar the loader handed
      * over at boot. it never moves and is never freed, so the segments
      * can simply be *described* and each page fetched the first time it
      * is touched, the program starts without a byte of it having been

@@ -121,7 +121,7 @@ void sched_capture(struct kcapture *p_cap)
 /* the kernel's log, as far as syslog can tell. */
 #include <velvet/kprintf.h>
 
-static const char s_str_klog[] = "philemon handed over\nvelvet is up\n";
+static const char s_str_klog[] = "the loader handed over\nvelvet is up\n";
 
 size_t klog_copy(char *str_buf, size_t sz_size)
 {

@@ -56,7 +56,8 @@ the subsystems
 
 - `the architecture boundary <subsystems/arch.rst>`_: ``arch/``, and the
   one rule the build enforces.
-- `philemon <subsystems/boot.rst>`_: the bootloader and the handoff.
+- `the boot protocol <subsystems/boot.rst>`_: what a loader leaves the kernel,
+  and where.
 - `memory <subsystems/mm.rst>`_: frames, heap, page tables, demand paging,
   copy on write, pressure.
 - `scheduling and processes <subsystems/sched.rst>`_: threads, the

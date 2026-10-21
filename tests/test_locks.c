@@ -171,8 +171,8 @@ static void run(void *(*fn)(void *))
 int main(void)
 {
     void *arena = aligned_alloc(4096, ARENA);
-    struct ph_memmap_entry map[1] = {
-        { .base = 0x1000, .length = ARENA - 0x1000, .type = PH_MEM_USABLE },
+    struct boot_memmap_entry map[1] = {
+        { .base = 0x1000, .length = ARENA - 0x1000, .type = BOOT_MEM_USABLE },
     };
     pmm_init_from_map(map, 1, (uint64_t)arena);
 

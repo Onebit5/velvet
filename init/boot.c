@@ -9,18 +9,18 @@
 #include <velvet/panic.h>
 #include <asm/cpu.h>
 
-static const struct ph_handoff *handoff;
+static const struct boot_handoff *handoff;
 
-void boot_take_handoff(const struct ph_handoff *h)
+void boot_take_handoff(const struct boot_handoff *h)
 {
-    if (h == NULL || h->magic != PHILEMON_MAGIC) {
+    if (h == NULL || h->magic != BOOT_MAGIC) {
         /* nothing has been set up yet, no console, no serial, so there is nowhere to complain to. */
         cpu_stop();
     }
     handoff = h;
 }
 
-const struct ph_handoff *boot_handoff(void)
+const struct boot_handoff *boot_handoff(void)
 {
     if (handoff == NULL) {
         panic("something asked about the boot before the boot happened");
@@ -30,5 +30,5 @@ const struct ph_handoff *boot_handoff(void)
 
 uint64_t boot_hhdm(void)
 {
-    return handoff != NULL ? handoff->hhdm : PHILEMON_HHDM;
+    return handoff != NULL ? handoff->hhdm : BOOT_HHDM;
 }

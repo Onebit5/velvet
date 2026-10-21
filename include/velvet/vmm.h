@@ -21,7 +21,7 @@
  * pml4 -> pdpt -> pd -> pt, and which everyone else calls "the reason
  * its kernel triple faults".
  *
- * up to now the kernel was riding on the page tables philemon built for the kernel.
+ * up to now the kernel was riding on the page tables the loader built for it.
  * these are the kernel's
  */
 

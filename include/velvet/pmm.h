@@ -15,7 +15,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include <velvet/philemon.h>
+#include <velvet/boot.h>
 
 /*
  * physical memory manager over the buddy allocator in buddy.h: free
@@ -29,7 +29,7 @@
 
 void pmm_init(void);
 
-void pmm_init_from_map(const struct ph_memmap_entry *entries, size_t count,
+void pmm_init_from_map(const struct boot_memmap_entry *entries, size_t count,
                        uint64_t hhdm);
 
 uint64_t pmm_alloc_pages(size_t count);

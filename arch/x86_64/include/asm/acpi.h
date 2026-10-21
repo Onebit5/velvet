@@ -15,7 +15,7 @@
 /*
  * enough acpi to find the interrupt controllers.
  *
- * the chain is: philemon hands over the rsdp, which points at a table of
+ * the chain is: the loader hands over the rsdp, which points at a table of
  * pointers to other tables, one of which is the madt, which says where
  * the local apic lives, where the io apics live, and which of the old
  * isa irq numbers have been quietly renumbered on this machine.
@@ -83,7 +83,7 @@ uint32_t acpi_gsi_for_irq(const struct acpi_info *info, uint8_t isa_irq);
 const struct acpi_ioapic *acpi_ioapic_for_gsi(const struct acpi_info *info,
                                               uint32_t gsi);
 
-/* read the tables philemon pointed the kernel at. returns what was found */
+/* read the tables the loader pointed the kernel at. returns what was found */
 struct acpi_info acpi_init(void);
 
 #endif

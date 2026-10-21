@@ -317,7 +317,7 @@ static void newline(struct vconsole *c)
 
 
 
-void console_init(const struct ph_framebuffer *fb)
+void console_init(const struct boot_framebuffer *fb)
 {
     if (fb->bpp != 32) {
         /* qemu always gives 32bpp so im not writing three blitters. */

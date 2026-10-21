@@ -43,13 +43,13 @@ static size_t reclaim_count;
 static const char *memmap_type_name(uint64_t type)
 {
     switch (type) {
-    case PH_MEM_USABLE:            return "usable";
-    case PH_MEM_RESERVED:          return "reserved";
-    case PH_MEM_ACPI_RECLAIMABLE:  return "acpi reclaimable";
-    case PH_MEM_ACPI_NVS:          return "acpi nvs";
-    case PH_MEM_BAD:               return "bad memory (yikes)";
-    case PH_MEM_LOADER:            return "the loader's (reclaimable)";
-    case PH_MEM_KERNEL:            return "kernel + ramdisk";
+    case BOOT_MEM_USABLE:            return "usable";
+    case BOOT_MEM_RESERVED:          return "reserved";
+    case BOOT_MEM_ACPI_RECLAIMABLE:  return "acpi reclaimable";
+    case BOOT_MEM_ACPI_NVS:          return "acpi nvs";
+    case BOOT_MEM_BAD:               return "bad memory (yikes)";
+    case BOOT_MEM_LOADER:            return "the loader's (reclaimable)";
+    case BOOT_MEM_KERNEL:            return "kernel + ramdisk";
     default:                       return "???";
     }
 }
@@ -101,7 +101,7 @@ static uint64_t give_away(uint64_t first, uint64_t last)
     return last - first;
 }
 
-void pmm_init_from_map(const struct ph_memmap_entry *entries, size_t count,
+void pmm_init_from_map(const struct boot_memmap_entry *entries, size_t count,
                        uint64_t hhdm)
 {
     hhdm_offset = hhdm;
@@ -122,15 +122,15 @@ void pmm_init_from_map(const struct ph_memmap_entry *entries, size_t count,
     shares_frames = 0;
     share_bytes = 0;
     for (size_t i = 0; i < count; i++) {
-        const struct ph_memmap_entry *e = &entries[i];
+        const struct boot_memmap_entry *e = &entries[i];
         kprintf("  %016lx - %016lx  %s\n", e->base, e->base + e->length,
                 memmap_type_name(e->type));
-        if (e->type != PH_MEM_RESERVED
-            && e->type != PH_MEM_BAD
+        if (e->type != BOOT_MEM_RESERVED
+            && e->type != BOOT_MEM_BAD
             && e->base + e->length > highest_addr) {
             highest_addr = e->base + e->length;
         }
-        if (e->type == PH_MEM_USABLE) {
+        if (e->type == BOOT_MEM_USABLE) {
             total_frames += e->length / PAGE_SIZE;
         }
         /*
@@ -139,13 +139,13 @@ void pmm_init_from_map(const struct ph_memmap_entry *entries, size_t count,
          * later, they sit above the last usable region on most
          * machines
          */
-        if (e->type == PH_MEM_USABLE
-            || e->type == PH_MEM_LOADER) {
+        if (e->type == BOOT_MEM_USABLE
+            || e->type == BOOT_MEM_LOADER) {
             if (e->base + e->length > highest) {
                 highest = e->base + e->length;
             }
         }
-        if (e->type == PH_MEM_LOADER
+        if (e->type == BOOT_MEM_LOADER
             && reclaim_count < MAX_RECLAIM) {
             reclaim[reclaim_count].base = e->base;
             reclaim[reclaim_count].length = e->length;
@@ -170,9 +170,9 @@ void pmm_init_from_map(const struct ph_memmap_entry *entries, size_t count,
     for (bool grew = true; grew; ) {
         grew = false;
         for (size_t i = 0; i < count; i++) {
-            const struct ph_memmap_entry *e = &entries[i];
+            const struct boot_memmap_entry *e = &entries[i];
             uint64_t end = e->base + e->length;
-            if (e->type == PH_MEM_BAD || end <= highest_addr) {
+            if (e->type == BOOT_MEM_BAD || end <= highest_addr) {
                 continue;
             }
             /*
@@ -192,8 +192,8 @@ void pmm_init_from_map(const struct ph_memmap_entry *entries, size_t count,
     /* pass 2: find a usable region big enough to park the bookkeeping */
     void *meta = NULL;
     for (size_t i = 0; i < count; i++) {
-        const struct ph_memmap_entry *e = &entries[i];
-        if (e->type == PH_MEM_USABLE && e->length >= meta_bytes) {
+        const struct boot_memmap_entry *e = &entries[i];
+        if (e->type == BOOT_MEM_USABLE && e->length >= meta_bytes) {
             meta = (void *)(e->base + hhdm_offset);
             meta_first = e->base / PAGE_SIZE;
             meta_last  = (e->base + meta_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -212,8 +212,8 @@ void pmm_init_from_map(const struct ph_memmap_entry *entries, size_t count,
      * away one at a time
      */
     for (size_t i = 0; i < count; i++) {
-        const struct ph_memmap_entry *e = &entries[i];
-        if (e->type != PH_MEM_USABLE) {
+        const struct boot_memmap_entry *e = &entries[i];
+        if (e->type != BOOT_MEM_USABLE) {
             continue;
         }
         give_away(e->base / PAGE_SIZE, (e->base + e->length) / PAGE_SIZE);
@@ -228,9 +228,9 @@ void pmm_init_from_map(const struct ph_memmap_entry *entries, size_t count,
 
 void pmm_init(void)
 {
-    const struct ph_handoff *h = boot_handoff();
-    kprintf("memory map, as philemon found it:\n");
-    pmm_init_from_map((const struct ph_memmap_entry *)h->memmap,
+    const struct boot_handoff *h = boot_handoff();
+    kprintf("memory map, as the loader found it:\n");
+    pmm_init_from_map((const struct boot_memmap_entry *)h->memmap,
                       h->memmap_count, h->hhdm);
     kprintf("  -> %lu MiB usable, %lu KiB on the buddy's books, "
             "%lu KiB on who shares what\n",

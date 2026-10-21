@@ -64,7 +64,7 @@ static struct thread *ring;
 #define ME (&percpu[cpu_id()])
 #define current (ME->running)
 
-/* the thread that philemon handed the cpu to. */
+/* the thread that the loader handed the cpu to. */
 static struct thread boot_thread;
 
 struct thread *sched_current(void)
