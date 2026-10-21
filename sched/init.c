@@ -126,7 +126,6 @@ const char *init_state_name(enum service_state s)
 #include <velvet/sched.h>
 #include <velvet/thread.h>
 #include <velvet/spinlock.h>
-#include <velvet/shell.h>
 #include <velvet/console.h>
 #include <velvet/pit.h>
 #include <velvet/tty.h>
@@ -148,7 +147,7 @@ const char *init_state_name(enum service_state s)
 /* how long the machine waits for programs to notice it is going down, before ending them itself. */
 #define INIT_GRACE_MS  1000
 
-/* the table is written by init's thread and read by whichever shell was asked to print it. */
+/* written by init's thread, and read by whoever brings the machine down. */
 static struct spinlock init_lock = SPINLOCK("init", LOCK_RANK_DEVICE);
 static struct init_table services;
 
@@ -176,13 +175,6 @@ bool init_stopping(void)
 }
 
 
-
-static void monitor_service(void *arg)
-{
-    (void)arg;
-    shell_monitor();
-    thread_exit(0);
-}
 
 /* the disk, kept roughly honest. */
 #define FLUSH_EVERY_MS 3000
@@ -492,11 +484,11 @@ static void init_thread(void *arg)
     uint64_t gained = pmm_reclaim_bootloader();
     kprintf("reclaimed %lu KiB of bootloader memory (%lu MiB usable now)\n",
             gained / 1024, pmm_total_bytes() / (1024 * 1024));
-    kprintf("five consoles: alt+1..4 for the system, alt+5 for the "
-            "kernel's monitor\n");
-    kprintf("             (or alt+f1..f5, if your host does not eat them), "
-            "ctrl+\\ then a digit\n");
-    kprintf("             on serial, or `chvt`. shift+pageup looks back\n");
+    kprintf("five consoles, all the system's: alt+1..5 (or alt+f1..f5, if "
+            "your host\n");
+    kprintf("             does not eat them), ctrl+\\ then a digit on serial. "
+            "shift+pageup\n");
+    kprintf("             looks back\n");
 
     /*
      * the order below is the order the machine comes up in, and it is
@@ -505,8 +497,7 @@ static void init_thread(void *arg)
      * the flusher first, because it is what stands between a
      * write-back cache and a machine that loses the last thing anybody
      * typed, and it should be there before there is anybody able to
-     * type. the monitor after it, so the last thing to appear on its
-     * screen is a prompt rather than a service report
+     * type
      */
     uint64_t flags = spin_lock_irq(&init_lock);
     init_table_reset(&services);
@@ -514,8 +505,6 @@ static void init_thread(void *arg)
     if (e1000_present()) {
         init_add(&services, "network", network_service, NULL, 0, true);
     }
-    init_add(&services, "monitor", monitor_service, NULL, VCONSOLE_MONITOR,
-             true);
     size_t count = services.count;
     spin_unlock_irq(&init_lock, flags);
 
@@ -532,9 +521,8 @@ static void init_thread(void *arg)
              * forever is how a machine that is merely short of memory
              * becomes a machine that is doing nothing else
              */
-            kprintf("init: could not start %s. it stays down, "
-                    "`init start %s` to try again\n",
-                    services.s[i].name, services.s[i].name);
+            kprintf("init: could not start %s. it stays down\n",
+                    services.s[i].name);
         }
     }
 

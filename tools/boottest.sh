@@ -1,17 +1,17 @@
 #!/bin/sh
-# boot the image headless and actually use the thing: tell its /init to
-# run no selftests, go to the kernel's monitor on the fifth console, type
-# commands at it over the serial line and check the answers come back.
+# boot the image headless, let it come all the way up and go all the way
+# down again, and read the serial log for each step of both. then check,
+# from the host, the disk it ran on.
 #
-# this is only possible because com1 is wired to the input queue, so the
-# monitor cant tell the difference between a keyboard and a pipe.
-#
-# what is checked is the kernel and nothing else. the medium this image
-# carries has no programs on it but init and the selftests, so every
-# command below is one the kernel answers itself: the boot, /init, the
-# memory, the scheduler, the disks, the journal and a resize. ring 3 is
-# checked by the selftests, `make kselftest`, and by whatever system
-# ships this kernel with programs on it.
+# the kernel has no shell of its own, and the medium this image carries
+# has no programs on it but init and the selftests, so the one thing typed
+# at the machine is the answer /init asks for: `none`, which runs no
+# selftests and powers the machine off. what is checked is the kernel and
+# nothing else: the boot, /init, the memory, the scheduler, the disks and
+# the journal, a shutdown that closes them, and filesystems a checker that
+# is not the driver calls clean afterwards. ring 3 is checked by the
+# selftests, `make kselftest`, and by whatever system ships this kernel
+# with programs on it.
 #
 #   usage: tools/boottest.sh [velvet.img]
 
@@ -19,7 +19,7 @@ set -eu
 
 BOOTIMG="${1:-velvet.img}"
 
-# a disk of its own, built fresh, because this test writes to it and a
+# a disk of its own, built fresh, because the machine writes to it and a
 # run that only passes on the leavings of the last one proves nothing.
 #
 # ext4 and built by the machine's own formatter rather than the python
@@ -27,10 +27,9 @@ BOOTIMG="${1:-velvet.img}"
 # actually runs on.
 #
 # two partitions: the system on one and somewhere to work on the other,
-# which is what an installed disk looks like. and the second filesystem
-# is deliberately *smaller than its partition*, 8 MiB of ext4 inside 24
-# MiB of partition, because that is the exact situation `resize` exists
-# for, and it is the one an image written onto a bigger drive is in
+# which is what an installed disk looks like. the second filesystem is
+# smaller than its partition, 8 MiB of ext4 inside 24 MiB, which is the
+# situation an image written onto a bigger drive is in
 HERE="$(dirname "$0")"
 DISK="$(mktemp -t velvet-boottest-XXXXXX.img)"
 SYSIMG="$(mktemp -t velvet-boottest-sys-XXXXXX.img)"
@@ -41,8 +40,6 @@ trap 'rm -rf "$DISK" "$SYSIMG" "$WORKIMG" "$EMPTY"' EXIT
 "$HERE/../bin/tests/mkext4" "$SYSIMG" "$HERE/../base/diskroot" 48 >/dev/null
 echo "somewhere to work that is not the system" > "$EMPTY/readme.txt"
 "$HERE/../bin/tests/mkext4" "$WORKIMG" "$EMPTY" 8 work >/dev/null
-# and the room to grow into, which is a partition longer than the
-# filesystem in it rather than anything the filesystem knows about
 dd if=/dev/zero of="$WORKIMG" bs=1M count=0 seek=24 2>/dev/null
 python3 "$HERE/mkdisk.py" "$DISK" mbr "$SYSIMG:linux" "$WORKIMG:linux" \
         >/dev/null
@@ -57,43 +54,24 @@ if [ ! -f "$BOOTIMG" ]; then
     exit 1
 fi
 
-echo "booting $BOOTIMG and driving the monitor over serial..."
+echo "booting $BOOTIMG, and powering it off again..."
 
-# the sleeps matter: the kernel has to get all the way to /init's
-# question before it can hear me, and each command needs a beat to
-# answer. ctrl+\ then a digit is a console, on serial
+# the sleep matters: the kernel has to get all the way to /init's
+# question before the answer means anything. and qemu does not stop when
+# its input ends, so it is the machine powering itself off that ends this,
+# and the timeout is only for a machine that never does
+rc=0
 {
     sleep 8
-    printf 'none\r';   sleep 1
-    printf '\0345';    sleep 1
-    printf 'help\r';   sleep 1
-    printf 'mem\r';    sleep 1
-    printf 'ps\r';     sleep 1
-    printf 'summon pixie\r'; sleep 3
-    printf 'ps\r';     sleep 2
-    printf 'vmm\r';    sleep 2
-    printf 'bt\r';     sleep 2
-    printf 'date\r';   sleep 1
-    printf 'history\r'; sleep 1
-    printf 'whoami\r';  sleep 1
-    printf 'lspci\r';   sleep 2
-    printf 'slabs\r';   sleep 2
-    printf 'disk\r';    sleep 2
-    printf 'mount\r';   sleep 2
-    printf 'arcana\r';  sleep 1
-    printf 'persona\r'; sleep 2
-    printf 'dmesg\r';   sleep 2
-    printf 'sync\r';    sleep 2
-    printf 'mount\r';   sleep 2
-    printf 'resize work\r'; sleep 6
-} | timeout 300 qemu-system-x86_64 \
+    printf 'none\r'
+} | timeout 120 qemu-system-x86_64 \
         -M q35 -m 2G -smp "${CPUS:-2}" -boot order=c \
         -drive id=boot,file="$BOOTIMG",format=raw,if=none \
         -device ide-hd,drive=boot,bus=ide.0,bootindex=0 \
         -drive id=data,file="$DISK",format=raw,if=none \
         -device ide-hd,drive=data,bus=ide.1,bootindex=1 \
         -display none -serial stdio -no-reboot \
-        > "$LOG" 2>&1 || true
+        > "$LOG" 2>&1 || rc=$?
 
 fail=0
 check() {
@@ -111,64 +89,36 @@ check 'framebuffer found'  'framebuffer :'   # serial keeps everything
 check 'idt armed'          '256 gates armed'
 check 'acpi parsed'        'acpi       :'
 check 'interrupts routed'  'interrupts :'
+check 'pci scanned'        'pci        :'
 check 'memory map parsed'  'memory map, as the loader found it'
 check 'memory selftest'    'books balance'
+check 'blocks merge'       'blocks merge'
 check 'own page tables'    "cr3 is the kernel's"
 check 'W^X applied'        'W^X on .text'
 check 'tss loaded'         'tss loaded'
+check 'ramdisk mounted'    'ramdisk    :'
+# the disk the machine boots has a log on it, and mounting it is
+# supposed to replay that log and then write through it. a machine that
+# quietly fell back to mounting read-only would pass every check that
+# reads and fail only the ones that write
+check 'disk at the root'   'ext4 "velvet" mounted at /'
+check 'journal started'    'journalled: every change is written down'
+check 'work mounted'       '"work" at /work'
 check 'boot thread left'   '[boot] hath returned'
 check 'memory reclaimed'   'reclaimed'
 check 'scheduler started'  'the wheel turns'
 check '/init started'      'handing the machine to /init'
 check '/init asks'         'run which selftests?'
-check '/init runs none'    'no selftests. the machine stays up'
-check 'reached the monitor' 'monitor@velvet[5]:/#'
+check '/init runs none'    'no selftests. powering off'
 
-# and then use it
-check 'help works'    'for what one takes'
-check 'mem works'     'physical frames'
-check 'ps works'      'idle'
-check 'summon works'  'has answered thy call'
-check 'thread ran'    '[pixie]'
-check 'vmm works'     'pml4 at'
-check 'bt works'      'call trace:'
-check 'symbols work'  'shell_monitor+'
-check 'date works'    ':'
-# numbered, because the typed command is echoed back too: a check for
-# the words alone passes whether or not history printed anything
-check 'history works' '4  summon pixie'
-check 'whoami works'  'monitor, uid 0'
-check 'ramdisk mounted' 'ramdisk    :'
-check 'cpu accounted'    '% '
-check 'peak memory'      'ever in use at once'
-check 'pci scanned'      'pci        :'
-check 'lspci works'      'host bridge'
-check 'blocks merge'     'blocks merge'
-check 'free block shape' 'free blocks, by size'
-check 'slab caches'      'kmalloc-'
-# the cache's row in the slabs table, by the padding after its name:
-# the bare word turns up in the source listing too, and a check that a
-# file name can satisfy is not a check of the cache
-check 'thread cache'     'thread      '
-check 'disk at the root' 'ext4 "velvet" mounted at /'
-# the disk the machine boots has a log on it, and mounting it is
-# supposed to replay that log and then write through it. a machine that
-# quietly fell back to mounting read-only would pass every check that
-# reads and fail only the ones that write
-check 'journal started'  'journalled: every change is written down'
-# two filesystems under one namespace, and a `resize` that grows
-# the second into the partition it is sitting in. the second filesystem
-# is made 8 MiB inside a 24 MiB partition on purpose, so the grow has
-# somewhere to go and the check is that it went there
-check 'work mounted'     '"work" at /work'
-check 'resize grows'     'group(s), was'
-check 'mount table'      'a module the bootloader handed the kernel'
-check 'arcana works'     'COMPUTER ARCANA'
-# not its header, monitor@velvet, which every prompt above already says
-check 'persona works'    'threads bound to the wheel'
-check 'dmesg works'      "cr3 is the kernel's"
-
-# and did it stay alive rather than falling over
+# and did it come down the way it went up, rather than falling over
+check 'machine down'       'The Velvet Room fades'
+if [ "$rc" -eq 124 ]; then
+    echo '  FAIL  it never powered off, and the timeout stopped it'
+    fail=1
+else
+    echo '  ok    it powered itself off'
+fi
 if grep -qF 'KERNEL PANIC' "$LOG"; then
     echo '  FAIL  it panicked somewhere:'
     grep -A6 'KERNEL PANIC' "$LOG" | sed 's/^/        /'
@@ -176,6 +126,35 @@ if grep -qF 'KERNEL PANIC' "$LOG"; then
 else
     echo '  ok    no panic'
 fi
+
+# the disk it ran on, read back by a checker that shares no line with the
+# driver. a machine that mounted both filesystems, replayed and wrote its
+# journal and closed it on the way down has left two filesystems with
+# nothing wrong with them, and an open log, a lost block or a count that
+# disagrees is a shutdown that was not one
+for n in 1 2; do
+    PART="$(mktemp -t velvet-boottest-part-XXXXXX.img)"
+    python3 - "$DISK" "$n" "$PART" <<'EOF'
+import struct, sys
+disk, n, out = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+with open(disk, 'rb') as f:
+    mbr = f.read(512)
+    first, count = struct.unpack_from('<II', mbr, 446 + (n - 1) * 16 + 8)
+    f.seek(first * 512)
+    data = f.read(count * 512)
+with open(out, 'wb') as f:
+    f.write(data)
+EOF
+    if out=$("$HERE/../bin/tests/fsckext4" -n "$PART" 2>&1) \
+            && python3 "$HERE/readext4.py" "$PART" >/dev/null 2>&1; then
+        printf '  ok    partition %s is clean afterwards\n' "$n"
+    else
+        printf '  FAIL  partition %s is not clean afterwards:\n' "$n"
+        echo "$out" | sed 's/^/        /'
+        fail=1
+    fi
+    rm -f "$PART"
+done
 
 if [ "$fail" -ne 0 ]; then
     echo

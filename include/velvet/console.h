@@ -14,14 +14,9 @@
 #include <stddef.h>
 #include <velvet/boot.h>
 
-/*
- * framebuffer text consoles: four for whatever the system runs on them,
- * and a fifth the kernel keeps for its monitor, which no program may
- * take as its own
- */
+/* framebuffer text consoles, all of them for what the system runs on them */
 
 #define VCONSOLE_COUNT   5
-#define VCONSOLE_MONITOR 4
 
 void console_init(const struct boot_framebuffer *fb);
 bool console_ready(void);

@@ -308,11 +308,11 @@ int main(void)
               "and so does alt+3, for machines whose host eats the "
               "function keys");
         keyboard_feed(0x3f);            /* f5 */
-        CHECK(intercepted == KEY_CONSOLE_1 + VCONSOLE_MONITOR,
-              "alt+f5 asks for the fifth, the monitor's");
+        CHECK(intercepted == KEY_CONSOLE_1 + 4,
+              "alt+f5 asks for the fifth");
         intercepted = -1;
         keyboard_feed(0x06);            /* the digit 5 */
-        CHECK(intercepted == KEY_CONSOLE_1 + VCONSOLE_MONITOR,
+        CHECK(intercepted == KEY_CONSOLE_1 + 4,
               "and so does alt+5");
         keyboard_feed(0x38 | 0x80);     /* alt up */
 

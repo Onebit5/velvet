@@ -57,7 +57,6 @@ ALLOWED = {
     "drivers/mouse.c":    "the same 8042, sharing the same port",
     "drivers/rtc.c":      "the cmos clock, at ports 0x70/0x71",
     "drivers/pci.c":      "configuration space through ports 0xcf8/0xcfc",
-    "shell/shell.c":      "`cpus`, `lspci` and `ioapic` report on this hardware by name",
     "mm/vmm.c":           "the nx bit lives in an msr",
     "mm/addrspace.c":     "tlb shootdown is an inter-processor interrupt",
 }

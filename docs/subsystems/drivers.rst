@@ -21,10 +21,10 @@ character it was sitting on, and it turns out to be the whole of what an
 off-screen console is: a screen nobody is looking at is a shadow buffer
 nobody is painting.
 
-there are five. four are for whatever the system runs on them, and the
-fifth, ``VCONSOLE_MONITOR``, is the kernel's own, kept for its monitor:
-no program may take it as its terminal. alt+f1..f5, or alt and the
-number row for a host that eats the function keys, shows each.
+there are five, all of them for whatever the system runs on them. the
+fifth was the kernel's own until 0.4.4, kept for a shell that ran in the
+kernel, and is the system's now that there is none. alt+f1..f5, or alt and the number row
+for a host that eats the function keys, shows each.
 
 the rule that makes five consoles five: **output goes to the
 console its writer belongs to, not to whichever is on the screen.** a shell
@@ -61,15 +61,15 @@ discipline that decides what a key means is ``termios.c``.
 where typing meets
 ------------------
 
-``input.c`` is one ring buffer, one wait queue, one consumer (the shell).
-the ps/2 keyboard pushes here, and so does the serial port, so the shell
-neither knows nor cares whether you are sitting at the machine or on the
-other end of a wire.
+``input.c`` is one ring buffer, one wait queue, and one reader at a time,
+the program in front. the ps/2 keyboard pushes here, and so does the
+serial port, so the reader neither knows nor cares whether you are
+sitting at the machine or on the other end of a wire.
 
 keys that are not characters get values above 0xff so they cannot be
 confused with one. ctrl+letter comes through as the usual control codes
 (ctrl+c is 3, same as every terminal since 1963). ``input_getchar_blocking()``
-sleeps on the wait queue, which is how the shell sits at a prompt all day
+sleeps on the wait queue, which is how a shell sits at a prompt all day
 burning zero cycles. it wakes for an interrupt too: a reader whose
 process is interrupted with no key waiting gets -1 and takes nothing, so
 the next key typed is still there for whoever reads it, and a key that
@@ -111,10 +111,10 @@ rather than acted on for it.
 
 the front of the terminal is a **group**, not a process. ``cat x | wc`` is
 three processes and one thing the person typing is thinking about, and every
-question the terminal asks has to be asked of the whole job. ``TTY_SHELL``
-(0) means no program is in front: the monitor's console, and one no
-program has been put in front of. there ctrl+c is a key like any other,
-the monitor's to read, and ctrl+z means nothing.
+question the terminal asks has to be asked of the whole job.
+``TTY_NOBODY`` (0) means no program is in front, which is a console no
+program has been put in front of. there is nobody to signal: ctrl+c is a
+key like any other, and ctrl+z means nothing.
 
 each of the consoles has its own answer to all of this, and which
 console a caller means is not passed in: it is whichever the calling thread

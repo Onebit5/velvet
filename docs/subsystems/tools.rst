@@ -150,11 +150,12 @@ the boot test
 -------------
 
 ``boottest.sh``
-   build the image, boot it headless in qemu, and **type commands at the
-   shell over the serial port**, checking the answers. the medium carries
-   no programs, so what it checks is what the kernel can show by itself;
-   ring 3 is checked by the selftests, and a system's programs by that
-   system. it is a shell script
-   rather than python because it is mostly qemu's own flags. the serial log
+   build the image, boot it headless in qemu, answer ``none`` over the
+   serial port and let the machine power itself off, then read the log for
+   every step of both and hand the disk it ran on to ``fsckext4`` and
+   ``readext4.py``. the medium carries no programs, so what it checks is
+   what the kernel can show by itself; ring 3 is checked by the selftests,
+   and a system's programs by that system. it is a shell script rather
+   than python because it is mostly qemu's own flags. the serial log
    is left in ``bin/*-boottest.log``, and CI uploads it with the boot image
    when a run fails. see `testing <../testing.rst>`_.

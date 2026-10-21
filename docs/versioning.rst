@@ -74,9 +74,9 @@ where a version lives
 the top of the ``GNUmakefile``
    the one place the version is written down, as ``VERSION``,
    ``PATCHLEVEL`` and ``SUBLEVEL``. the build turns them into
-   ``<generated/version.h>``, and the boot banner,
-   ``top``, ``arcana`` and ``persona`` all print that one macro, so they
-   can never disagree about which kernel they are running. ``make
+   ``<generated/version.h>``, and the boot banner and ``/proc/version``
+   both print that one macro, so they can never disagree about which
+   kernel they are running. ``make
    kernelrelease`` prints it. it is the kernel's number and nobody else's:
    a system built on it has its own.
 

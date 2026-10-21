@@ -14,11 +14,8 @@
 
 /* who the keyboard belongs to. */
 
-/*
- * group 0 means no program's: the kernel's monitor, and a console no
- * program has been put in front of
- */
-#define TTY_SHELL 0
+/* group 0 means no program's: a console no program has been put in front of */
+#define TTY_NOBODY 0
 
 /* every question below used to have one answer for the machine. */
 

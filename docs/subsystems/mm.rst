@@ -23,7 +23,7 @@ why a buddy allocator
    list of what was split from what.
 
    the cost is rounding: ask for five pages and you get eight. that waste
-   is real and is counted honestly, so ``mem`` shows it.
+   is real and is counted honestly, so ``/proc/meminfo`` shows it.
 
 the interface leaks one consequence: sizes are rounded up to a power of
 two, so **the count you free with must be the count you allocated with**,
@@ -58,9 +58,9 @@ must be on its own page tables, anything still wanted must have been copied
 out of the loader's structures, and **nothing may still be standing on the
 loader's stack**.
 
-that last one is why the shell is its own thread. ``kmain`` runs on the
-stack the loader handed it, so it creates the shell on a pmm-allocated stack
-and then genuinely exits; the boot thread dies, the scheduler moves on, and
+that last one is why init's is its own thread. ``kmain`` runs on the stack
+the loader handed it, so it creates the thread that brings the system up on
+a pmm-allocated stack and then genuinely exits; the boot thread dies, the scheduler moves on, and
 only then is that memory free.
 
 the sharp edge: the loader's *responses* live in that memory too, so every
@@ -192,8 +192,7 @@ so the cpu's attempt to push an exception frame faults too, which is a
 double fault, and with nowhere to push that either it becomes a triple
 fault, which on real hardware reboots the machine with no message. the fix
 is the tss's interrupt stack table, which gives the double-fault vector a
-stack of its own. see `the x86 parts <arch.rst>`_. try ``smash`` in the
-shell.
+stack of its own. see `the x86 parts <arch.rst>`_.
 
 punching a 4 KiB hole into a 2 MiB direct-map page means splitting that page
 into 512 small ones with identical flags first, which ``vmm_unmap_page()``
@@ -204,20 +203,17 @@ next will expect to be able to reach them.
 stats
 -----
 
-``mem`` in the shell prints the pmm and heap figures: total, used, free,
-peak, metadata cost, and ``buddy_blocks_at()`` per order. the shape of the
+``/proc/meminfo`` is the pmm and heap figures: total, used, free, peak,
+metadata cost, and ``buddy_blocks_at()`` per order. the shape of the
 free memory, not just how much of it there is. a machine with plenty free
 and none of it contiguous is a machine about to fail a large allocation.
 ``pressure_available()`` is the honest answer to "how much is left" for a
 program, which is not the same number as the free count.
 
-the same words are ``/proc/meminfo``, and ``slabs``, every object cache
-with what it holds against what it uses, is ``/proc/slabinfo``.
-``mm/meminfo.c`` writes both, so a person at the shell and a program
-reading the file are told the same thing. ``/proc/vmm`` is what ``vmm``
-prints with no address, the kernel's page tables shown by where one of
-each kind of thing lands, and it is root's alone, since it is a map of
-where the kernel keeps things.
+``/proc/slabinfo`` is every object cache, with what it holds against what
+it uses, and ``mm/meminfo.c`` writes both. ``/proc/vmm`` is the kernel's
+page tables, shown by where one of each kind of thing lands, and it is
+root's alone, since it is a map of where the kernel keeps things.
 
 the addrspace interface
 -----------------------
@@ -263,8 +259,8 @@ program going wrong.
     make this the live space on this core.
 
 ``uint64_t addrspace_frames(struct addrspace *as)``
-    how many frames the space is holding, which is one of the numbers ``ps``
-    reports.
+    how many frames the space is holding, which is one of the numbers
+    ``/proc/threads`` reports.
 
 ``const uint8_t *image``, ``uint64_t image_offset``, ``uint64_t file_end``
     for a region backed by a file: where the bytes come from, where in the
@@ -310,10 +306,10 @@ rounding: ask for five frames and get eight.
     take a block of 2^order frames.
 
 ``uint64_t buddy_blocks_at(unsigned order)``
-    how many blocks are on a free list, so ``mem`` can show the shape of the
-    free memory rather than only how much of it there is: a machine with
-    plenty free and none of it contiguous is a machine about to fail a large
-    allocation.
+    how many blocks are on a free list, so ``/proc/meminfo`` can show the
+    shape of the free memory rather than only how much of it there is: a
+    machine with plenty free and none of it contiguous is a machine about
+    to fail a large allocation.
 
 the kmalloc interface
 ---------------------
@@ -337,7 +333,7 @@ lie.
 
 ``uint64_t kheap_total_bytes(void)``
     how much has been handed out, headers included. that is the honest
-    number, and it is the one ``mem`` prints.
+    number, and it is the one ``/proc/meminfo`` prints.
 
 the pmm interface
 -----------------
@@ -442,7 +438,7 @@ go back to the pmm instead of being held forever.
     pointer from being taken for a good one.
 
 ``struct slab_cache *slab_first_cache(void)``
-    walk the registered caches, which is what ``mem`` does.
+    walk the registered caches, which is what ``/proc/slabinfo`` does.
 
 the vmm interface
 -----------------

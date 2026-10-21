@@ -120,10 +120,10 @@ until then it says nothing on the wire, which is honest: there is no address
 to put in a packet, and every command that needs one says "the wire is not
 up". the kernel does not go and ask for one. finding out an address, and
 which name server to ask about names, and fetching anything once both are
-known, is a client's work, and a client is a program. until a program can
-hand the kernel what it found out, which the roadmap has next, the
-monitor's ``ifconfig`` sets the address, the netmask and the router by
-hand.
+known, is a client's work, and a client is a program. the monitor's
+``ifconfig`` set one by hand until 0.4.4, when the monitor went, so until a
+program can hand the kernel what it found out, which the roadmap has next,
+the stack has no address at all and answers nothing on the wire.
 
 the card
 --------

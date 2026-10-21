@@ -74,13 +74,9 @@ the failing case. all of them:
    checksums, headers, sockets and connections, checked against packets
    captured from the rfcs rather than invented here.
 
-``shell``, ``tty``, ``boot``, ``hash``
-   the shell's parsing and dispatch, the terminal discipline, the boot
-   protocol held field by field against philemon's own declaration of it,
-   and crc32.
-
-the ``shell`` suite mounts ``bin/ramdisk.tar``, the medium the build just
-made, and completes names against what is really on it.
+``tty``, ``boot``, ``hash``
+   the terminal discipline, the boot protocol held field by field against
+   philemon's own declaration of it, and crc32.
 
 the foreign-implementation checks
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -132,20 +128,23 @@ the one that needs a machine:
 
    make boottest
 
-it builds the image, boots it headless in qemu, tells its ``/init`` to
-run no selftests, and **types commands at the kernel's monitor over the
-serial port**, checking the answers. that is only possible because com1
-feeds the same input queue the keyboard does. the serial log is left in
-``bin/*-boottest.log``, and CI uploads it, with the boot image, when a
-run fails.
+it builds the image, boots it headless in qemu on a fresh two-partition
+disk, tells its ``/init`` over the serial port to run no selftests, and
+lets the machine power itself off, which is what ``none`` does. the
+serial log is left in ``bin/*-boottest.log``, and CI uploads it, with the
+boot image, when a run fails.
 
-what it checks is what the kernel can show with no system on its medium:
-the boot itself, the memory map and the allocators, both cores, the
-scheduler, ``/init`` asking and the monitor answering, every builtin it
-types, both disks mounted, the journal started, and a ``resize`` that
-grows the work filesystem into its partition. ring 3 is the other half of
-the machine: the selftests below check what the kernel promises it, and
-the programs a system ships are that system's to check.
+what it checks is what the kernel can show with no system on its medium,
+from its log: the boot itself, the memory map and the allocators, the
+page tables, the ramdisk and both disks mounted, the journal started,
+``/init`` asking, and the shutdown. then that the machine powered off by
+itself rather than being stopped, and last, from the host, that both
+filesystems it ran on are clean by ``fsckext4`` and ``readext4.py``: a
+mount, a journal and an unmount that left anything behind would show
+there. it takes seconds, because the machine ends it. ring 3 is the
+other half of the machine: the selftests below check what the kernel
+promises it, and the programs a system ships are that system's to
+check.
 
 ``kselftest``
 -------------
@@ -189,9 +188,9 @@ the smoke test
 --------------
 
 `contributing`_ covers the pre-push sequence. for a hand check of a running
-machine, ``make run`` gives you a shell on com1 and on the qemu window. the
-version-specific things worth poking after each change are listed by version
-in `CHANGELOG.md <../CHANGELOG.md>`_. each entry is a machine that booted,
+machine, ``make run`` gives you the image's ``/init`` on com1 and on the
+qemu window. the version-specific things worth poking after each change
+are listed by version in `CHANGELOG.md <../CHANGELOG.md>`_. each entry is a machine that booted,
 and its sentence is what to try.
 
 .. _contributing: contributing.rst

@@ -103,8 +103,8 @@ void cpu_show(void)
 
     kprintf("\n%zu of %zu processors awake, %zu taking work.\n\n",
             smp_online_count(), n, sched_cores_scheduling());
-    kprintf("these are cores, not threads. `ps` lists threads and now says\n");
-    kprintf("which core each is on, a thread that is merely ready is on\n");
-    kprintf("none of them. there is one run queue and every core picks from\n");
-    kprintf("it, so `summon` a few and they land wherever there is room.\n");
+    kprintf("these are cores, not threads. /proc/threads lists threads and\n");
+    kprintf("says which core each is on, a thread that is merely ready is\n");
+    kprintf("on none of them. there is one run queue and every core picks\n");
+    kprintf("from it, so a new thread lands wherever there is room.\n");
 }

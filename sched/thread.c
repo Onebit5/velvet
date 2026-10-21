@@ -203,7 +203,7 @@ void thread_exit(int code)
         net_tcp_close_all(me->pid);
     }
 
-    /* a kernel thread always says so, `summon` exists to be watched. */
+    /* a kernel thread always says so, so the log shows it went. */
     if (narrate) {
         kprintf("[%s] hath returned to the sea of souls\n", me->name);
     }

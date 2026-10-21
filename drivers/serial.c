@@ -104,8 +104,7 @@ void serial_feed(uint8_t b)
          * a serial line has no alt key and no function keys, so
          * switching needs a sequence of ordinary bytes. ctrl+\ is
          * chosen because nothing else here uses it and no shell binds
-         * it, and `chvt` does the same thing for anyone who would
-         * rather type a word
+         * it
          */
         want_console = true;
         return;

@@ -69,7 +69,6 @@ the subsystems
 - `networking <subsystems/net.rst>`_: ethernet through tcp, and sockets.
 - `the library <subsystems/lib.rst>`_: printing, strings, checksums,
   dates, symbols.
-- `the shell <subsystems/shell.rst>`_: the velvet room terminal.
 - `the system calls <syscalls.rst>`_: the abi between ring 3 and the kernel,
   every call with the arguments it takes and what it gives back.
 - `the tools <subsystems/tools.rst>`_: the checkers and image builders.

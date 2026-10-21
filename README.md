@@ -20,8 +20,9 @@ libc and a toolchain belong to whatever system is built on a release of it.
 what is in here: the boot protocol, which says what a loader leaves the kernel; physical and
 virtual memory, with demand paging and copy on write; threads, processes, signals and
 an init; smp with a scheduler on every core; fat32, and ext4 with extents and a
-journal; ahci, e1000, ps/2, the console and the serial line; a tcp/ip stack; and the
-velvet room, the shell, which runs in the kernel.
+journal; ahci, e1000, ps/2, the console and the serial line; and a tcp/ip stack. there is
+no shell in it: what the kernel has to say about itself is in `/proc` and the kernel log,
+for a program to read.
 
 still a non-goal: being useful in any practical sense.
 
@@ -32,7 +33,7 @@ laid out by subsystem, with no source at the root:
 ```
 init/                  kmain, and the handoff the loader leaves behind
 mm/ sched/ fs/ net/    the subsystems, each beside the headers only it reads
-drivers/ lib/ shell/
+drivers/ lib/
 include/velvet/        the headers more than one subsystem reads: <velvet/vfs.h>
 include/uapi/velvet/   what programs compile against: the syscall numbers,
                        signals, keys and terminal flags
@@ -61,7 +62,7 @@ make lint            # the style guide, checked (whole tree, or FILES=fs/ext4.c)
 make                 # the bootable disk image, velvet.img, with philemon fetched to write it
 make run             # boot it in qemu (CPUS=4, MEM=2G)
 make test            # the host test suites and the checkers (no qemu needed)
-make boottest        # boot it and drive the kernel's monitor over serial
+make boottest        # boot it, power it off, and check the disk it ran on
 make kselftest       # run the selftests in ring 3, as guest (TARGETS=sched for one subsystem)
 make kernelrelease   # print the version
 ```
@@ -70,9 +71,8 @@ make kernelrelease   # print the version
 
 the image this tree builds carries no programs but its selftests and an `/init` that runs
 them, so what you get is a question: which selftests to run. name some, or `all`, and it
-runs them as guest and powers off. `none` leaves the machine up, and alt+5 (ctrl+\ then 5
-on serial) is the kernel's monitor, where its builtins all work. a machine with programs
-on it is a system built on this kernel.
+runs them as guest and powers off; `none` powers off at once. a machine with programs on
+it is a system built on this kernel.
 
 another tree builds the kernel with `make -C path/to/velvet BINDIR=... OBJROOT=...
 kernel tools`; [docs/building.rst](docs/building.rst) says what each of those is
@@ -104,7 +104,7 @@ and one page per subsystem under [`docs/subsystems/`](docs/subsystems/index.rst)
 [mm](docs/subsystems/mm.rst), [sched](docs/subsystems/sched.rst),
 [fs](docs/subsystems/fs.rst), [drivers](docs/subsystems/drivers.rst),
 [net](docs/subsystems/net.rst), [lib](docs/subsystems/lib.rst),
-[shell](docs/subsystems/shell.rst), [tools](docs/subsystems/tools.rst).
+[tools](docs/subsystems/tools.rst).
 
 the kernel's history from 0.4.0 on is [CHANGELOG.md](CHANGELOG.md), which also says where
 the history before that is kept.

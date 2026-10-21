@@ -116,9 +116,8 @@ tests link against it. the kernel's was quietly being shadowed.
 the environment
 ---------------
 
-``env.c`` implements the environment *block*, shared between the process
-table and the shell's session (a shell is a kernel thread with no process
-entry of its own). one block of ``NAME=value`` strings, each ended by a NUL,
+``env.c`` implements the environment *block* each process in the table
+carries. one block of ``NAME=value`` strings, each ended by a NUL,
 with an empty string for the end of the lot, that shape is what makes the
 whole thing one ``memcpy`` to inherit, and inheriting is most of what an
 environment is *for*. what a program does with it is the program's.

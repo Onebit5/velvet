@@ -23,8 +23,8 @@ static int foreground[VCONSOLE_COUNT];
 
 /*
  * the program that took each console as its terminal, or 0 while no
- * program has: the monitor's console, and one /init has not handed out.
- * it decides who may put a group in front
+ * program has, which is a console /init has not handed out. it decides
+ * who may put a group in front
  */
 static int controller[VCONSOLE_COUNT];
 
@@ -63,9 +63,8 @@ int tty_foreground(void)
 bool tty_attach(int i_pid, unsigned u_console)
 {
     struct thread *p_me = sched_current();
-    if (p_me == NULL || u_console >= VCONSOLE_COUNT
-        || u_console == VCONSOLE_MONITOR) {
-        return false;           /* the monitor's console is the kernel's */
+    if (p_me == NULL || u_console >= VCONSOLE_COUNT) {
+        return false;
     }
     int i_pgid = process_pgid(i_pid);
 
@@ -144,8 +143,8 @@ bool tty_intercept(int key)
      */
     unsigned console = console_active();
     int pgid = foreground[console];
-    if (pgid == TTY_SHELL) {
-        /* no program in front: ctrl+c is the monitor's key, ctrl+z nothing */
+    if (pgid == TTY_NOBODY) {
+        /* nobody to signal: ctrl+c goes to the line, ctrl+z nowhere */
         return key == KEY_CTRL_Z;
     }
 

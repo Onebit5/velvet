@@ -135,9 +135,10 @@ void kmain(const struct boot_handoff *handoff)
     }
 
     /*
-     * from here until the shell is ready, everything goes to serial and
-     * the log but not to the screen. all of it is worth having when
-     * something breaks and none of it is worth reading when it doesnt
+     * from here until the scheduler is about to start, everything goes
+     * to serial and the log but not to the screen. all of it is worth
+     * having when something breaks and none of it is worth reading when
+     * it doesnt
      */
     kprintf_to_console(false);
 

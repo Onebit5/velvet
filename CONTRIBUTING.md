@@ -6,8 +6,8 @@ reproduces something the machine gets wrong is worth as much as a patch, and so 
 the test that catches it next time. the fastest way in is to build it, boot it, and
 find the moment where what happens is not what should.
 
-**first, what belongs here.** what runs in ring 0: the subsystems, the monitor, the
-boot protocol, the syscall layer, and the suites and tools for those. the loader,
+**first, what belongs here.** what runs in ring 0: the subsystems, the boot protocol,
+the syscall layer, and the suites and tools for those. the loader,
 philemon, is a project of his own. programs, a
 libc and a toolchain are not here; they belong to the system built on the kernel. a new
 syscall lands here with the selftest that holds the kernel to it, and a program can use

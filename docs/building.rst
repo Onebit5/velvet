@@ -71,15 +71,16 @@ the targets
       make run QEMU_EXTRA="-d int"
 
    qemu's window opens *and* com1 is wired to your terminal, and both feed
-   the same input queue. the shell cannot tell the difference. tcp port
+   the same input queue. the kernel cannot tell the difference. tcp port
    5555 and udp port 5556 are forwarded to the host, so the machine can be
    reached from outside; the forwarding is the *only* way in, so from another
    terminal it is ``nc -u localhost 5556`` and not the guest's own address.
 
-   the image asks which selftests to run, and ``none`` leaves the machine
-   up. alt+5, or ``ctrl+\`` then 5 on serial, is the kernel's monitor,
-   where its builtins all work. it runs no programs, and booting the kernel
-   with programs on it is what a system built on it is for.
+   the image asks which selftests to run. ``all`` or some of their names
+   runs them and powers off, and ``none`` powers off at once. the kernel
+   has no shell of its own and the image has no programs, so there is
+   nothing more to do on it: booting the kernel with programs on it is what
+   a system built on it is for.
 
 ``make disk``
    throw ``disk.img`` away and build a fresh one. ``make run`` builds it once
@@ -98,8 +99,9 @@ the targets
    the same command CI runs first, and `testing`_ is the full account.
 
 ``make boottest``
-   build the image, boot it headless, and type commands at the shell over
-   the serial port, checking the answers. needs qemu. the serial log is
+   build the image, boot it headless, answer ``none``, let it power itself
+   off, and check the serial log for every step of both and the disk it ran
+   on for a checker's verdict. needs qemu. the serial log is
    written to ``bin/*-boottest.log``, which is what CI uploads when the
    run fails.
 

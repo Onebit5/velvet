@@ -72,8 +72,7 @@ hundredth. the rest are each subsystem's own.
 the filesystem's own are written by ``diskinfo.c``: ``disk``, the drive
 with every filesystem on it and what the block cache is holding;
 ``partitions``, what each drive's table says it has; and ``mounts``, which
-filesystem is where. ``disk``, ``parts`` and ``mount`` in the shell call
-the same three functions, so the screen and the file cannot drift apart.
+filesystem is where.
 
 the ramdisk
 -----------
@@ -507,9 +506,8 @@ file says which of them it means.
 the diskinfo interface
 ------------------------
 
-the disk and the namespace, described. each call writes with kprintf, so
-it lands on the screen for the shell and in the reader's buffer for
-``/proc``.
+the disk and the namespace, described. each call writes with kprintf, and
+``/proc`` catches what it writes in the reader's buffer.
 
 ``void disk_show(void);``
     the drive, every filesystem on it, and the block cache: what ``disk``
@@ -806,7 +804,7 @@ rather than filling a buffer that will never drain.
     let go of whichever ends a process was holding.
 
 ``size_t pipe_count(void);``
-    how many exist right now, for `ps` and for finding a leak
+    how many exist right now, for ``/proc/threads`` and for finding a leak
 
 
 the ramdisk interface

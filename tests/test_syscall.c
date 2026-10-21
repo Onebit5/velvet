@@ -512,7 +512,7 @@ int64_t disk_write_at(size_t w, struct disk_entry *e, uint64_t offset,
 
 /* the terminal, whose real version needs a scheduler to wake threads */
 #include <velvet/tty.h>
-static int foreground_pid = TTY_SHELL;
+static int foreground_pid = TTY_NOBODY;
 int tty_foreground(void)
 {
     return foreground_pid;

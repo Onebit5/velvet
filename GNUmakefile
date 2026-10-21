@@ -13,7 +13,7 @@ KERNELRELEASE = $(VERSION).$(PATCHLEVEL).$(SUBLEVEL)
 #   make tools      -> the C build tools, bin/tests/
 #   make run        -> boot it in qemu (CPUS=4, MEM=2G, QEMU_EXTRA=...)
 #   make test       -> the host suites and every checker
-#   make boottest   -> boot it headless and drive the monitor over serial
+#   make boottest   -> boot it headless, power it off, and check what it left
 #   make kernelrelease -> print the version
 #   make clean
 #
@@ -173,8 +173,8 @@ kernelrelease:
 	@echo $(KERNELRELEASE)
 
 # the version, as C. VERSION, PATCHLEVEL and SUBLEVEL at the top of this
-# file are the only place it is written, and the banner, `version`,
-# `top` and `arcana` all print this one macro, so they cannot disagree.
+# file are the only place it is written, and the banner and /proc/version
+# both print this one macro, so they cannot disagree.
 #
 # rewritten only when what it says changes. it is older than this
 # makefile after any edit to it, so the recipe runs every time, and if
@@ -399,13 +399,13 @@ run: $(BOOTIMG) $(DISK)
 # over when you want a clean one.
 #
 # three partitions: the system, somewhere to *work* that is not the
-# system, and a fat32 one, so that `mount <n>` has something of another
-# kind to do. the system partition is built by the C formatter, so the
+# system, and a fat32 one, so the partition scan has something of another
+# kind to find. the system partition is built by the C formatter, so the
 # disk the machine boots is a real ext4, extents and all. the work image
 # is made smaller than the partition it goes in, and that is deliberate:
 # 8 MiB of filesystem inside 24 MiB of partition is exactly the situation
-# `resize` exists for, so `make run` boots a machine with something to
-# grow
+# the resize call exists for, so `make run` boots a machine with
+# something to grow
 $(DISK): $(T)/mkext4 tools/mkfat.py tools/mkdisk.py $(shell find base/diskroot -type f 2>/dev/null)
 	@mkdir -p $(BINDIR)/workroot
 	@echo 'somewhere to work that is not the system' > $(BINDIR)/workroot/readme.txt
@@ -440,7 +440,7 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/keyboard $(T)/serial \
              $(T)/fat32 $(T)/vfs $(T)/boot \
              $(T)/locks $(T)/path \
-             $(T)/shell $(T)/pipe $(T)/bcache \
+             $(T)/pipe $(T)/bcache \
              $(T)/ext4 $(T)/part $(T)/console \
              $(T)/mouse $(T)/init $(T)/mkfs \
              $(T)/net \
@@ -647,35 +647,6 @@ $(T)/keyboard: tests/test_keyboard.c drivers/keyboard.c \
 $(T)/serial:   tests/test_serial.c   drivers/serial.c \
                drivers/input.c \
                sched/spinlock.c
-# the real process table, because the environment lives in it and the
-# rules about what "already set" means are worth running rather than
-# restating in a stub, and the real init policy for the same reason,
-# so that what `init` prints is what init would actually have decided
-$(T)/shell:    tests/test_shell.c    lib/string.c \
-               fs/ramdisk.c \
-               drivers/pci.c drivers/pciinfo.c fs/vfs.c \
-               fs/proc.c fs/diskinfo.c mm/meminfo.c \
-               sched/spinlock.c fs/path.c \
-               lib/env.c sched/init.c \
-               drivers/part.c lib/hash.c \
-               net/net.c net/arp.c \
-               net/tcp.c \
-               net/ip.c mm/pressure.c \
-               sched/signal.c \
-               shell/shell.c
-$(T)/shell:    SRCS = tests/test_shell.c lib/string.c \
-                      fs/ramdisk.c \
-                      drivers/pci.c drivers/pciinfo.c fs/vfs.c \
-                      fs/proc.c fs/diskinfo.c mm/meminfo.c \
-                      sched/spinlock.c fs/path.c \
-                      lib/env.c sched/init.c \
-                      drivers/part.c lib/hash.c \
-                      net/net.c net/arp.c \
-                      net/tcp.c \
-                      net/ip.c \
-                      sched/signal.c \
-                      mm/pressure.c
-
 # every test depends on every kernel header.
 #
 # coarse on purpose. the kernel's own objects rebuild correctly because
@@ -787,10 +758,10 @@ ext4-image: $(T)/mkext4
 
 # the kernel itself is a prerequisite, and that is not decoration. twice
 # now every host suite has passed while the kernel did not link: disk.c
-# and shell.c are compiled into no host test, so nothing but building
-# the real thing catches a missing function there
-# and the boot image, because since 0.3.26 there is a check that starts
-# from the image rather than from anything the build says about it
+# is compiled into no host test, so nothing but building the real thing
+# catches a missing function there. and the boot image, because the boot
+# test and the selftests boot it, and a run of the suites that never
+# wrote one would not notice when one could not be written
 test: checkfmt checkarch portable-check $(BINDIR)/$(KERNEL) $(BOOTIMG) \
       $(RAMDISK) $(TEST_BINS) $(TOOL_BINS) \
       fat32-image ext4-image part-images
@@ -932,9 +903,9 @@ arch-check:
 	 done
 	@echo "  arch-check  ok: $(ARCH) compiles. whether it is correct still needs a machine"
 
-# boot the image and drive the shell over serial. needs qemu
+# boot the image, power it off, and check the disk it ran on. needs qemu
 .PHONY: boottest
-boottest: $(BOOTIMG) $(T)/mkext4
+boottest: $(BOOTIMG) $(T)/mkext4 $(T)/fsckext4
 	./tools/boottest.sh $(BOOTIMG)
 
 # the selftests, run where a program is run: the image booted headless

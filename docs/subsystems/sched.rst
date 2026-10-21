@@ -73,14 +73,14 @@ wait queues
 -----------
 
 a thread that needs to wait for something other than the clock parks on a
-``struct waitq``. the keyboard has one, which is how the shell sits at a
+``struct waitq``. the keyboard has one, which is how a program sits at a
 prompt costing zero cpu until you press a key.
 
 the subtle part is the handoff: ``waitq_block()`` **must be entered with
 interrupts off and returns with them still off**, so that "look in the
 buffer, find it empty, go to sleep" is one atomic move. get that wrong and a
 key arriving in the gap between the check and the sleep is lost forever, and
-the shell waits for something that already happened.
+the reader waits for something that already happened.
 
 ``waitq_enqueue()`` / ``waitq_sleep()`` are the same thing in two halves,
 for a caller holding a lock of its own: go on the queue, then drop the lock,
@@ -262,8 +262,7 @@ is refused at boot, with a panic that says why, rather than given a login
 the kernel made up.
 
 the kernel keeps its own half in a thread named ``services``. it brings the
-kernel's services up in an order: the flusher, the network, and the monitor
-on the fifth console. it restarts what dies, stops restarting what dies too
+kernel's services up in an order: the flusher, then the network. it restarts what dies, stops restarting what dies too
 often, and takes the machine down **in the reverse of the order it came
 up**. that last one is not ceremony: the disk has had a write-back cache
 since 0.2.13, so a machine that resets while anything can still write loses
@@ -276,16 +275,15 @@ takes a console of its own is seen. if it ever ends, the kernel panics:
 nothing is left to start a session, take an orphan or bring the machine
 down, and a machine that only looks alive is worse than one that says so.
 
-a program asks for the road down with ``reboot``, root's alone. it is the
-same road the monitor's ``reboot`` and ``poweroff`` take, so a program
-stopping the machine stops it as tidily: every program but init first,
-then the services in the reverse of their order, then the disk written out
-and its journal closed. init is left waiting in the call, which is where an
+a program asks for the road down with ``reboot``, root's alone, and it is
+the only road down there is: every program but init first, then the
+services in the reverse of their order, then the disk written out and its
+journal closed. init is left waiting in the call, which is where an
 init that asked is meant to be.
 
 a *service* is a kernel thread the ``services`` thread is prepared to start
-again: the flusher, the network and the monitor. everything else is a
-program, and a program is ``/init``'s to start again or not. the respawn
+again: the flusher and the network. everything else is a program, and a
+program is ``/init``'s to start again or not. the respawn
 rule: ``INIT_RESPAWN_MAX`` (5) deaths inside ``INIT_RESPAWN_WINDOW_MS``
 (10 s) and it gives up. the window matters as much as the count. five
 deaths in a second is a loop, five across an afternoon is five separate
@@ -643,9 +641,8 @@ ready, goes to sleep, or stops existing.
     walk the run queue (for the `ps` command in m6)
 
 ``void sched_show_threads(void);``
-    the run queue and any pipe still open: what ``ps`` prints, and what
-    ``/proc/threads`` is, so a program reading the file and a person at
-    the shell see the same table
+    the run queue and any pipe still open, which is what ``/proc/threads``
+    is
 
 ``void sched_proc_init(void);``
     registers ``/proc/threads`` and ``/proc/environ``, for anyone, and
@@ -698,13 +695,13 @@ hoped for.
     how often somebody had to wait.
 
 ``volatile uint32_t listed;``
-    whether this one is in the list the shell shows.
+    whether this one is in the registry of every lock.
 
 ``void spin_abandon_all(void);``
     once the machine is dying, locks are in the way rather than any use: a panic while holding one would take the print lock, find it already held by this very core, and panic about that instead. called first thing by panic()
 
 ``size_t spin_count(void);``
-    for the shell, and for deciding what to split up later
+    how many locks are registered, for deciding what to split up later
 
 
 the thread interface

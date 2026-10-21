@@ -103,9 +103,8 @@ and answer ``/init`` with its name:
 
 ``all`` is every test, and ``timeout=SECONDS`` gives each longer than 30.
 its TAP goes to the screen between whatever the kernel prints while it
-runs, which is often the part worth reading, and the kernel's monitor,
-alt+5, can look at it with ``ps`` while it does. ``none`` runs nothing and
-leaves the machine up.
+runs, which is often the part worth reading. ``none`` runs nothing and
+powers the machine off, which is the boot test's answer.
 
 timeouts and panics
 -------------------

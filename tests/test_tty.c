@@ -120,7 +120,7 @@ static int failures;
 int main(void)
 {
 
-    CHECK(tty_foreground() == TTY_SHELL,
+    CHECK(tty_foreground() == TTY_NOBODY,
           "the shell holds the terminal when nothing is running");
 
     /*
@@ -220,7 +220,7 @@ int main(void)
      * ctrl+z with no program in front means nothing, but it must not
      * reach the line editor as a stray character either
      */
-    tty_set_foreground(TTY_SHELL);
+    tty_set_foreground(TTY_NOBODY);
     stopped_count = 0;
     CHECK(tty_intercept(KEY_CTRL_Z),
           "ctrl+z at a prompt is swallowed rather than typed");
@@ -303,9 +303,9 @@ int main(void)
         process_take_interrupt(a);
 
         this_thread.console = 0;
-        tty_set_foreground(TTY_SHELL);
+        tty_set_foreground(TTY_NOBODY);
         this_thread.console = 1;
-        tty_set_foreground(TTY_SHELL);
+        tty_set_foreground(TTY_NOBODY);
         this_thread.console = 0;
         shown = 0;
 
@@ -314,7 +314,7 @@ int main(void)
     }
 
 
-    tty_set_foreground(TTY_SHELL);
+    tty_set_foreground(TTY_NOBODY);
     killed_thread = -1;
     CHECK(!tty_intercept(KEY_CTRL_C),
           "with the shell back at the front, ctrl+c is a key again");
@@ -325,7 +325,7 @@ int main(void)
     (void)tty_intercept(KEY_CTRL_C);
     (void)tty_intercept(KEY_CTRL_C);
     CHECK(true, "a foreground pid that has gone does not take the test with it");
-    tty_set_foreground(TTY_SHELL);
+    tty_set_foreground(TTY_NOBODY);
 
     /* a program in ring 3 never sees the keys go past, so it cannot echo them itself. */
     {
@@ -400,7 +400,7 @@ int main(void)
         CHECK(n == -1, "an interrupt before the first key abandons the read");
 
         /* and a process that is not at the front may not read at all */
-        tty_set_foreground(TTY_SHELL);
+        tty_set_foreground(TTY_NOBODY);
         CHECK(tty_read_line(pid2, buf, sizeof buf) == -1,
               "a background process is refused the keyboard");
         CHECK(tty_read_line(pid2, buf, 0) == -1, "and a zero-length read too");
@@ -421,9 +421,9 @@ int main(void)
         int i_rootly = process_create("rootly", 0, 0, false, 0);
         process_set_thread(i_job, 41);
 
-        CHECK(!tty_attach(i_sh, VCONSOLE_MONITOR)
+        CHECK(!tty_attach(i_sh, VCONSOLE_COUNT)
               && this_thread.console == 0,
-              "the monitor's console is no program's to take");
+              "a console that is not there is nobody's to take");
         CHECK(tty_attach(i_sh, 1) && this_thread.console == 1
               && tty_foreground() == i_sh,
               "attaching puts the program's group in front of its console");

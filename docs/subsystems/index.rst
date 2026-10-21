@@ -13,7 +13,6 @@ it deliberately does not do. the map of the whole tree is in `layout
 - `drivers <drivers.rst>`_. ``drivers/``
 - `networking <net.rst>`_. ``net/``
 - `the library <lib.rst>`_. ``lib/``
-- `the shell <shell.rst>`_. ``shell/``
 - `the tools <tools.rst>`_. ``tools/``
 
 each page is written to be read on its own, but they do lean on each other:

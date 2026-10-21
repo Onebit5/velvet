@@ -14,4 +14,4 @@
 # tools/toolcheck.py, and by anything that builds this kernel from outside
 # it, which includes this file rather than keeping a copy of the list,
 # because two copies of it would drift.
-KERNEL_PORTABLE := include init drivers fs lib mm net sched shell
+KERNEL_PORTABLE := include init drivers fs lib mm net sched

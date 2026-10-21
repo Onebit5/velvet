@@ -33,7 +33,6 @@ at a glance
     mm/                pmm, buddy, slab, kmalloc, vmm, addrspace, pressure
     sched/             threads, run queue, context switch, processes,
                        signals, init, locks
-    shell/             the velvet room terminal
     init/              kmain, and the handoff the loader leaves behind
     sources.mk         which of the above the kernel is made of
     base/diskroot/     the files on the data disk in `make run` (input)
@@ -79,9 +78,6 @@ each kernel directory is a subsystem with a page of its own:
    * - the library
      - ``lib/``
      - `subsystems/lib.rst <subsystems/lib.rst>`_
-   * - the shell
-     - ``shell/``
-     - `subsystems/shell.rst <subsystems/shell.rst>`_
    * - the boot protocol
      - ``include/velvet/boot.h``
      - `subsystems/boot.rst <subsystems/boot.rst>`_

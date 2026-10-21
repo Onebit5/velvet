@@ -71,8 +71,7 @@ one translation unit, one header
 
 the tree mirrors itself by subsystem
    ``<subsystem>/`` at the root groups by what the code is *for*. ``init``,
-   ``mm``, ``sched``, ``fs``, ``net``, ``drivers``, ``lib``, ``shell``,
-   ``arch``. there is no source file at the root at all: ``kmain`` is in
+   ``mm``, ``sched``, ``fs``, ``net``, ``drivers``, ``lib``, ``arch``. there is no source file at the root at all: ``kmain`` is in
    ``init/``, and the linker script is the architecture's, in
    ``arch/x86_64/``. a new subsystem gets a directory, not a file at the
    root, and its name goes in ``sources.mk``, which is the one list of what

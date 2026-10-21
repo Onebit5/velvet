@@ -272,17 +272,23 @@ int main(int i_argc, char **pp_argv)
         "system.\n");
     say("all, none, or names such as sched/wait, and timeout=SECONDS "
         "for more\n");
-    say("than %d each. none leaves the machine up, with the monitor on "
-        "alt+5,\n", TIMEOUT_S);
-    say("or ctrl+\\ then 5 on serial\n");
+    say("than %d each. none runs nothing, and powers off\n", TIMEOUT_S);
     do {
         write(1, "run which selftests? ", 21);
         int64_t i_got = read(0, s_arr_answer, sizeof s_arr_answer - 1);
         s_arr_answer[i_got > 0 ? i_got : 0] = '\0';
     } while (!understand(&b_none));
 
+    /*
+     * none is a boot and a shutdown with nothing in between, which is a
+     * test of its own: the kernel has no shell to leave up, and a
+     * machine left running with nothing to do is one somebody has to
+     * notice and stop
+     */
     if (b_none) {
-        say("no selftests. the machine stays up\n");
+        say("no selftests. powering off\n");
+        ksft_syscall(SYS_REBOOT, REBOOT_POWER_OFF, 0, 0);
+        say("the machine would not power off\n");
         idle();
     }
 

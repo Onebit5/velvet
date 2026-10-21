@@ -15,12 +15,12 @@ to fix.
 what belongs here
 -----------------
 
-everything that runs in ring 0: the subsystems, the monitor, the boot
-protocol, the syscall layer, the host suites for any of those, and the
-tools that build and check them. the loader that runs before it is
-philemon, a project of his own, and a change to him goes there. programs, a libc, a toolchain and what a
-system puts on its medium are not here. they belong to the system built on
-this kernel, and a change to them goes there.
+everything that runs in ring 0: the subsystems, the boot protocol, the
+syscall layer, the host suites for any of those, and the tools that build
+and check them. the loader that runs before it is philemon, a project of
+his own, and a change to him goes there. programs, a libc, a toolchain
+and what a system puts on its medium are not here. they belong to the
+system built on this kernel, and a change to them goes there.
 
 a new syscall, or anything else a program can see, lands here with a
 selftest that holds the kernel to it, and the pull request says what a
@@ -69,7 +69,7 @@ sees it:
 
    make            # the boot image, velvet.img
    make test       # the host suites; no qemu, about a second
-   make boottest   # boot in qemu and drive the monitor over serial
+   make boottest   # boot in qemu, power off, and check the disk it ran on
    make kselftest  # run the selftests in ring 3, as guest
 
 `building`_ has the toolchain and every target. if ``make test`` does not
@@ -133,7 +133,7 @@ subject:
 the subsystem
    one word, matching the directory the change lives in and the vocabulary
    the project already uses: ``mm``, ``sched``, ``fs``, ``net``,
-   ``drivers``, ``lib``, ``shell``, ``arch``, ``boot``, ``tools``,
+   ``drivers``, ``lib``, ``arch``, ``boot``, ``tools``,
    ``tests``, ``build``. a change that genuinely spans two gets
    the one it is *about*, or ``tree`` for the rare cross-cutting one. this
    token is the only part of the message that must be lower case.
@@ -307,9 +307,8 @@ the second job, ``build-and-test``, installs the toolchain and then, in order:
    the kernel and the boot image, with the machine's gcc, nasm and ld.
 
 ``make boottest``
-   boot the image headless in qemu, tell its ``/init`` to run nothing, and
-   type commands at the kernel's monitor over the serial port, checking the
-   answers.
+   boot the image headless in qemu, tell its ``/init`` to run nothing, let
+   it power itself off, and check the log and the disk it ran on.
 
 ``make kselftest``
    boot it again and have its ``/init`` run the selftests in ring 3, as guest.
