@@ -80,7 +80,6 @@ alt+5 lands you at the monitor's prompt, ``monitor@velvet[5]:/#``:
     crash     tempt fate with a wild pointer
     smash     run off the end of the stack on purpose
     init      what init looks after, and how it fares
-    src       the source this was built from, still on the medium
     ifconfig  the card, and the address on it
     tcp       connections, and what state they are in
     ping      the smallest round trip there is

@@ -1,30 +1,20 @@
 #!/usr/bin/env python3
-"""the two sums, against three other people's implementations.
+"""crc32, against somebody else's.
 
-the fourth tool checked this way, and the one where a published test
-vector looks like it ought to be enough. it is not. a vector proves the
-algorithm was copied correctly for the lengths whoever wrote the standard
-happened to think of, and every one of them is a single buffer hashed in
-one go, which is the case that cannot fail, because it never exercises
-the part where the input arrives in pieces and a half-finished block has
-to be kept until the rest of it turns up.
+a published check value looks like it ought to be enough. it is not. it
+proves the algorithm was copied correctly for one buffer summed in one
+go, which is the case that cannot fail, because it never exercises the
+part where the input arrives in pieces and the running value has to be
+carried from one to the next.
 
 so this feeds three hundred and something lengths of pseudo-random bytes
-through ours and through python's, and then feeds every one of them again
-in chunks of 1, 7, 63, 64 and 65 bytes. sixty-four is the block size, so
-the ones either side of it are where the buffering is either off by one
-or absent.
-
-and the last check is the one that matters for what comes next: **git
-itself**. a git object's name is the sha-1 of its type, its length, a
-zero byte and its content, which is not a thing a sha-1 vector can tell
-you, so the name this produces for a file is compared against what
-`git hash-object` says. that is the whole contract 0.3.19 rests on,
-tested before there is anything to rest it on.
+through ours and through zlib's, and then feeds every one of them again
+in chunks of 1, 7, 63, 64 and 65 bytes, through crc32_more, which is
+how a gpt's header and its entries are summed.
 
 usage:  tools/hashcheck.py
 """
-import subprocess, sys, os, random, zlib, hashlib, tempfile, shutil
+import subprocess, sys, os, random, zlib
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 OURS = os.path.join(ROOT, "bin", "tests", "hash")
@@ -57,60 +47,33 @@ def main():
         data = bytes(rng.randrange(256) for _ in range(n)) if n < 2000 \
             else rng.randbytes(n)
 
-        want = hashlib.sha1(data).hexdigest()
-        got = ours("--sha1", data)
-        if got != want:
-            print("  sha1 of %d bytes: ours %s, python %s" % (n, got, want))
-            bad += 1
-
         want = "%08x" % zlib.crc32(data)
         got = ours("--crc32", data)
         if got != want:
             print("  crc32 of %d bytes: ours %s, zlib %s" % (n, got, want))
             bad += 1
 
-        checked += 2
+        checked += 1
 
-        # and the same bytes arriving badly. 64 is the block size, so 63
-        # and 65 are where a buffer is kept for one byte too few or one
-        # too many, which produces a digest that is perfectly
-        # self-consistent and agrees with nobody
+        # and the same bytes arriving in pieces, which is where a running
+        # value that is not carried right agrees with itself and nobody
+        # else
         for chunk in (1, 7, 63, 64, 65):
             if n == 0 and chunk != 1:
                 continue
-            want = hashlib.sha1(data).hexdigest()
-            got = ours("--sha1-chunked=%d" % chunk, data)
+            want = "%08x" % zlib.crc32(data)
+            got = ours("--crc32-chunked=%d" % chunk, data)
             if got != want:
-                print("  sha1 of %d bytes in %d-byte pieces: ours %s, "
-                      "python %s" % (n, chunk, got, want))
+                print("  crc32 of %d bytes in %d-byte pieces: ours %s, "
+                      "zlib %s" % (n, chunk, got, want))
                 bad += 1
             checked += 1
 
         if bad:
             break
 
-    # what git calls a file, which is a different question from what
-    # sha-1 makes of it
-    if shutil.which("git") is not None and not bad:
-        work = tempfile.mkdtemp()
-        for n in (0, 1, 11, 63, 64, 65, 1000, 100000):
-            path = os.path.join(work, "f%d" % n)
-            open(path, "wb").write(bytes(rng.randrange(256) for _ in range(n))
-                                   if n < 2000 else rng.randbytes(n))
-            want = subprocess.run(["git", "hash-object", path],
-                                  capture_output=True, text=True).stdout.strip()
-            r = subprocess.run([OURS, "--git-blob", path],
-                               capture_output=True, text=True)
-            got = r.stdout.strip()
-            if got != want:
-                print("  git would name the %d-byte file %s, we say %s"
-                      % (n, want, got))
-                bad += 1
-            checked += 1
-        shutil.rmtree(work, ignore_errors=True)
-
     if not bad:
-        print("  %d answers agree with python, zlib and git" % checked)
+        print("  %d answers agree with zlib" % checked)
     return 1 if bad else 0
 
 

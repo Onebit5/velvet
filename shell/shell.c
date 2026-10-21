@@ -34,8 +34,6 @@
  * stays on checkarch's allow list where it belongs
  */
 #include <velvet/ramdisk.h>
-#include <velvet/source.h>
-#include <velvet/hash.h>
 #include <velvet/disk.h>
 #include <velvet/netif.h>
 #include <velvet/ether.h>
@@ -945,141 +943,6 @@ static void cmd_time(int argc, char **argv)
     uint64_t start = pit_uptime_ms();
     run_argv(argc - 1, argv + 1);
     kprintf("[%lums]\n", pit_uptime_ms() - start);
-}
-
-/*
- * the tree this kernel was built from is written into the boot
- * image after the ramdisk, and stays there: philemon does not load it
- * and neither does the kernel. `ls /boot/src` reads it off the drive a
- * sector at a time, which is what makes it free to carry.
- *
- * this command is the three things a listing cannot say, how much of
- * it there is, whether it is the source *this* kernel was built from,
- * and how to get a copy you are allowed to edit
- */
-
-static void src_report(const char *what)
-{
-    kprintf("  %s\n", what);
-}
-
-static void cmd_src(int argc, char **argv)
-{
-    if (!source_present()) {
-        kprintf("this image carries no source tree. it was either built "
-                "without one or\n");
-        kprintf("this machine was started by something that is not "
-                "philemon\n");
-        return;
-    }
-
-    if (argc >= 2 && strcmp(argv[1], "verify") == 0) {
-        /* every sector of it, hashed, against what the build wrote into the kernel. */
-        kprintf("reading %lu KiB off the medium\n", source_bytes() / 1024);
-
-        uint8_t digest[20];
-        if (!source_digest(digest)) {
-            kprintf("the medium stopped answering part way through. what "
-                    "is out there is not\nall there\n");
-            return;
-        }
-
-        char hex[41];
-        sha1_hex(digest, hex);
-        if (strcmp(hex, source_stamp) == 0) {
-            kprintf("%s\n", hex);
-            kprintf("this is the source this kernel was built from\n");
-        } else {
-            console_set_colors(COLOR_WARN, 0x101018);
-            kprintf("the medium says %s\n", hex);
-            kprintf("this kernel says %s\n", source_stamp);
-            kprintf("these are not the same tree. the archive, the kernel, "
-                    "or both came from\nsomewhere else\n");
-            console_set_colors(COLOR_TEXT, 0x101018);
-        }
-        return;
-    }
-
-    if (argc >= 2 && strcmp(argv[1], "unpack") == 0) {
-        /* TODO: the boot test unpacks the whole tree, so this third word is not exercised. */
-        const char *to = (argc >= 3) ? argv[2] : "/src";
-        char from[VFS_NAME_MAX];
-
-        /*
-         * a third word takes a part of the tree rather than all of it,
-         * and it is not a convenience: /boot/src/boot is a real
-         * directory to the listing code, so unpacking a corner of the
-         * archive is the same walk with a shorter prefix
-         */
-        size_t n = 0;
-        for (const char *p = VFS_SRC; *p != '\0' && n < sizeof from - 2; p++) {
-            from[n++] = *p;
-        }
-        if (argc >= 4) {
-            from[n++] = '/';
-            for (const char *p = argv[3]; *p != '\0' && n < sizeof from - 1; p++) {
-                from[n++] = *p;
-            }
-        }
-        from[n] = '\0';
-
-        struct vfs_file dir;
-        if (!vfs_open(from, &dir)) {
-            kprintf("there is nothing called %s in the archive\n", from);
-            return;
-        }
-
-        kprintf("writing %s to %s\n", from, to);
-
-        const char *error = NULL;
-        size_t files = source_unpack(from, to, src_report, &error);
-        if (error != NULL) {
-            console_set_colors(COLOR_WARN, 0x101018);
-            kprintf("stopped after %zu files: %s\n", files, error);
-            console_set_colors(COLOR_TEXT, 0x101018);
-            return;
-        }
-        if (files == 0) {
-            kprintf("nothing was copied. %s holds no files\n", from);
-            return;
-        }
-        if (!disk_sync()) {
-            kprintf("%zu files written, but the drive would not flush\n",
-                    files);
-            return;
-        }
-        kprintf("%zu files under %s, and they are yours to edit\n",
-                files, to);
-        return;
-    }
-
-    if (argc >= 2) {
-        kprintf("src [verify|unpack [where [what]]]\n");
-        return;
-    }
-
-    kprintf("%zu files, %lu KiB, at sector %lu of the boot medium\n",
-            source_count(), source_bytes() / 1024, source_lba());
-    kprintf("built as %s\n", source_stamp);
-
-    /*
-     * the cheap half of `src verify`: the length is in the table and
-     * costs one sector to read, and an archive that is not even the
-     * right size is one nobody needs to hash three megabytes to doubt
-     */
-    if (source_bytes() != source_stamp_bytes) {
-        console_set_colors(COLOR_WARN, 0x101018);
-        kprintf("but this kernel was built with an archive of %lu KiB, "
-                "which is not the\none out there. `src verify` says how "
-                "far apart they are\n", source_stamp_bytes / 1024);
-        console_set_colors(COLOR_TEXT, 0x101018);
-    }
-    kprintf("\n");
-    kprintf("none of it is in memory: %s is read off the drive when "
-            "somebody looks.\n", VFS_SRC);
-    kprintf("`src verify` hashes the whole of it against what this "
-            "kernel was built\nfrom. `src unpack` writes a copy "
-            "somewhere you can change it\n");
 }
 
 static void cmd_ifconfig(int argc, char **argv)
@@ -2152,7 +2015,6 @@ static const struct command commands[] = {
     { "crash",  "tempt fate with a wild pointer",       cmd_crash, false, NULL },
     { "smash",  "run off the end of the stack on purpose", cmd_stackoverflow, false, NULL },
     { "init",   "what init looks after, and how it fares", cmd_init, false, "init [start <name>]" },
-    { "src",    "the source this was built from, still on the medium", cmd_src, false, "src [verify|unpack [where [what]]]" },
     { "ifconfig","the card, and the address on it",     cmd_ifconfig, false, "ifconfig [address [netmask [router]]]" },
     { "tcp",    "connections, and what state they are in", cmd_tcp, false, "tcp [connect <address> <port>|listen <port>|send <n> <text>|read <n>|close <n>]" },
     { "ping",   "the smallest round trip there is",     cmd_ping, false, "ping <address>" },

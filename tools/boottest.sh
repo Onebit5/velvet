@@ -9,10 +9,9 @@
 # what is checked is the kernel and nothing else. the medium this image
 # carries has no programs on it but init and the selftests, so every
 # command below is one the kernel answers itself: the boot, /init, the
-# memory, the scheduler, the disks, the journal, a resize, and the
-# source on the medium. ring 3 is checked by the selftests, `make
-# kselftest`, and by whatever system ships this kernel with programs on
-# it.
+# memory, the scheduler, the disks, the journal and a resize. ring 3 is
+# checked by the selftests, `make kselftest`, and by whatever system
+# ships this kernel with programs on it.
 #
 #   usage: tools/boottest.sh [velvet.img]
 
@@ -87,14 +86,6 @@ echo "booting $BOOTIMG and driving the monitor over serial..."
     printf 'sync\r';    sleep 2
     printf 'mount\r';   sleep 2
     printf 'resize work\r'; sleep 6
-    # the source is on the boot medium, which is drive 0, while
-    # the filesystem is on drive 1, so every one of these reads the
-    # other drive and puts the mounted one back, in the middle of a
-    # machine that is using it
-    printf 'src\r';   sleep 2
-    printf 'src verify\r'; sleep 20
-    printf 'src unpack /work/src\r'; sleep 12
-    printf 'sync\r';   sleep 2
 } | timeout 300 qemu-system-x86_64 \
         -M q35 -m 2G -smp "${CPUS:-2}" -boot order=c \
         -drive id=boot,file="$BOOTIMG",format=raw,if=none \
@@ -171,16 +162,6 @@ check 'journal started'  'journalled: every change is written down'
 # somewhere to go and the check is that it went there
 check 'work mounted'     '"work" at /work'
 check 'resize grows'     'group(s), was'
-# the source tree, out on the medium and not in memory. every one of
-# these is a read of a drive that is not the mounted one, from a machine
-# that is using the mounted one, and the last two are the whole claim
-# of 0.4.0: the source that comes off the medium is the source this
-# kernel was built from, and it can be written out as files somebody
-# could edit
-check 'source found'     'source     :'
-check 'source mounted'   '/boot/src'
-check 'source verifies'  'this is the source this kernel was built from'
-check 'source unpacks'   'they are yours to edit'
 check 'mount table'      'a module the bootloader handed the kernel'
 check 'arcana works'     'COMPUTER ARCANA'
 # not its header, monitor@velvet, which every prompt above already says

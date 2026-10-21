@@ -2,7 +2,7 @@
 /*
  * fs/ustar.h
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * ustar, which two things in this kernel now read.
+ * ustar, which the ramdisk is.
  */
 
 /* the design notes for ustar.h are in docs/subsystems/mm.rst */

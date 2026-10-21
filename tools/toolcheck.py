@@ -173,13 +173,9 @@ def check(work):
             checked += 1
 
     ours = os.path.join(ROOT, "bin", "tests", "mkboot")
-    # the source archive is one of the pieces and it is in
-    # this list rather than left out of it because the fields that
-    # describe it are the newest ones in the table, exactly the place
-    # two implementations of the same layout drift apart
     pieces = [os.path.join(ROOT, p) for p in
               ("bin/boot/philemon.bin", "bin/boot/philemon64.bin",
-               "bin/velvet", "bin/ramdisk.tar", "bin/source.tar")]
+               "bin/velvet", "bin/ramdisk.tar")]
     if os.path.exists(ours) and all(os.path.exists(p) for p in pieces):
         theirs_img = os.path.join(work, "theirs.img")
         mine_img = os.path.join(work, "mine.img")

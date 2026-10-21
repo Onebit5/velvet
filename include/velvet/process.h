@@ -52,7 +52,6 @@ enum fd_kind {
     FD_KEYBOARD,    /* the line discipline. reads a line; writes are not */
     FD_MEMORY,      /* a file already in memory, which is the ramdisk */
     FD_DISK,        /* a file out on the disk, fetched as it is asked for */
-    FD_SOURCE,      /* a file on the boot medium, fetched as it is asked for */
     FD_PIPE,
     FD_PROC,        /* a /proc file, written afresh on every read */
 };
@@ -67,8 +66,6 @@ struct fd {
     uint32_t        entry_offset;
 
     size_t          mount;
-
-    uint64_t        medium_at;
 
     uint64_t        size;
     uint64_t        pos;
@@ -87,13 +84,6 @@ struct fd_disk {
     uint64_t remaining;
     uint64_t entry_sector;
     uint32_t entry_offset;
-};
-
-struct fd_source {
-    uint64_t medium_at;
-    uint64_t size;
-    uint64_t pos;
-    uint64_t remaining;
 };
 
 struct process {
@@ -277,12 +267,9 @@ int  process_fd_open_disk(int pid, uint32_t cluster, uint64_t size,
 
 bool process_fd_disk(int pid, int fd, struct fd_disk *out);
 
-int  process_fd_open_source(int pid, uint64_t medium_at, uint64_t size);
-
 /* a descriptor on a /proc file, read from the start each time it is opened. */
 int  process_fd_open_proc(int i_pid, size_t sz_proc);
 
-bool process_fd_source(int pid, int fd, struct fd_source *out);
 
 void process_fd_grew(int pid, int fd, uint32_t cluster, uint64_t size);
 

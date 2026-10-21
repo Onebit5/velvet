@@ -119,7 +119,7 @@ nothing" look the same from the outside and are not the same machine at
 all. and checking it needs a different shape than anything so far.
 statistics over the output can only catch a generator that is obviously
 broken, so what gets checked is the *construction*, against published
-vectors the way `hashcheck.py` does sha-1, and then the plumbing
+vectors the way `hashcheck.py` once did sha-1, and then the plumbing
 separately by asking whether two boots differ. *ends when the pool is
 seeded from at least three independent sources, refuses to hand out bytes
 before it is, and writes no state to disk.*

@@ -30,8 +30,6 @@ void kfree(void *p)
 #include <velvet/vfs.h>
 #include <velvet/disk.h>
 #include <velvet/ramdisk.h>
-#include <velvet/source.h>
-#include <velvet/philemon.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \
@@ -342,53 +340,6 @@ static size_t add_file(uint8_t *tar, size_t at, const char *name,
     return at;
 }
 
-/*
- * /boot/src is read off the boot medium a sector at a time, so what
- * this suite has to supply is not an archive but a *drive* with one on
- * it, philemon's table in sector 32 saying where, and bytes there.
- * the reader is the real one; only the drive is made up
- */
-
-#define SRC_SECTORS 128
-static uint8_t medium[SRC_SECTORS * 512];
-#define SRC_AT 64
-
-static bool medium_read(void *ctx, uint64_t lba, uint32_t count, void *buf)
-{
-    (void)ctx;
-    if (lba + count > SRC_SECTORS) {
-        return false;
-    }
-    memcpy(buf, medium + lba * 512, (size_t)count * 512);
-    return true;
-}
-
-static void make_source(void)
-{
-    memset(medium, 0, sizeof medium);
-
-    uint8_t *archive = medium + SRC_AT * 512;
-    size_t at = 0;
-    at = add_file(archive, at, "GNUmakefile", "the recipe\n", 0644);
-    at = add_file(archive, at, "kernel/main.c", "int kmain(void);\n", 0644);
-    at = add_file(archive, at, "kernel/fs/vfs.c", "one namespace\n", 0644);
-    at = add_file(archive, at, "welcome.txt", "the source's copy\n", 0644);
-    at += 1024;     /* the two zero blocks that end an archive */
-
-    struct ph_table t;
-    memset(&t, 0, sizeof t);
-    t.magic = PHILEMON_MAGIC;
-    t.kernel_lba = 33;
-    t.ramdisk_lba = 40;
-    t.ramdisk_sectors = 8;
-    t.source_lba = SRC_AT;
-    t.source_sectors = (at + 511) / 512;
-    t.source_size = at;
-    memcpy(medium + PH_TABLE_LBA * 512, &t, sizeof t);
-
-    source_mount(medium_read, NULL);
-}
-
 int main(void)
 {
     static uint8_t tar[64 * 1024];
@@ -398,10 +349,8 @@ int main(void)
     at = add_file(tar, at, "./bin/hello", "ELF-ish\n", 0755);
     at = add_file(tar, at, "./secret.txt", "no peeking\n", 0600);
     ramdisk_mount(tar, sizeof tar);
-    make_source();
 
     CHECK(ramdisk_present(), "the ramdisk mounted");
-    CHECK(source_present(), "and the source is out on the medium");
 
     struct vfs_file f;
     char buf[128];
@@ -501,11 +450,11 @@ int main(void)
     count = 0;
     for (size_t i = 0; vfs_readdir("/boot", i, &f); i++) {
         if (strcmp(f.name, "bin/hello") == 0) saw_hello = 1;
-        if (f.is_dir && strcmp(f.name, "src") != 0) saw_dirs++;
+        if (f.is_dir) saw_dirs++;
         count++;
     }
     CHECK(saw_hello, "/boot lists the ramdisk");
-    CHECK(count == 5, "all of it, and the source standing in it");
+    CHECK(count == 4, "all of it");
     CHECK(saw_dirs == 0, "and none of tar's directory records");
 
     /*
@@ -515,15 +464,15 @@ int main(void)
 
     count = 0;
     for (size_t i = 0; vfs_readdir("boot", i, &f); i++) count++;
-    CHECK(count == 5, "a relative directory lists what the absolute one does");
+    CHECK(count == 4, "a relative directory lists what the absolute one does");
 
     count = 0;
     for (size_t i = 0; vfs_readdir("boot/", i, &f); i++) count++;
-    CHECK(count == 5, "and a trailing slash changes nothing");
+    CHECK(count == 4, "and a trailing slash changes nothing");
 
     count = 0;
     for (size_t i = 0; vfs_readdir("/boot/", i, &f); i++) count++;
-    CHECK(count == 5, "nor does one on an absolute path");
+    CHECK(count == 4, "nor does one on an absolute path");
 
     count = 0;
     for (size_t i = 0; vfs_readdir("deep", i, &f); i++) count++;
@@ -748,116 +697,6 @@ int main(void)
         have_work = true;
     }
 
-    /*
-     * a third kind of thing in one namespace: not a disk, not memory,
-     * but sectors on the medium this machine booted from. what has to
-     * be true is that it resolves like everything else and cannot be
-     * written like nothing else
-     */
-    {
-        struct vfs_file sf;
-
-        CHECK(vfs_open("/boot/src", &sf) && sf.is_dir
-              && sf.kind == VFS_SOURCE,
-              "/boot/src is a directory, and on no filesystem");
-        CHECK(vfs_open("/boot/src/kernel/main.c", &sf)
-              && sf.kind == VFS_SOURCE,
-              "a file in it opens");
-        CHECK(vfs_read(&sf, 0, buf, sf.size) == (int64_t)sf.size,
-              "and reads off the medium");
-        buf[sf.size] = '\0';
-        CHECK(strcmp(buf, "int kmain(void);\n") == 0, "with its contents");
-
-        /*
-         * the name that exists in all three places, which is the case a
-         * router that forwards a path but loses the mount gets wrong
-         */
-        CHECK(vfs_open("/welcome.txt", &sf) && sf.kind == VFS_DISK,
-              "/welcome.txt is still the disk's");
-        CHECK(vfs_open("/boot/welcome.txt", &sf) && sf.kind == VFS_RAMDISK,
-              "/boot/welcome.txt is still the ramdisk's");
-        CHECK(vfs_open("/boot/src/welcome.txt", &sf)
-              && sf.kind == VFS_SOURCE,
-              "and /boot/src/welcome.txt is a third file again");
-        CHECK(vfs_read(&sf, 0, buf, sf.size) == (int64_t)sf.size, "which reads");
-        buf[sf.size] = '\0';
-        CHECK(strcmp(buf, "the source's copy\n") == 0,
-              "as itself rather than as either of the others");
-
-        /*
-         * /boot/src is under /boot and has to be asked about first, or
-         * the ramdisk answers for it
-         */
-        CHECK(!vfs_open("/boot/src/nothing.c", &sf),
-              "a name that is not in the archive is not found");
-
-        /*
-         * listing: the archive is flat, so its subdirectories are
-         * prefixes, the same arrangement /boot/bin has
-         */
-        size_t seen = 0, saw_make = 0;
-        for (size_t i = 0; vfs_readdir("/boot/src", i, &sf); i++) {
-            if (strcmp(sf.name, "GNUmakefile") == 0) saw_make = 1;
-            seen++;
-        }
-        CHECK(seen == 4 && saw_make, "listing it shows every file, whole");
-
-        seen = 0;
-        int saw_shifted = 0;
-        for (size_t i = 0; vfs_readdir("/boot/src/kernel", i, &sf); i++) {
-            if (strcmp(sf.name, "main.c") == 0) saw_shifted = 1;
-            seen++;
-        }
-        CHECK(seen == 2 && saw_shifted,
-              "and listing a directory inside it shows what is under that "
-              "prefix, named from there");
-
-        /* and it stands in /boot the way /work stands in / */
-        int saw_src = 0;
-        seen = 0;
-        for (size_t i = 0; vfs_readdir("/boot", i, &sf); i++) {
-            if (strcmp(sf.name, "src") == 0 && sf.is_dir) saw_src = 1;
-            seen++;
-        }
-        CHECK(saw_src && seen == 5, "/boot lists it, after its own files");
-
-        /* nothing may write to it. */
-        CHECK(!vfs_create("/boot/src/new.c", &sf), "nothing can be created");
-        CHECK(!vfs_mkdir("/boot/src/new"), "no directory can be made");
-        CHECK(!vfs_unlink("/boot/src/GNUmakefile"), "nothing can be removed");
-        CHECK(!vfs_rename("/boot/src/GNUmakefile", "/boot/src/other"),
-              "and nothing renamed");
-        CHECK(vfs_open("/boot/src/GNUmakefile", &sf) && !vfs_writable(&sf),
-              "and it says so when asked");
-
-        /* a whole file, which the loader path uses. */
-        const void *sdata; uint64_t ssize; bool sowned;
-        CHECK(vfs_slurp("/boot/src/kernel/fs/vfs.c", &sdata, &ssize,
-                        &sowned),
-              "a whole file can be taken");
-        CHECK(sowned && ssize == strlen("one namespace\n")
-              && memcmp(sdata, "one namespace\n", ssize) == 0,
-              "and it is a copy, because there is nothing to point at");
-        vfs_release(sdata, sowned);
-
-        /*
-         * an image built without a source tree, which is every image
-         * the mount point goes away rather than becoming
-         * an empty directory somebody has to explain
-         */
-        source_mount(NULL, NULL);
-        CHECK(!source_present(), "an image with no source carries none");
-        CHECK(!vfs_open("/boot/src", &sf), "and /boot/src is nowhere");
-        CHECK(!vfs_open("/boot/src/GNUmakefile", &sf), "with nothing under it");
-        seen = 0;
-        for (size_t i = 0; vfs_readdir("/boot", i, &sf); i++) {
-            seen++;
-        }
-        CHECK(seen == 4, "and /boot is the four files it always was");
-        make_source();
-    }
-
-
     have_disk = false;
     have_work = false;
 
@@ -894,7 +733,7 @@ int main(void)
     for (size_t i = 0; vfs_readdir("/boot", i, &f); i++) {
         count++;
     }
-    CHECK(count == 5, "and /boot still lists everything, source and all");
+    CHECK(count == 4, "and /boot still lists everything");
 
     CHECK(vfs_slurp("bin/hello", &data, &size, &owned) && !owned,
           "programs still load, which is the whole reason to keep it");
@@ -913,11 +752,7 @@ int main(void)
           "by filling the disk");
     CHECK(vfs_mount_at(2, &m) && strcmp(m.at, VFS_BOOT) == 0, "/boot is one");
     CHECK(m.present && !m.writable, "always there, never writable");
-    CHECK(vfs_mount_at(3, &m) && strcmp(m.at, VFS_SRC) == 0,
-          "and the source is the fourth, which is a mount on no disk and "
-          "in no memory");
-    CHECK(m.present && !m.writable, "there, and never writable either");
-    CHECK(!vfs_mount_at(4, &m), "and there are only the four");
+    CHECK(!vfs_mount_at(3, &m), "and there are only the three");
 
     if (failures == 0) printf("all good\n");
     return failures;

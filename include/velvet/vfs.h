@@ -19,21 +19,11 @@
 #define VFS_NAME_MAX 128
 #define VFS_BOOT     "/boot"
 
-/*
- * the source tree, which is under /boot because that is where it is:
- * the same medium philemon read the kernel and the ramdisk off, at
- * sectors nothing else looks at. it is not *in* the ramdisk, the
- * ramdisk is in memory and this is emphatically not, so it is a
- * mount of its own standing in the ramdisk's directory, the way /work
- * stands in the root's
- */
-#define VFS_SRC      "/boot/src"
 
 enum vfs_kind {
     VFS_NOWHERE = 0,
     VFS_RAMDISK,
     VFS_DISK,
-    VFS_SOURCE,
     VFS_PROC,       /* written by the kernel when read, see fs/proc.c */
 };
 
@@ -54,14 +44,6 @@ struct vfs_file {
     uint32_t    cluster;
     uint64_t    entry_sector;
     uint32_t    entry_offset;
-
-    /*
-     * or on the boot medium, at a byte offset with no filesystem
-     * anywhere near it, which is the third answer and
-     * the reason this is a field rather than a reuse of one above. a
-     * tar puts a file wherever the one before it ended
-     */
-    uint64_t    medium_at;
 
     struct fat32_time written;
 

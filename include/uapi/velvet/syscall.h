@@ -182,15 +182,12 @@ struct user_stat {
 #define SYS_RESIZE    56
 
 /*
- * the source tree this kernel was built from, out on the medium it
- * booted from, described in a struct user_source. with SOURCE_HASH the
- * archive on the medium is read and hashed as well, so a program can say
- * whether it is the tree this kernel was built from. -1 when the medium
- * carries no source, or stopped answering part way through the hash
+ * 57 was source, until 0.4.4: the kernel read a source archive off the
+ * medium it booted from and hashed it against a stamp the build linked
+ * in. reading a file off a drive is a program's work, and so is knowing
+ * which tree a system was built from. like 55, the number is given to
+ * nothing else
  */
-#define SYS_SOURCE    57
-
-#define SOURCE_HASH 1
 
 /*
  * become another program: the one at path, with argv, a NULL-ended
@@ -270,21 +267,6 @@ struct user_stat {
 #define SEEK_END 2
 
 #define SYSCALL_COUNT 68
-
-/*
- * what SYS_SOURCE says: the archive on the medium, its files, bytes and
- * first sector, then the size and sha1 of the archive the kernel was
- * built with, and with SOURCE_HASH the sha1 of the one on the medium.
- * both digests are hex. the build's is filled in even when the call
- * returns -1, since the kernel knows it whatever the medium says
- */
-struct user_source {
-    uint64_t u_files, u_bytes, u_lba;
-    uint64_t u_built_bytes;
-    char     arr_built[41];
-    char     arr_medium[41];
-    char     arr_pad[6];
-};
 
 #define RESIZE_WHY_MAX 128
 

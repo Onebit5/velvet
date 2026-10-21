@@ -1013,16 +1013,6 @@ bool disk_raw_write(unsigned drive, uint64_t lba, uint32_t count,
     return with_drive(drive, true, lba, count, (void *)(uintptr_t)buf);
 }
 
-/* the boot medium, in the shape whoever reads sectors off it wants. */
-bool disk_system_read(void *ctx, uint64_t lba, uint32_t count, void *buf)
-{
-    (void)ctx;
-    if (system_drive < 0) {
-        return false;
-    }
-    return disk_raw_read((unsigned)system_drive, lba, count, buf);
-}
-
 uint64_t disk_drive_sectors(unsigned drive)
 {
     if (drive >= ahci_disk_count()) {

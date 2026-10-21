@@ -293,27 +293,10 @@ bool disk_raw_write(unsigned drive, uint64_t lba, uint32_t count,
     return true;
 }
 
-/* the half of source.c that needs a mounted filesystem, out of a host build. */
-size_t source_unpack(const char *from, const char *to,
-                     void (*report)(const char *what), const char **error)
-{
-    (void)from; (void)to; (void)report; (void)error;
-    return 0;
-}
-
 bool disk_mount(void)
 {
     return true;
 }
-
-/*
- * the stamp the build writes into the kernel, which a host link has no
- * generated file to supply. the shell only ever prints it and compares
- * it against what a medium hashes to, and both of those are the same
- * work whatever the number is
- */
-const char source_stamp[41] = "0000000000000000000000000000000000000000";
-const uint64_t source_stamp_bytes = 0;
 
 /* the wire, as far as the shell is concerned. */
 #include <velvet/netif.h>

@@ -90,8 +90,7 @@ the table names the handoff, the kernel, the ramdisk, and the project's own
 **source tree**, which philemon does not load and never will. the kernel
 and the ramdisk have to be in memory before anything runs; the source has
 to be *reachable*, which is a different and much cheaper requirement, so it
-stays on the medium and is read a sector at a time. see `the source on the
-medium <fs.rst>`_ for the other half of that.
+stays on the medium for whatever runs later. the kernel does not read it.
 
 the table only ever grows at the end, which is why three fields of zeroes
 mean "no source tree" and an image from 0.3.25 still reads. an older loader

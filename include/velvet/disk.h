@@ -140,8 +140,6 @@ bool disk_raw_write(unsigned drive, uint64_t lba, uint32_t count,
 
 int disk_mounted_drive(void);
 
-bool disk_system_read(void *ctx, uint64_t lba, uint32_t count, void *buf);
-
 int disk_system_drive(void);
 
 /*

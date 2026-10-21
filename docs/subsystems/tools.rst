@@ -22,7 +22,7 @@ tests against that instead.
 what is here checks the kernel and the formats the kernel reads.
 
 ``hashcheck.py``
-   the two sums against python, ``zlib`` and git itself.
+   crc32 against ``zlib``, whole and in pieces.
 
 ``readext4.py``
    read an ext4 or ext2 image and complain about it. written from the
@@ -36,13 +36,6 @@ what is here checks the kernel and the formats the kernel reads.
    the project's fsck finds each. the repaired image is then handed to
    ``readext4.py``, which shares no line with the checker, because an fsck
    saying it fixed something is an fsck's opinion of itself.
-
-``srccheck.py``
-   read the source tree back out of the boot image with python's own
-   ``tarfile``; somebody else's tar reader, which is the entire point.
-   compare every file byte for byte, require that everything git tracks is in
-   there, and require the archive's sha-1 to appear inside the kernel shipped
-   beside it.
 
 ``toolcheck.py``
    the C build tools against the python ones they replace: byte for byte
@@ -92,11 +85,6 @@ the image builders
 ``mkdisk.py``
    wrap filesystem images in a partition table, because a disk is not a
    filesystem.
-
-``srcstamp.py``
-   hash the source archive and write the C file that tells the kernel what its
-   own source hashes to. see `the source on the medium
-   <fs.rst>`_.
 
 ``gensyms.py``
    turn the kernel's function symbols into a C table, so a panic can say

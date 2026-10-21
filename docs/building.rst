@@ -33,9 +33,8 @@ the targets
 
 ``make``
    the default target: ``velvet.img``, a bootable disk image
-   philemon wrote, with the kernel, a ramdisk that carries no programs, and
-   the kernel's own source in the space past it. the kernel elf lands in
-   ``bin/velvet`` alongside it.
+   philemon wrote, with the kernel and a ramdisk that carries no programs.
+   the kernel elf lands in ``bin/velvet`` alongside it.
 
 ``make kernel``
    just the kernel elf, ``bin/velvet``.
@@ -135,19 +134,12 @@ from the outside, wherever it cloned it to:
 .. code-block:: sh
 
    make -C path/to/velvet BINDIR=$PWD/bin/kernel OBJROOT=$PWD/obj/kernel \
-        SOURCE=$PWD/bin/source.tar kernel philemon tools
+        kernel philemon tools
 
 ``BINDIR`` and ``OBJROOT``
    where the outputs go. the defaults are ``bin`` and ``obj`` here; another
    tree points them into its own build directory, so a build there leaves
    nothing in this checkout.
-
-``SOURCE``
-   the archive whose sha-1 is stamped into the kernel. left alone it is this
-   tree's own archive, built by this makefile. a system that ships the kernel
-   inside a bigger source tree passes that tree's archive instead, because
-   the stamp is a claim about the source shipped *beside* the kernel. see
-   `the source on the medium <subsystems/fs.rst>`_.
 
 ``sources.mk``
    what the kernel is made of. a build that compiles the kernel with other
@@ -175,8 +167,7 @@ the build tree
 everything generated comes back out with ``make clean``:
 
 ``bin/``
-   the kernel, philemon, the ramdisk and source archives, the test binaries
-   and the C tools.
+   the kernel, philemon, the ramdisk, the test binaries and the C tools.
 
 ``obj/``
    one object tree per architecture. ``obj/x86_64/``, so switching
@@ -186,8 +177,8 @@ everything generated comes back out with ``make clean``:
    top of the ``GNUmakefile`` and rewrites only when the version changes.
 
 ``velvet.img``
-   the bootable image: philemon and its second-stage loader, the kernel,
-   the ramdisk tar, and the kernel's own source tree in the space past it.
+   the bootable image: philemon and its second-stage loader, the kernel and
+   the ramdisk tar.
 
 ``disk.img``
    the data disk ``make run`` attaches.

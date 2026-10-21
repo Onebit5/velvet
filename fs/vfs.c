@@ -7,7 +7,6 @@
 
 #include <velvet/vfs.h>
 #include <velvet/ramdisk.h>
-#include <velvet/source.h>
 #include <velvet/disk.h>
 #include <velvet/kmalloc.h>
 #include <velvet/proc.h>
@@ -54,56 +53,10 @@ static bool under_boot(const char *path, const char **rest)
     return under(path, VFS_BOOT, rest);
 }
 
-/*
- * and the source, which is under /boot and has to be asked about first
- *, "/boot/src/x" is under /boot too, and whichever of the two is
- * tried first is the one that answers. the ramdisk holds nothing called
- * src, so there is no name being shadowed here; there would be if it
- * did, and that is the sort of thing worth stating rather than relying
- * on nobody adding one
- */
 /* /proc, which no disk or archive holds: the kernel writes it as it is read. */
 static bool under_proc(const char *path, const char **rest)
 {
     return under(path, PROC_AT, rest);
-}
-
-static bool under_src(const char *path, const char **rest)
-{
-    return source_present() && under(path, VFS_SRC, rest);
-}
-
-static void from_source(struct vfs_file *out, const struct source_file *f)
-{
-    memset(out, 0, sizeof *out);
-    out->kind = VFS_SOURCE;
-    copy_name(out->name, f->name);
-    out->size = f->size;
-    out->mode = f->mode;
-    out->medium_at = f->at;
-}
-
-/*
- * the mount point itself, which is on no filesystem: /boot/src is not a
- * file in the ramdisk any more than /work is a file on the root
- */
-static void source_mount_point(struct vfs_file *out)
-{
-    memset(out, 0, sizeof *out);
-    out->kind = VFS_SOURCE;
-    copy_name(out->name, "src");
-    out->is_dir = true;
-    out->mode = 0555;
-}
-
-static bool try_source(const char *name, struct vfs_file *out)
-{
-    struct source_file f;
-    if (!source_open(name, &f)) {
-        return false;
-    }
-    from_source(out, &f);
-    return true;
 }
 
 /*
@@ -265,13 +218,6 @@ bool vfs_open(const char *path, struct vfs_file *out)
         out->mode = proc_mode(out->sz_proc);
         return true;
     }
-    if (under_src(path, &rest)) {
-        if (rest[0] == '\0') {
-            source_mount_point(out);
-            return true;
-        }
-        return try_source(rest, out);
-    }
     if (under_boot(path, &rest)) {
         /* the mount point itself. */
         if (rest[0] == '\0') {
@@ -431,22 +377,6 @@ bool vfs_readdir(const char *path, size_t index, struct vfs_file *out)
         copy_name(out->name, name);
         return true;
     }
-    if (under_src(path, &rest)) {
-        size_t prefix = strlen(rest);
-        struct source_file f;
-        size_t seen = 0;
-        for (size_t i = 0; source_stat(i, &f); i++) {
-            struct vfs_file v;
-            from_source(&v, &f);
-            if (!listed_under(&v, rest, prefix) || seen++ != index) {
-                continue;
-            }
-            *out = v;
-            return true;
-        }
-        return false;
-    }
-
     if (under_boot(path, &rest)) {
         size_t prefix = strlen(rest);
 
@@ -459,12 +389,6 @@ bool vfs_readdir(const char *path, size_t index, struct vfs_file *out)
                 continue;
             }
             *out = v;
-            return true;
-        }
-
-        /* and the source standing in the ramdisk's root, the way /work stands in the disk's. */
-        if (prefix == 0 && source_present() && index == seen) {
-            source_mount_point(out);
             return true;
         }
         return false;
@@ -665,9 +589,6 @@ int64_t vfs_read(const struct vfs_file *f, uint64_t offset, void *buf,
     if (f->kind == VFS_DISK) {
         return disk_read(f->mount, f->cluster, f->size, offset, buf, len);
     }
-    if (f->kind == VFS_SOURCE) {
-        return source_read_at(f->medium_at, f->size, offset, buf, len);
-    }
     return -1;
 }
 
@@ -791,19 +712,6 @@ bool vfs_mount_at(size_t index, struct vfs_mount *out)
         out->where = "a module the bootloader handed the kernel";
         out->writable = false;
         out->present = ramdisk_present();
-        return true;
-    }
-    if (index == 3) {
-        /*
-         * the one mount that is on neither a disk nor in memory: it is
-         * still lying on the boot medium, and is read from there a
-         * sector at a time by anybody who opens a file in it
-         */
-        out->at = VFS_SRC;
-        out->what = "ustar";
-        out->where = "the boot medium, past everything that was loaded";
-        out->writable = false;
-        out->present = source_present();
         return true;
     }
     return false;

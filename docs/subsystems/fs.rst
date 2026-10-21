@@ -15,7 +15,6 @@ the disk was bolted on at ``/disk``, which had it backwards. now:
     /          the system disk, when there is one
     /work      a second filesystem, when the drive holds one
     /boot      the ramdisk, always
-    /boot/src  the source this was built from, out on the medium
     /proc      what the kernel says about itself, written as it is read
 
 the ramdisk keeps its own mount point rather than being deleted, because it
@@ -326,40 +325,6 @@ does and cannot see past it, and a filesystem longer than its partition
 writes over whatever is next. what happened comes back in a ``struct
 user_resize``, before and after, with what was in the way of a shrink.
 
-the source on the medium
-------------------------
-
-``source.c`` reads the project's own source tree back out of the boot image,
-at sectors philemon's table names. it is a third kind of thing under one
-namespace: neither a disk (ext4) nor memory (the ramdisk), but a tar on raw
-sectors.
-
-the design point is that it is **reachable, not resident**. the obvious way
-to ship a source tree is to put it in the ramdisk, which is already a tar and
-already read, but the ramdisk is loaded whole into memory at boot and never
-freed, so that spends three and a half megabytes of *every* boot on files
-read once, when somebody unpacks them. three megabytes of nothing in ram for the life of
-the machine is what the other arrangement costs.
-
-``/boot/src`` is where it actually is. ``src unpack`` writes it out as
-files wherever it is told, ``/src`` by habit, and those two are deliberately
-different places: one
-is the tree this kernel was built from and cannot be edited, the other is
-yours, and ``diff`` between them is a sentence about what you have changed.
-
-there is a **stamp**: ``tools/srcstamp.py`` hashes the archive and writes the
-number into a C file linked into the kernel, and ``src verify`` reads every
-sector back off the medium and holds the two against each other. an archive
-and a kernel sitting in one image are two files that happen to be adjacent;
-"this is the source *this* kernel was built from" can only be established at
-the one moment both halves are in the same room, which is the build.
-
-a program asks with the ``source`` call: the archive's files, bytes and
-first sector and the build's stamp, in a ``struct user_source``, and with
-``SOURCE_HASH`` the medium's own digest beside it, so the comparison
-``src verify`` makes is one a program can make. both digests are hex,
-since the stamp already is.
-
 elf
 ---
 
@@ -525,9 +490,6 @@ file says which of them it means.
 ``int disk_mounted_drive(void);``
     which drive the mounted filesystem is on, or -1 if nothing is mounted.
 
-``bool disk_system_read(void *ctx, uint64_t lba, uint32_t count, void *buf);``
-    reading the boot medium, which is what fs/source.c does to find the source tree lying past everything philemon loaded. a plain shim over disk_raw_read on whichever drive that turned out to be
-
 ``int disk_system_drive(void);``
     which drive carries philemon's table, or -1 if none does.
 
@@ -635,8 +597,7 @@ the vfs interface
 one namespace, several filesystems underneath it. the disk gets the root
 because it is the bigger, writable, persistent thing; ``/work`` is a second
 filesystem when the drive holds one; ``/boot`` is the ramdisk, which is
-always there; and ``/boot/src`` is the source this kernel was built from, out
-on the medium. a name with no leading slash is looked for on the disk first
+always there. a name with no leading slash is looked for on the disk first
 and the ramdisk second, which is what lets a disk supply a newer ``bin/ls``
 while a machine with no disk carries on with the one it booted with.
 
@@ -877,46 +838,15 @@ does not, and a system's programs, and its accounts, live on it.
     find one by name. returns false if it isnt there
 
 
-the source interface
-----------------------
-
-the source tree this kernel was built from, out on the boot medium and read
-a sector at a time by whoever asks. it is *reachable* rather than resident:
-the ramdisk is loaded whole and never freed, and the source is read on the
-day somebody unpacks it and rarely again.
-
-``#define SOURCE_NAME_MAX 128``
-    the source this machine was built from, still on the medium it booted from.
-
-``uint64_t at;``
-    where the bytes are, as a byte offset from the start of the medium.
-
-``void source_init(void);``
-    find the archive on the drive this machine booted from, and say so.
-
-``bool source_open(const char *name, struct source_file *out);``
-    by name, exactly as the archive spells it: "main.c"
-
-``int64_t source_read_at(uint64_t at, uint64_t size, uint64_t offset, void *buf, uint64_t len);``
-    bytes out of a file. `at` and `size` are the file's, and everything in between is arithmetic on sectors
-
-``bool source_digest(uint8_t out[20]);``
-    and the whole archive, hashed off the medium.
-
-``extern const char source_stamp[41];``
-    what tools/srcstamp.py wrote down at build time: the sha-1 of the archive, hex, as a fact about the kernel rather than about the medium. the two agreeing is the claim; the two disagreeing is a medium that was half written, or an image assembled out of parts from different builds
-
-
 the ustar interface
 ---------------------
 
-the tar format, which is both of the archives here: a fixed-width header of
-text fields per file, then the bytes, padded out to a block. it is read
-rather than written, and the two readers of it are the ramdisk and the source
-tree on the medium.
+the tar format, which is what the ramdisk is: a fixed-width header of text
+fields per file, then the bytes, padded out to a block. it is read rather
+than written.
 
 ``#define USTAR_BLOCK 512``
-    ustar, which two things in this kernel now read.
+    ustar, which the ramdisk is.
 
 ``static inline uint64_t ustar_octal(const char *field, size_t len)``
     ascii octal, possibly padded with spaces or terminated early.

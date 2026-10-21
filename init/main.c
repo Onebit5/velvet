@@ -25,7 +25,6 @@
 #include <velvet/pmm.h>
 #include <velvet/kmalloc.h>
 #include <velvet/ramdisk.h>
-#include <velvet/source.h>
 #include <velvet/disk.h>
 #include <velvet/vfs.h>
 #include <velvet/init.h>
@@ -222,14 +221,6 @@ void kmain(const struct ph_handoff *handoff)
     sched_proc_init();
     pci_proc_init();
     fs_proc_init();
-
-    /*
-     * and the source it was all built from, which is on the medium
-     * rather than in memory and costs one read of one sector to find.
-     * after the ramdisk because it is the same sentence one step
-     * further out: what the boot medium handed over, and what it kept
-     */
-    source_init();
     kprintf("\n");
 
     /* from here on this function is a thread like any other */

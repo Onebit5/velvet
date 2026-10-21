@@ -25,9 +25,7 @@
 #include <velvet/addrspace.h>
 #include <velvet/vfs.h>
 #include <velvet/disk.h>
-#include <velvet/source.h>
 #include <velvet/init.h>
-#include <velvet/hash.h>
 #include <velvet/path.h>
 #include <velvet/tty.h>
 #include <velvet/console.h>
@@ -492,35 +490,6 @@ static int64_t sys_read(uint64_t fd, uint64_t ptr, uint64_t len)
         vf.size = d.size;
 
         int64_t n = vfs_read(&vf, d.pos, (void *)ptr, len);
-        if (n > 0) {
-            process_fd_advance(caller_pid(), (int)fd, (uint64_t)n);
-        }
-        return n;
-    }
-
-    case FD_SOURCE: {
-        /*
-         * the bytes are on the boot medium, and the archive knows how to
-         * go and get them, so, like the disk, the descriptor remembers
-         * where the file starts and nothing else
-         */
-        struct fd_source s;
-        if (!process_fd_source(caller_pid(), (int)fd, &s)) {
-            return -1;
-        }
-        if (s.remaining == 0) {
-            return 0;
-        }
-        if (len > s.remaining) {
-            len = s.remaining;
-        }
-        struct vfs_file vf;
-        memset(&vf, 0, sizeof vf);
-        vf.kind = VFS_SOURCE;
-        vf.medium_at = s.medium_at;
-        vf.size = s.size;
-
-        int64_t n = vfs_read(&vf, s.pos, (void *)ptr, len);
         if (n > 0) {
             process_fd_advance(caller_pid(), (int)fd, (uint64_t)n);
         }
@@ -1013,9 +982,6 @@ static int64_t sys_open(uint64_t ptr, uint64_t len)
         return process_fd_open_disk(caller_pid(), f.cluster, f.size,
                                     f.entry_sector, f.entry_offset, f.mount);
     }
-    if (f.kind == VFS_SOURCE) {
-        return process_fd_open_source(caller_pid(), f.medium_at, f.size);
-    }
     if (f.kind == VFS_PROC) {
         return process_fd_open_proc(caller_pid(), f.sz_proc);
     }
@@ -1191,33 +1157,6 @@ static int64_t sys_resize(uint64_t u_ptr, uint64_t u_len, uint64_t u_blocks,
         say_why(p_out->arr_why, sizeof p_out->arr_why,
                 str_error != NULL ? str_error : "it would not resize");
         return -1;
-    }
-    return 0;
-}
-
-static int64_t sys_source(uint64_t u_flags, uint64_t u_out)
-{
-    struct user_source *p_out = (struct user_source *)u_out;
-
-    if (!user_range_writable(u_out, sizeof *p_out)) {
-        return -1;
-    }
-    memset(p_out, 0, sizeof *p_out);
-    memcpy(p_out->arr_built, source_stamp, sizeof p_out->arr_built);
-    p_out->u_built_bytes = source_stamp_bytes;
-    if (!source_present()) {
-        return -1;
-    }
-    p_out->u_files = source_count();
-    p_out->u_bytes = source_bytes();
-    p_out->u_lba = source_lba();
-
-    if ((u_flags & SOURCE_HASH) != 0) {
-        uint8_t arr_digest[20];
-        if (!source_digest(arr_digest)) {
-            return -1;
-        }
-        sha1_hex(arr_digest, p_out->arr_medium);
     }
     return 0;
 }
@@ -2219,8 +2158,6 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
         return sys_sync();
     case SYS_RESIZE:
         return sys_resize(a0, a1, a2, a3);
-    case SYS_SOURCE:
-        return sys_source(a0, a1);
     case SYS_EXECVE:
         return sys_execve(regs, a0, a1, a2);
     case SYS_PIPE:

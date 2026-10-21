@@ -708,30 +708,6 @@ int process_fd_open_disk(int pid, uint32_t cluster, uint64_t size,
     return fd;
 }
 
-int process_fd_open_source(int pid, uint64_t medium_at, uint64_t size)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-    int fd = -1;
-
-    struct process *p = slot_for(pid);
-    if (p != NULL) {
-        for (int i = FD_FIRST_FILE; i < MAX_FDS; i++) {
-            if (p->fds[i].kind != FD_FREE) {
-                continue;
-            }
-            memset(&p->fds[i], 0, sizeof p->fds[i]);
-            p->fds[i].kind = FD_SOURCE;
-            p->fds[i].medium_at = medium_at;
-            p->fds[i].size = size;
-            fd = i;
-            break;
-        }
-    }
-
-    spin_unlock_irq(&process_lock, flags);
-    return fd;
-}
-
 int process_fd_open_proc(int i_pid, size_t sz_proc)
 {
     uint64_t u_flags = spin_lock_irq(&process_lock);
@@ -770,25 +746,6 @@ bool process_fd_disk(int pid, int fd, struct fd_disk *out)
         out->entry_sector = f->entry_sector;
         out->entry_offset = f->entry_offset;
         out->mount = f->mount;
-        ok = true;
-    }
-
-    spin_unlock_irq(&process_lock, flags);
-    return ok;
-}
-
-bool process_fd_source(int pid, int fd, struct fd_source *out)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-    bool ok = false;
-
-    struct process *p = slot_for(pid);
-    if (p != NULL && fd >= 0 && fd < MAX_FDS && p->fds[fd].kind == FD_SOURCE) {
-        struct fd *f = &p->fds[fd];
-        out->medium_at = f->medium_at;
-        out->size = f->size;
-        out->pos = f->pos;
-        out->remaining = (f->pos < f->size) ? f->size - f->pos : 0;
         ok = true;
     }
 
@@ -994,8 +951,7 @@ int64_t process_fd_seek(int i_pid, int i_fd, int64_t i_offset, int i_whence)
 
     if (p != NULL && i_fd >= 0 && i_fd < MAX_FDS) {
         struct fd *p_fd = &p->fds[i_fd];
-        bool b_seekable = p_fd->kind == FD_MEMORY || p_fd->kind == FD_DISK
-                          || p_fd->kind == FD_SOURCE;
+        bool b_seekable = p_fd->kind == FD_MEMORY || p_fd->kind == FD_DISK;
         int64_t i_from = (i_whence == SEEK_SET) ? 0
                        : (i_whence == SEEK_CUR) ? (int64_t)p_fd->pos
                        : (i_whence == SEEK_END) ? (int64_t)p_fd->size

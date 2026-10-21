@@ -63,12 +63,12 @@ the failing case. all of them:
    the x86 structures and the drivers, fed fabricated input. a machine's
    worth of firmware tables and every malformed one refused.
 
-``ramdisk``, ``elf``, ``vfs``, ``fat32``, ``bcache``, ``ext4``, ``part``, ``mkfs``, ``source``, ``pipe``, ``crash``, ``resize``
+``ramdisk``, ``elf``, ``vfs``, ``fat32``, ``bcache``, ``ext4``, ``part``, ``mkfs``, ``pipe``, ``crash``, ``resize``
    the filesystems. a real image with long names and subdirectories, the
    block cache's eviction and write-back, inodes and bitmaps and the
-   indirect block map, mbr and gpt, and the archive on raw sectors. the
-   ``crash`` and ``resize`` suites stop the machine at every write one of
-   those operations takes and demand a filesystem at each one.
+   indirect block map, and mbr and gpt. the ``crash`` and ``resize`` suites
+   stop the machine at every write one of those operations takes and demand
+   a filesystem at each one.
 
 ``net``, ``tcp``
    checksums, headers, sockets and connections, checked against packets
@@ -88,17 +88,12 @@ a check written by the code it checks proves nothing. where another
 implementation exists, the project tests against that instead:
 
 ``hashcheck``
-   sha-1 and crc32 against python, ``zlib`` and git itself.
+   crc32 against ``zlib``, whole and in pieces.
 
 ``fsckcheck`` / ``fsck`` / ``mkfsck`` / ``growcheck``
    break a filesystem on purpose and demand this project's fsck finds it;
    then read the repaired image back with ``tools/readext4.py``, which
    shares no line with the checker.
-
-``srccheck``
-   read the source tree back out of the boot image and hold it against the
-   working tree, and require the archive's sha-1 to appear inside the kernel
-   shipped beside it.
 
 the static checks
 ~~~~~~~~~~~~~~~~~
@@ -146,11 +141,10 @@ run fails.
 what it checks is what the kernel can show with no system on its medium:
 the boot itself, the memory map and the allocators, both cores, the
 scheduler, ``/init`` asking and the monitor answering, every builtin it
-types, both disks mounted, the journal started, a ``resize`` that grows
-the work filesystem into its partition, and the source on the medium verified against the stamp and
-unpacked onto the disk. ring 3 is the other half of the machine: the
-selftests below check what the kernel promises it, and the programs a
-system ships are that system's to check.
+types, both disks mounted, the journal started, and a ``resize`` that
+grows the work filesystem into its partition. ring 3 is the other half of
+the machine: the selftests below check what the kernel promises it, and
+the programs a system ships are that system's to check.
 
 ``kselftest``
 -------------

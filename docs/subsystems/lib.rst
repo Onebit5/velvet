@@ -61,28 +61,18 @@ copies, and so on).
 checksums
 ---------
 
-``hash.c`` is crc32 and sha-1, which get lumped together as "hashes" and
-answer different questions:
+``hash.c`` is crc32, which answers "did this arrive intact". arithmetic in
+a polynomial field, chosen so that the errors a wire or a disk actually
+makes, a flipped bit or a short burst, are certain to change it rather than
+merely likely to. it is *not* a hash in the security sense: making a second
+file with the same crc32 is easy on purpose, and gpt uses it because a disk
+does not lie deliberately.
 
-- **crc32** answers "did this arrive intact". arithmetic in a polynomial
-  field, chosen so that the errors a wire or a disk actually makes. a
-  flipped bit, a short burst. are certain to change it rather than merely
-  likely to. it is *not* a hash in the security sense: making a second file
-  with the same crc32 is easy on purpose, and gpt uses it because a disk
-  does not lie deliberately.
-- **sha-1** answers "is this the same thing". the kernel carries the
-  sha-1 of the source archive it was built from, and checks the archive on
-  its medium against it (`the source on the medium <fs.rst>`_).
+sha-1 was here beside it until 0.4.4, for the stamp the kernel carried of
+its own source archive, and it left with the archive reader.
 
-sha-1 is broken, and the header says so: two different files with the same
-sha-1 have been published. it is good enough here because the stamp is a
-check rather than a signature: it catches a medium that was half written or
-put together from two builds, and nothing in it is defended against somebody
-who chooses both files.
-
-the routines are streaming, because an archive can be larger than anything
-worth holding at once, and because the whole point of a checksum over a
-stream is to compute it while the bytes go by.
+it is streaming, because the whole point of a checksum over a stream is to
+compute it while the bytes go by.
 
 dates
 -----
@@ -167,18 +157,7 @@ goes up.
 the hash interface
 ------------------
 
-two sums that get lumped together as hashes and answer different
-questions, which is why both are here rather than whichever one came
-first. each of them can be fed a piece at a time, because an archive can be
-larger than anything worth holding at once.
-
-``void sha1_of(const void *data, size_t len, uint8_t out[20])``
-    the whole thing at once, when it is all here. the streaming form is
-    ``struct sha1``, whose state the caller carries between calls.
-
-``void sha1_hex(const uint8_t digest[20], char out[41])``
-    twenty bytes as the forty characters everybody writes down, which is
-    how the stamp and the medium's sum are shown side by side.
+one sum, which can be fed a piece at a time.
 
 ``crc32``
     did this arrive intact: the reflected crc32 everybody means by the name,

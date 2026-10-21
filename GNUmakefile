@@ -21,11 +21,9 @@ KERNELRELEASE = $(VERSION).$(PATCHLEVEL).$(SUBLEVEL)
 # out of its own tree, and says where things go rather than letting them
 # land in this checkout:
 #
-#   make -C velvet BINDIR=... OBJROOT=... SOURCE=... kernel philemon tools
+#   make -C velvet BINDIR=... OBJROOT=... kernel philemon tools
 #
-# BINDIR and OBJROOT are where the outputs go. SOURCE is the archive whose
-# hash is stamped into the kernel, which is the whole tree shipped beside
-# it, this directory included. left alone, it is this tree's own archive.
+# BINDIR and OBJROOT are where the outputs go.
 
 KERNEL := velvet
 
@@ -193,20 +191,19 @@ $(OBJ): | $(VERSION_H)
 # and what was linked is written down beside it, in the order it went
 # in, for anything that wants to link the same kernel again with another
 # linker and compare the two.
-$(BINDIR)/$(KERNEL): $(OBJ) $(OBJDIR)/srcstamp.o arch/$(ARCH)/linker.ld \
-                      tools/gensyms.py
+$(BINDIR)/$(KERNEL): $(OBJ) arch/$(ARCH)/linker.ld tools/gensyms.py
 	@mkdir -p $(@D) $(OBJDIR)
 	@python3 tools/gensyms.py --stub > $(OBJDIR)/ksyms.c
 	@$(CC) $(CFLAGS) -c $(OBJDIR)/ksyms.c -o $(OBJDIR)/ksyms.o
 	@echo '  LD      pass 1 (to find out where everything landed)'
-	@$(LD) $(LDFLAGS) $(OBJ) $(OBJDIR)/srcstamp.o $(OBJDIR)/ksyms.o -o $@.pass1
+	@$(LD) $(LDFLAGS) $(OBJ) $(OBJDIR)/ksyms.o -o $@.pass1
 	@echo '  GENSYMS $(OBJDIR)/ksyms.c'
 	@python3 tools/gensyms.py $@.pass1 > $(OBJDIR)/ksyms.c
 	@$(CC) $(CFLAGS) -c $(OBJDIR)/ksyms.c -o $(OBJDIR)/ksyms.o
 	@echo '  LD      pass 2 (with the symbols folded in)'
-	@$(LD) $(LDFLAGS) $(OBJ) $(OBJDIR)/srcstamp.o $(OBJDIR)/ksyms.o -o $@
+	@$(LD) $(LDFLAGS) $(OBJ) $(OBJDIR)/ksyms.o -o $@
 	@python3 tools/gensyms.py --check $@ $(OBJDIR)/ksyms.c
-	@echo $(OBJ) $(OBJDIR)/srcstamp.o $(OBJDIR)/ksyms.o > $(OBJDIR)/kernel.objects
+	@echo $(OBJ) $(OBJDIR)/ksyms.o > $(OBJDIR)/kernel.objects
 	@rm -f $@.pass1
 
 $(OBJDIR)/%.c.o: %.c
@@ -318,78 +315,6 @@ $(RAMDISK): $(SELFTEST_INIT) $(SELFTEST_BINS) $(SELFTEST_LIST) GNUmakefile
 		-C $(abspath $(BINDIR)) --no-recursion $(SELFTEST_TAR)
 
 #
-# 0.3.26. everything above builds a machine; this puts the thing it was
-# built *from* on the same medium, so that a disk which boots is also a
-# disk you could rebuild from.
-#
-# it is another ustar, for the plainest of reasons: the kernel already
-# reads one, and a second container format would be a second parser to
-# get wrong. it is *not* compressed, which is a decision rather than an
-# oversight: the one moment anybody wants this archive is the moment
-# something has gone badly wrong, and a recovery path that needs a
-# decompressor between you and the source is a recovery path with one
-# more thing in it to be broken.
-#
-# what goes in: everything the project is made of, which is a longer
-# list than "everything the compiler reads". the tests are the reason
-# any of this is trustworthy and the prose is where the reasoning
-# lives, so both ship. what stays out is anything the build *produces*
-# (bin/, obj/, the images), because a source tree carrying its own
-# output is a source tree that disagrees with itself the moment you
-# build it.
-#
-# this is the kernel's own archive, used when nobody names another. a
-# system that ships the kernel inside a bigger tree passes SOURCE, and
-# then this rule is not asked for at all
-OWN_SOURCE := $(BINDIR)/source.tar
-SOURCE ?= $(OWN_SOURCE)
-
-SOURCE_FILES := GNUmakefile sources.mk README.md CHANGELOG.md ROADMAP.md \
-                LICENSE .gitignore \
-                CONTRIBUTING.md CODE_OF_CONDUCT.md \
-                $(shell find .github $(KERNEL_PORTABLE) \
-                        arch boot tests tools docs -type f | sort) \
-                $(shell find base/diskroot -type f | sort)
-
-# --sort=name and a fixed mtime for the same reason the ramdisk has
-# them: two builds of the same tree must produce the same bytes, or the
-# stamp below is a fact about when I built it rather than about what I
-# built.
-#
-# --mode is there for a subtler version of the same thing. git records
-# one bit of a mode, and the rest of a checkout's modes come from the
-# umask of whoever made it, so the archive, and therefore the stamp,
-# would depend on who checked the tree out. it states what it wants
-# instead: everyone may read, only the owner may write, and whatever was
-# executable stays executable
-$(OWN_SOURCE): $(SOURCE_FILES)
-	@mkdir -p $(@D)
-	@echo '  TAR     $@ ($(words $(SOURCE_FILES)) files)'
-	@tar --format=ustar --sort=name --owner=0 --group=0 --numeric-owner \
-		--mtime=@0 --mode='u+rw,go+r,go-w' -cf $@ $(SOURCE_FILES)
-
-# and the kernel is told what its own source hashes to.
-#
-# without this the machine can say "there is a source tree here" and
-# nothing more, which is the weaker half of what is wanted. a disk that
-# survives its author has to be able to answer "is this the source this
-# kernel was built from?", and the only way to answer it is to have
-# written the answer down at the one moment both halves were in the
-# same room, which is now.
-#
-# the cost is that editing anything at all, a line of the roadmap
-# included, relinks the kernel. that is not overhead so much as the
-# claim being true: a kernel whose stamp survived an edit to its source
-# would be a kernel telling a lie.
-$(OBJDIR)/srcstamp.c: $(SOURCE) tools/srcstamp.py
-	@mkdir -p $(@D)
-	@python3 tools/srcstamp.py $(SOURCE) > $@
-
-$(OBJDIR)/srcstamp.o: $(OBJDIR)/srcstamp.c include/velvet/source.h
-	@mkdir -p $(@D)
-	@$(CC) $(CFLAGS) -c $< -o $@
-
-#
 # there was a borrowed one here until 0.1.12. writing a bootloader and
 # then booting with somebody else's is not much of a bootloader, so it
 # is gone, along with the iso, the uefi path and the protocol that
@@ -413,10 +338,10 @@ $(BINDIR)/boot/philemon64.bin: boot/philemon.c include/velvet/philemon.h boot/ph
 	objcopy -O binary $(OBJROOT)/philemon.elf $@
 
 $(BOOTIMG): $(BINDIR)/boot/philemon.bin $(BINDIR)/boot/philemon64.bin \
-            $(BINDIR)/$(KERNEL) $(RAMDISK) $(SOURCE) tools/mkboot.py \
+            $(BINDIR)/$(KERNEL) $(RAMDISK) tools/mkboot.py \
             boot/philemon.inc include/velvet/philemon.h
 	@python3 tools/mkboot.py $@ $(BINDIR)/boot/philemon.bin \
-		$(BINDIR)/boot/philemon64.bin $(BINDIR)/$(KERNEL) $(RAMDISK) $(SOURCE)
+		$(BINDIR)/boot/philemon64.bin $(BINDIR)/$(KERNEL) $(RAMDISK)
 
 bootimg: $(BOOTIMG)
 
@@ -510,7 +435,7 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/termios \
              $(T)/epoch $(T)/pressure $(T)/hash \
              $(T)/crash \
-             $(T)/resize $(T)/switch $(T)/source \
+             $(T)/resize $(T)/switch \
              $(T)/proc
 
 $(T)/kprintf:  tests/test_kprintf.c  lib/kprintf.c \
@@ -552,8 +477,8 @@ $(T)/syscall:  tests/test_syscall.c  sched/spinlock.c \
                fs/path.c arch/x86_64/syscall.c \
                sched/process.c sched/signal.c lib/string.c \
                lib/env.c \
-               fs/vfs.c fs/source.c fs/proc.c \
-               lib/hash.c fs/pipe.c
+               fs/vfs.c fs/proc.c \
+               fs/pipe.c
 $(T)/elf:      tests/test_elf.c      fs/elf.c \
                lib/string.c
 $(T)/ramdisk:  tests/test_ramdisk.c  fs/ramdisk.c \
@@ -598,9 +523,8 @@ $(T)/net:      tests/test_net.c      net/net.c \
                lib/string.c
 $(T)/part:     tests/test_part.c     drivers/part.c \
                lib/string.c lib/hash.c
-# sha-1 and crc32. a suite when run with no arguments and a hashing
-# tool when run with some, which is how tools/hashcheck.py drives it
-# against python, zlib and git
+# crc32. a suite when run with no arguments and a checksum tool when
+# run with some, which is how tools/hashcheck.py drives it against zlib
 $(T)/hash:     tests/test_hash.c     lib/hash.c \
                lib/string.c
 # the six python build tools, rewritten in C. not suites: they are
@@ -694,18 +618,9 @@ $(T)/epoch:    tests/test_epoch.c    lib/epoch.c lib/clock.c
 # who gets refused when memory runs out. a policy rather than a data
 # structure, and its interesting cases are all at the edges
 $(T)/pressure: tests/test_pressure.c mm/pressure.c
-# the source mount is part of the namespace, so the suite that is
-# responsible for resolution builds the real one and hands it a medium
-# made of bytes rather than a drive
 $(T)/vfs:      tests/test_vfs.c      fs/vfs.c \
-               fs/ramdisk.c fs/source.c \
-               lib/hash.c lib/string.c
-
-# and the archive on its own: a tar read a sector at a time off
-# something that is not a filesystem, which is the one thing here that
-# no other suite covers
-$(T)/source:   tests/test_source.c   fs/source.c \
-               lib/hash.c lib/string.c
+               fs/ramdisk.c \
+               lib/string.c
 $(T)/philemon: tests/test_philemon.c boot/philemon.c include/velvet/philemon.h
 $(T)/gdt:      tests/test_gdt.c      arch/x86_64/gdt.c
 $(T)/gdt:      SRCS = tests/test_gdt.c
@@ -723,7 +638,6 @@ $(T)/shell:    tests/test_shell.c    lib/string.c \
                fs/ramdisk.c \
                drivers/pci.c drivers/pciinfo.c fs/vfs.c \
                fs/proc.c fs/diskinfo.c mm/meminfo.c \
-               fs/source.c \
                sched/spinlock.c fs/path.c \
                lib/env.c sched/init.c \
                drivers/part.c lib/hash.c \
@@ -736,7 +650,6 @@ $(T)/shell:    SRCS = tests/test_shell.c lib/string.c \
                       fs/ramdisk.c \
                       drivers/pci.c drivers/pciinfo.c fs/vfs.c \
                       fs/proc.c fs/diskinfo.c mm/meminfo.c \
-                      fs/source.c \
                       sched/spinlock.c fs/path.c \
                       lib/env.c sched/init.c \
                       drivers/part.c lib/hash.c \
@@ -786,7 +699,7 @@ $(T)/switch: tests/test_switch.c $(OBJROOT)/tests/switch.asm.o
 # the C build tools against the python they replace, while both exist
 .PHONY: toolcheck
 toolcheck: $(TOOL_BINS) $(BINDIR)/$(KERNEL) $(BINDIR)/boot/philemon.bin \
-           $(BINDIR)/boot/philemon64.bin $(RAMDISK) $(SOURCE) ext4-image
+           $(BINDIR)/boot/philemon64.bin $(RAMDISK) ext4-image
 	@python3 tools/toolcheck.py
 
 # the two sums against python, zlib and git. a published vector only
@@ -913,12 +826,6 @@ test: checkfmt checkarch portable-check $(BINDIR)/$(KERNEL) $(BOOTIMG) \
 	fi; \
 	printf '  %-10s ' hashcheck; \
 	if out=$$(python3 tools/hashcheck.py 2>&1); then \
-		echo 'ok'; \
-	else \
-		echo 'FAILED'; echo "$$out" | sed 's/^/    /'; fail=1; \
-	fi; \
-	printf '  %-10s ' srccheck; \
-	if out=$$(python3 tools/srccheck.py $(BOOTIMG) 2>&1); then \
 		echo 'ok'; \
 	else \
 		echo 'FAILED'; echo "$$out" | sed 's/^/    /'; fail=1; \

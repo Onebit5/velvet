@@ -137,8 +137,8 @@ packs its own.
 
 everything under ``bin/`` and ``obj/`` is generated and comes back out with
 ``make clean``. the boot image, ``velvet.img``, is written by
-``tools/mkboot.py`` and carries philemon, the kernel, the ramdisk and the
-kernel's own source tree. `building`_ is the details, including how another
+``tools/mkboot.py`` and carries philemon, the kernel and the ramdisk.
+`building`_ is the details, including how another
 tree builds the kernel into its own ``bin/`` instead.
 
 .. _building: building.rst

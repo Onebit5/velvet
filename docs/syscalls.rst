@@ -68,7 +68,7 @@ number  name          arguments                                         returns
 54      SYNC          ()                                                0, or -1
 55      (none)        was FSCK, until 0.4.4                             -1
 56      RESIZE        (path, len, blocks, user_resize\*)                0, or -1
-57      SOURCE        (flags, user_source\*)                            0, or -1
+57      (none)        was SOURCE, until 0.4.4                           -1
 58      EXECVE        (path, len, argv)                                 does not return, or -1
 59      PIPE          (fds\*)                                           0, or -1
 60      DUP2          (from, to)                                        to, or -1
@@ -84,8 +84,8 @@ number  name          arguments                                         returns
 the kernel side
 ---------------
 
-the numbers, ``struct user_stat``, ``struct user_from``, ``struct
-user_resize`` and ``struct user_source`` are in
+the numbers, ``struct user_stat``, ``struct user_from`` and ``struct
+user_resize`` are in
 ``include/uapi/velvet/syscall.h``, with what the calls take beside it in
 the same directory: the signal numbers in ``signal.h``, the keys
 ``getkey`` hands back in ``input.h``, and ``TTYMODE``'s flags in ``tty.h``.
@@ -115,9 +115,7 @@ grow or shrink the ext4 filesystem mounted at a path to a number of its own bloc
 
 what SYS_RESIZE did, in blocks of u_block_size: the partition's room, the most the descriptor table can describe, and the filesystem before and after. a shrink that would lose something refuses and counts what was in the way. when the call returns -1, arr_why says why
 
-the source tree this kernel was built from, out on the medium it booted from, described in a struct user_source. with SOURCE_HASH the archive on the medium is read and hashed as well, so a program can say whether it is the tree this kernel was built from. -1 when the medium carries no source, or stopped answering part way through the hash
-
-what SYS_SOURCE says: the archive on the medium, its files, bytes and first sector, then the size and sha1 of the archive the kernel was built with, and with SOURCE_HASH the sha1 of the one on the medium. both digests are hex. the build's is filled in even when the call returns -1, since the kernel knows it whatever the medium says
+57 was source, until 0.4.4: the kernel read a source archive off the medium it booted from and hashed it against a stamp the build linked in. reading a file off a drive is a program's work, and so is knowing which tree a system was built from. like 55, the number is given to nothing else
 
 become another program: the one at path, with argv, a NULL-ended array of strings, as its arguments, or with only its own path when argv is NULL. the pid, the descriptors, the working directory, the uid and the environment stay; caught signals go back to their defaults, since the code that caught them is gone. it does not return, unless it failed, and then it returns -1 with nothing changed. an argv longer than MAX_ARGS is refused rather than cut short
 

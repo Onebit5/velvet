@@ -19,9 +19,8 @@ and a toolchain belong to whatever system is built on a release of it.
 what is in here: philemon, the bootloader, and the handoff it makes; physical and
 virtual memory, with demand paging and copy on write; threads, processes, signals and
 an init; smp with a scheduler on every core; fat32, and ext4 with extents and a
-journal; ahci, e1000, ps/2, the console and the serial line; a tcp/ip stack; the
-source this kernel was built from, on the medium it booted
-from; and the velvet room, the shell, which runs in the kernel.
+journal; ahci, e1000, ps/2, the console and the serial line; a tcp/ip stack; and the
+velvet room, the shell, which runs in the kernel.
 
 still a non-goal: being useful in any practical sense.
 
@@ -76,8 +75,8 @@ on serial) is the kernel's monitor, where its builtins all work. a machine with 
 on it is a system built on this kernel.
 
 another tree builds the kernel with `make -C path/to/velvet BINDIR=... OBJROOT=...
-SOURCE=... kernel philemon tools`; [docs/building.rst](docs/building.rst) says what each
-of those is for.
+kernel philemon tools`; [docs/building.rst](docs/building.rst) says what each of those is
+for.
 
 ## releases
 

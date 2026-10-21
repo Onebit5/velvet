@@ -2,7 +2,7 @@
 /*
  * tests/test_hash.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * the two sums, against the numbers everybody else got.
+ * crc32, against the numbers everybody else got.
  */
 
 #include <stdio.h>
@@ -20,82 +20,6 @@ static int failures;
             failures++;                                                 \
         }                                                               \
     } while (0)
-
-static const char *hex_of(const void *data, size_t len)
-{
-    static char out[41];
-    uint8_t digest[20];
-    sha1_of(data, len, digest);
-    sha1_hex(digest, out);
-    return out;
-}
-
-static void test_sha1_vectors(void)
-{
-    /*
-     * the ones in the standard, plus the empty string, which is the
-     * case an implementation gets wrong by not padding at all
-     */
-    CHECK(strcmp(hex_of("", 0),
-                 "da39a3ee5e6b4b0d3255bfef95601890afd80709") == 0,
-          "sha1 of nothing is the one everybody has seen");
-    CHECK(strcmp(hex_of("abc", 3),
-                 "a9993e364706816aba3e25717850c26c9cd0d89d") == 0,
-          "sha1 of abc");
-    CHECK(strcmp(hex_of("abcdbcdecdefdefgefghfghighijhi"
-                        "jkijkljklmklmnlmnomnopnopq", 56),
-                 "84983e441c3bd26ebaae4aa1f95129e5e54670f1") == 0,
-          "sha1 of the two-block vector");
-
-    /*
-     * a million a's: the vector that exists because it is more than any
-     * buffer, and the only one that ever catches a length counted in
-     * bytes where it should be bits
-     */
-    char *big = malloc(1000000);
-    memset(big, 'a', 1000000);
-    CHECK(strcmp(hex_of(big, 1000000),
-                 "34aa973cd4c4daa4f61eeb2bdbad27316534016f") == 0,
-          "sha1 of a million a's");
-    free(big);
-}
-
-static void test_sha1_lengths(void)
-{
-    /* every length across a block boundary. */
-    uint8_t data[200];
-    for (size_t i = 0; i < sizeof data; i++) {
-        data[i] = (uint8_t)(i * 7 + 1);
-    }
-
-    for (size_t len = 0; len <= 130; len++) {
-        uint8_t whole[20], piecemeal[20];
-        sha1_of(data, len, whole);
-
-        /* the same bytes one at a time. */
-        struct sha1 s;
-        sha1_init(&s);
-        for (size_t i = 0; i < len; i++) {
-            sha1_update(&s, data + i, 1);
-        }
-        sha1_final(&s, piecemeal);
-        CHECK(memcmp(whole, piecemeal, 20) == 0,
-              "a byte at a time is the same as all at once");
-
-        /*
-         * and in sevens, which is neither a factor nor a multiple of
-         * 64 and so leaves a different amount over every time
-         */
-        sha1_init(&s);
-        for (size_t i = 0; i < len; i += 7) {
-            size_t take = len - i < 7 ? len - i : 7;
-            sha1_update(&s, data + i, take);
-        }
-        sha1_final(&s, piecemeal);
-        CHECK(memcmp(whole, piecemeal, 20) == 0,
-              "and in sevens");
-    }
-}
 
 static void test_crc32(void)
 {
@@ -141,35 +65,7 @@ int main(int argc, char **argv)
     if (argc >= 3) {
         size_t len;
         uint8_t *data = slurp(argv[2], &len);
-        char hex[41];
-        uint8_t digest[20];
 
-        /*
-         * how git names a blob: the type, a space, the length in
-         * decimal, a zero byte, and then the content. the header is
-         * hashed *with* the data, which is why a git object's name
-         * cannot be worked out from the file alone, and why an empty
-         * file still has a name
-         */
-        if (strcmp(argv[1], "--git-blob") == 0) {
-            char header[64];
-            int n = snprintf(header, sizeof header, "blob %zu", len);
-            header[n] = '\0';
-            struct sha1 s;
-            sha1_init(&s);
-            sha1_update(&s, header, (size_t)n + 1);
-            sha1_update(&s, data, len);
-            sha1_final(&s, digest);
-            sha1_hex(digest, hex);
-            printf("%s\n", hex);
-            return 0;
-        }
-        if (strcmp(argv[1], "--sha1") == 0) {
-            sha1_of(data, len, digest);
-            sha1_hex(digest, hex);
-            printf("%s\n", hex);
-            return 0;
-        }
         if (strcmp(argv[1], "--crc32") == 0) {
             printf("%08x\n", crc32_of(data, len));
             return 0;
@@ -179,25 +75,20 @@ int main(int argc, char **argv)
          * so the check can prove that how the data arrives makes no
          * difference to the answer
          */
-        if (strncmp(argv[1], "--sha1-chunked=", 15) == 0) {
-            size_t chunk = (size_t)atoi(argv[1] + 15);
-            struct sha1 s;
-            sha1_init(&s);
+        if (strncmp(argv[1], "--crc32-chunked=", 16) == 0) {
+            size_t chunk = (size_t)atoi(argv[1] + 16);
+            uint32_t crc = crc32_start();
             for (size_t i = 0; i < len; i += chunk) {
                 size_t take = len - i < chunk ? len - i : chunk;
-                sha1_update(&s, data + i, take);
+                crc = crc32_more(crc, data + i, take);
             }
-            sha1_final(&s, digest);
-            sha1_hex(digest, hex);
-            printf("%s\n", hex);
+            printf("%08x\n", crc);
             return 0;
         }
         fprintf(stderr, "hash: unknown %s\n", argv[1]);
         return 2;
     }
 
-    test_sha1_vectors();
-    test_sha1_lengths();
     test_crc32();
 
     if (failures > 0) {

@@ -354,17 +354,11 @@ the table means.
 ``size_t          mount;``
     which of the disks it is on.
 
-``uint64_t        medium_at;``
-    on the boot medium: where in the source archive its bytes start
-
 ``bool            writing;``
     which end of a pipe this is, and for a file whether it was opened to be written to.
 
 ``struct fd_disk { size_t   mount;``
     everything a disk-backed descriptor knows about its file
-
-``struct fd_source { uint64_t medium_at;``
-    everything a source-backed descriptor knows about its file.
 
 ``int      pgid;``
     which job this belongs to.
@@ -482,12 +476,6 @@ the table means.
 
 ``bool process_fd_disk(int pid, int fd, struct fd_disk *out);``
     where a disk-backed descriptor has got to. false for a memory one
-
-``int  process_fd_open_source(int pid, uint64_t medium_at, uint64_t size);``
-    the same, for a file whose bytes are on the boot medium
-
-``bool process_fd_source(int pid, int fd, struct fd_source *out);``
-    where a source-backed descriptor has got to. false for anything else
 
 ``void process_fd_grew(int pid, int fd, uint32_t cluster, uint64_t size);``
     a write may have grown the file, or given an empty one its first cluster.
