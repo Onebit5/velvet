@@ -1,6 +1,6 @@
 VERSION = 0
 PATCHLEVEL = 4
-SUBLEVEL = 3
+SUBLEVEL = 4
 KERNELRELEASE = $(VERSION).$(PATCHLEVEL).$(SUBLEVEL)
 
 # velvet build. needs gcc, nasm, make and python3. `make run` and

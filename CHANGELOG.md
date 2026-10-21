@@ -15,6 +15,47 @@ a kernel that booted.
 
 ---
 
+- **0.4.4**: just the kernel. **the loader is a project of his own.**
+  philemon was this tree's `boot/`, and a kernel does not carry its
+  loader; it says what it has to be handed. `include/velvet/boot.h`
+  declares that under the kernel's names, the handoff in `rdi` and the
+  table at block 32, revision 1 with the magic left as it was, and
+  `docs/subsystems/boot.rst` is what a loader has to do to start this
+  kernel. philemon 1.0.0 is the same loader, byte for byte, in a
+  repository of his own, and the image the boot test and the selftests
+  boot is written with that release, fetched by version into
+  `obj/philemon/` the way a system fetches a kernel. `tests/test_boot.c`
+  holds his header against the kernel's, field by field. `make kernel`
+  fetches nothing, and a tree building this kernel asks for `kernel tools`
+  now: `philemon` and `mkboot` are his.
+
+  **no shell in the kernel.** the monitor is gone: its builtins, its
+  scripting language, its history, the machine's only `ifconfig`, `ping`
+  and a tcp client, and `summon`, `persona`, `arcana`, `crash` and
+  `smash`. what it showed is in `/proc` and the log, where the selftests
+  have been reading it, and the fifth console is the system's like the
+  other four. the functions only it called went with it, but for the
+  mechanisms a call from a program will stand on: setting the address,
+  moving a mount, a drive by sector and the io apic's routing, all of
+  them without a caller until then. a medium with no `/init`, or a pid 1
+  that ends, is a panic, and there is nothing left to fall back to. the
+  selftest `/init`'s `none` powers the machine off, and the boot test
+  boots, answers it, sees the machine go down by itself and hands both
+  filesystems it ran on to a checker: seconds, where it was five minutes
+  of typing at the monitor. nothing gives the stack an address until
+  0.4.5's call, which is the version the roadmap has next.
+
+  **nor a checker, nor its own source.** the fsck call checked a
+  filesystem in ring 0 with the disk lock held and the clock stopped, and
+  `fs/fsck.c` is `tools/fsck.c` now, out of the image, where the crash
+  and resize suites still judge the driver with it. the source call and
+  `/boot/src` read an archive off the boot medium and hashed it against a
+  stamp the build linked in, and both are gone, with the stamp, the
+  archive this build made of itself, `srcstamp.py`, `srccheck.py` and
+  sha-1. 55 and 57 are given to nothing else, and a program that asks
+  for either is told -1. the resize selftest reads the size of `/work`
+  from `/proc/disk`, since it used to ask fsck.
+
 - **0.4.3**: a kernel and nothing more. **the kernel is nobody's client.**
   it leased its own address with dhcp at boot, looked names up with a
   resolver of its own and fetched files over http, each of them a

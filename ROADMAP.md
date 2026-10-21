@@ -37,15 +37,17 @@ emulated, and 0.8.x is a kernel that can say what it is doing.
 ## 0.4.x: the machine builds itself
 
 a machine that rebuilds itself from its own disk ends by building a
-kernel, installing it and rebooting into it. these are the kernel's half of
-that: a program that can reach a drive at all, a boot that can choose
-between two kernels, and one that cannot be lost to a kernel that does not
-come up.
+kernel, installing it and rebooting into it. the kernel's half of that is
+a program that can reach a drive at all. a boot that can choose between
+two kernels, and one that cannot be lost to a kernel that does not come
+up, are the loader's, and philemon's roadmap has them.
 
-**0.4.4 what a client and an installer need.** since 0.4.3 the machine
-boots with no address and nothing in the kernel asks the wire for one, and
-nothing in the kernel copies a system onto a disk. both are a program's
-work now, and neither program can be written yet. a dhcp client needs a
+**0.4.5 what a client, an installer and a checker need.** since 0.4.3
+the machine boots with no address, and since 0.4.4 nothing at all can
+give it one: the monitor's `ifconfig` went with the monitor. nothing in
+the kernel copies a system onto a disk, checks a filesystem or reads the
+source archive on its boot medium either. all of it is a program's work
+now, and none of those programs can be written yet. a dhcp client needs a
 call that sets the address, the netmask and the router, root's, and a
 datagram to 255.255.255.255 that leaves as an ethernet broadcast whether or
 not there is an address to send it from, since its first message goes out
@@ -53,30 +55,15 @@ before there is one. the kernel's own client went round the stack to do
 that; this makes it what the stack does. an installer needs a drive with no
 filesystem on it yet: read and written by sector, root's, refused for the
 drive mounted at `/`, with the medium the machine booted from read the same
-way. `disk.c` has done exactly that for the monitor's installer since
-0.2.21, and what is new is a program asking. a resolver and an http client
-need nothing: udp and tcp are calls already. *ends when a dhcp client in
-ring 3 leases an address from qemu's server and pings the router with it,
-and a program copies the medium onto a blank drive that then boots on its
-own.*
-
-**0.4.5 a boot it can choose between.** philemon starts the kernel at one
-fixed place, which is right while there is only one kernel and wrong the
-moment an install can write a second. it learns to read a small file
-naming which kernel to start, and to say so when the answer is missing.
-*ends when two kernels are on one disk, either can be chosen, and neither
-has to know the other exists.*
-
-**0.4.6 an update that goes wrong costs one reboot.** a system that
-installs its own kernels is, without this, a machine that can brick itself
-with one bad build. a new
-kernel runs on probation: philemon counts the boots it has given it, and
-if the system has not said one of them was good before they run out, the
-boot after starts the kernel that was there before. when a boot counts
-as good, a prompt, a login, a service up, is the system's to decide and
-not the kernel's, and the system's init is what says it.
-*ends when a deliberately broken kernel is installed, fails, and the
-machine comes back up on the old one without anyone touching it.*
+way. a checker needs the partition under a mounted filesystem the same
+way, read, and written when it mends, with what the cache holds for it
+written out first. `disk.c` has done all of that since the monitor's
+installer and fsck, and what is new is a program asking. a resolver and an
+http client need nothing: udp and tcp are calls already. *ends when a dhcp
+client in ring 3 leases an address from qemu's server and pings the router
+with it, a program copies the medium onto a blank drive that then boots on
+its own, and another checks the filesystem at `/` and finds what the
+kernel's checker found.*
 
 ## 0.5.x: a machine for more than one person
 
@@ -390,35 +377,27 @@ warning: a thing that cannot be tested here does not ship, so each of
 these has to be testable here *and* confirmed there. what reaching that
 hardware means for the system, an installer that writes a disk the
 firmware will boot and the time from somewhere that knows it, is the
-system's.
+system's, and starting the kernel on firmware with no bios is the
+loader's: uefi is in philemon's roadmap, and what this series owes it is a
+kernel that boots from it unchanged.
 
-**0.7.0 uefi.** philemon reads the disk through the bios and asks vbe for a
-framebuffer, which is `int 10h`, which does not exist on firmware made
-after about 2012. so it gets a second front half: a PE application the
-firmware loads, GOP for the framebuffer, `GetMemoryMap` where e820 was,
-and `ExitBootServices` before anything of ours runs. what it must not get
-is a second handoff: 0.1.12's decision was that the kernel is handed one
-struct and knows nothing about anybody's protocol, and this is the
-version that finds out whether that was true. the bios path stays. a
-machine that only boots on 2012 firmware is exactly as narrow as one that
-only boots on 1981's.
-
-**0.7.1 usb.** xhci, and a **keyboard first**, because a machine you cannot
+**0.7.0 usb.** xhci, and a **keyboard first**, because a machine you cannot
 type on is one you cannot even read the panic off. ps/2 is present on
 almost nothing built in the last ten years and present in every emulator,
 which is the most dangerous combination a driver can have: it works
 everywhere it is tested and nowhere it is used. then mass storage, since
 a usb stick is how this actually reaches another machine.
 
-**0.7.2 nvme.** ahci was 0.1.10 and there has been exactly one disk driver
+**0.7.1 nvme.** ahci was 0.1.10 and there has been exactly one disk driver
 since. the seam it would slot into is already load-bearing (the block
 cache took its place in 0.2.13 by being handed the two function pointers
 fat32 was using), so this is a driver rather than a rewrite. and a second
 disk driver is the only way to find out which of the first one's habits
 were assumptions.
 
-**0.7.3 a framebuffer the size of a real screen.** vbe hands over something
-modest; gop on a laptop hands over 1920x1080 or worse, and at that size
+**0.7.2 a framebuffer the size of a real screen.** vbe hands over something
+modest; gop on a laptop, once philemon can boot one, hands over 1920x1080
+or worse, and at that size
 every scroll is a memmove of eight megabytes and every redraw is a repaint
 of two million pixels. 0.3.10 already found this shape of problem at
 1024x768 (a redraw per keystroke is what made the editor feel like
@@ -426,13 +405,13 @@ wading), and it arrives again with a bigger number. the cell grid is
 256x128 and copes; the 8x16 font at 4k is not a font, it is a rumour, so
 a scale factor is part of the version.
 
-**0.7.4 virtio.** net and block. it is what the machine gets when it runs
+**0.7.3 virtio.** net and block. it is what the machine gets when it runs
 on somebody's hypervisor instead of somebody's desk, and it is the
 cheapest possible second implementation of two drivers that have never had
 one, which is what will find the e1000-shaped assumptions in `net/` and
 the ahci-shaped ones underneath the cache.
 
-**0.7.5 a clock that is right rather than merely increasing.** the tsc's
+**0.7.4 a clock that is right rather than merely increasing.** the tsc's
 frequency has to be measured rather than assumed, the lapic timer
 calibrated against something that is not itself, and the rtc read with its
 drift admitted. and the clock becomes something ring 3 can set and slew,
@@ -440,7 +419,7 @@ because a laptop whose coin cell died is a machine that rejects the entire
 internet until somebody tells it what year it is, and the somebody is an
 ntp client.
 
-**0.7.6 power.** `machine_poweroff` writes 0x2000 to port 0x604 and then to
+**0.7.5 power.** `machine_poweroff` writes 0x2000 to port 0x604 and then to
 0xb004, which is qemu and bochs, and on real hardware neither does
 anything at all, so the machine says goodbye and keeps running. doing it
 properly is the fadt, `PM1a_CNT`, and a sleep type that lives in the dsdt,
@@ -451,7 +430,7 @@ entire version making a crash cheap, and a machine that can only be
 turned off by holding the button in is a machine that crashes every time
 somebody leaves the room.
 
-**0.7.7 a machine that says what it found.** on a desk there is no serial
+**0.7.6 a machine that says what it found.** on a desk there is no serial
 console: the log has nowhere to go, so a machine that fails on somebody
 else's hardware fails silently. the boot log gets written to the medium
 it booted from before anything else can go wrong, and there is a report
@@ -459,7 +438,7 @@ to go with it: what the firmware claimed, which drivers bound to what,
 what was refused and why. that is the difference between "it did not
 work" and a bug report, and it is the bridge into 0.8.x.
 
-**0.7.8 the boot performed rather than described.** three machines that
+**0.7.7 the boot performed rather than described.** three machines that
 are not this one, three firmwares, and the log from each of them kept in
 the tree. no suite can run this and that is exactly the point: it is the
 one claim in this document that only somebody else's hardware can settle.
@@ -533,7 +512,7 @@ spends its minutes, measured rather than guessed.
 **0.8.6 the log, and a panic that outlives the machine.** with 0.5.6 the
 kernel's log can be read from ring 3; this is the part that matters on
 hardware that is not here. the panic is written to the medium before the
-machine gives up, so the evidence survives the reboot. 0.7.7 writes the
+machine gives up, so the evidence survives the reboot. 0.7.6 writes the
 first log of a boot for the same reason; this writes the last.
 
 **0.8.7 numbers that are kept.** a suite that measures instead of
