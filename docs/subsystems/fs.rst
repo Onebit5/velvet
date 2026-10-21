@@ -326,26 +326,6 @@ does and cannot see past it, and a filesystem longer than its partition
 writes over whatever is next. what happened comes back in a ``struct
 user_resize``, before and after, with what was in the way of a shrink.
 
-checking a filesystem
----------------------
-
-``fsck.c`` is an ext2/ext4 checker in C, on the machine. ``tools/readext4.py``
-has been the second opinion since 0.2.14, but it runs on the machine this was
-*developed* on, and a disk that can be damaged and cannot be examined is a
-disk you throw away.
-
-it **reads the layout by hand rather than through the driver**, for exactly
-the reason ``readext4.py`` imports nothing: a checker that shares the
-driver's idea of what the disk says is unable to notice the driver being
-wrong.
-
-it mends only what has exactly one *computable* answer. free counts, link
-counts, a block marked used that nothing claims. a block two files both claim
-is reported and **left alone**, because one of them is wrong and nothing on
-the disk says which. an inode in use that no name points at is left alone
-too: the answer is lost+found and there is not one, so deleting it would be
-choosing to lose it.
-
 the source on the medium
 ------------------------
 
@@ -550,9 +530,6 @@ file says which of them it means.
 
 ``int disk_system_drive(void);``
     which drive carries philemon's table, or -1 if none does.
-
-``bool disk_fsck(size_t which, bool mend, struct fsck_report *out, const char **error);``
-    check the mounted filesystem and mend what has exactly one right answer.
 
 ``bool disk_resize(size_t which, uint64_t blocks, struct ext4_resize *out, const char **error);``
     resize the filesystem mounted at `which` to `blocks` of its own, and
@@ -759,50 +736,6 @@ where to start executing.
 
 ``bool elf_describe(const void *image, uint64_t size, struct elf_segment *out, size_t max, size_t *count, uint64_t *entry, uint64_t *brk, const char **why);``
     describe the segments without mapping anything.
-
-
-the fsck interface
---------------------
-
-checking a filesystem, and mending it, on the machine rather than on the
-one it was developed on. a disk that can be damaged and cannot be examined is
-a disk you throw away.
-
-it reads the layout itself rather than walking the filesystem through the
-driver, because a checker that shares the driver's idea of the disk cannot
-notice the driver being wrong, which is the one thing it is for.
-
-``#define FSCK_SECTOR     512``
-    checking a filesystem, and mending it.
-
-``typedef bool (*fsck_io)(void *ctx, uint64_t lba, uint32_t count, void *buf);``
-    how to reach the disk.
-
-``#include <uapi/velvet/fsck.h>``
-    the kinds of problem, ``FSCK_MEND`` and ``struct user_fsck``, which
-    are a program's as much as the kernel's, since a program asking for a
-    check with the ``fsck`` call is the one that names what was found.
-
-``enum fsck_problem { FSCK_SUPERBLOCK,        /* it does not describe itself consistently */ FSCK_BLOCK_UNMARKED,    /* a file claims a block the bitmap calls free */ FSCK_BLOCK_CROSSED,     /* two files claim the same block */ FSCK_BLOCK_LEAKED,      /* the bitmap says used and nobody claims it */ FSCK_INODE_UNMARKED,    /* a name points at an inode the bitmap calls free */ FSCK_INODE_ORPHANED,    /* in use, and no name points at it */ FSCK_LINKS_WRONG,       /* the count is not the number of names */ FSCK_DIR_NO_DOTS,       /* a directory without . or .. */ FSCK_DIR_BAD_PARENT,    /* .. that is not the parent */ FSCK_DIR_BAD_RECORD,    /* a record whose length walks off the block */ FSCK_EXTENT_BAD,        /* a tree that does not parse */ FSCK_COUNTS_WRONG,      /* a free count that is not the true one */ FSCK_PROBLEMS };``
-    what kind of thing was wrong.
-
-``uint32_t blocks, inodes, groups, block_size;``
-    what the disk turned out to be, for whoever is printing
-
-``const char *stopped;``
-    the first thing that went wrong, in words, or NULL
-
-``bool fsck_measure(fsck_io read, void *ctx, uint32_t *blocks_out, uint32_t *inodes_out);``
-    read the superblock far enough to size the workspace.
-
-``const char *fsck_problem_name(enum fsck_problem which);``
-    one line per kind of problem, for whoever is printing.
-
-a program asks with the ``fsck`` call, naming the filesystem by where it
-is mounted. the counts come back in a ``struct user_fsck``, and when the
-check could not be made, its ``arr_why`` holds the same words ``stopped``
-would have. looking is anyone's; mending, with ``FSCK_MEND``, is root's,
-since it writes the disk.
 
 
 the jbd2 interface

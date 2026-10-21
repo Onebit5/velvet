@@ -125,7 +125,7 @@ against.
 ``mkext4.c`` and ``mkfat.c`` are drivers rather than rewrites: they point
 ``mkfs.c``, ``fs/ext4.c`` and ``fs/fat32.c`` at a host file and a host
 directory, so the image a disk is built from is written by the same code the
-machine runs. ``fsck.c`` is the same shape for ``fs/fsck.c``.
+machine runs. ``fsckext4.c`` is the same shape for ``fsck.c``, the checker.
 
 ``mkfs.c`` is mke2fs in about the smallest form that produces something
 ``fs/ext4.c`` will mount and ``readext4.py``, written from the layout rather
@@ -138,6 +138,26 @@ through a function pointer, the same shape ``drivers/part.c`` uses, so it is
 tested against a buffer as easily as pointed at a file. it is here and not
 in ``fs/`` because the kernel never makes a filesystem: a disk arrives
 formatted, by this or by a program.
+
+``fsck.c`` is an ext2/ext4 checker, and it was the kernel's until 0.4.4,
+when checking a filesystem went the way of making one: it is a program's
+work, done over the drive. it stays here because it is how the suites
+judge the driver. ``test_crash`` pulls the plug at every write and
+``test_resize`` grows and shrinks, and both hand what is left to it.
+
+it **reads the layout by hand rather than through the driver**, for exactly
+the reason ``readext4.py`` imports nothing: a checker that shares the
+driver's idea of what the disk says is unable to notice the driver being
+wrong.
+
+it mends only what has exactly one *computable* answer. free counts, link
+counts, a block marked used that nothing claims. a block two files both claim
+is reported and **left alone**, because one of them is wrong and nothing on
+the disk says which. an inode in use that no name points at is left alone
+too: the answer is lost+found and there is not one, so deleting it would be
+choosing to lose it. it reaches the disk through two function pointers, and
+is handed its workspace, so it does not know or care whose memory and whose
+drive it is working on.
 
 ``fuzz_parsers.c`` is the one that is not a tool for building anything: it
 feeds random and mutated input to the parsers that read from the wire or

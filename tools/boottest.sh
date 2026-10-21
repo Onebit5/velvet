@@ -9,7 +9,7 @@
 # what is checked is the kernel and nothing else. the medium this image
 # carries has no programs on it but init and the selftests, so every
 # command below is one the kernel answers itself: the boot, /init, the
-# memory, the scheduler, the disks, the journal, a resize, fsck, and the
+# memory, the scheduler, the disks, the journal, a resize, and the
 # source on the medium. ring 3 is checked by the selftests, `make
 # kselftest`, and by whatever system ships this kernel with programs on
 # it.
@@ -85,11 +85,8 @@ echo "booting $BOOTIMG and driving the monitor over serial..."
     printf 'persona\r'; sleep 2
     printf 'dmesg\r';   sleep 2
     printf 'sync\r';    sleep 2
-    printf 'fsck\r';    sleep 5
-    printf 'fsck\r';    sleep 5
     printf 'mount\r';   sleep 2
     printf 'resize work\r'; sleep 6
-    printf 'fsck work\r'; sleep 6
     # the source is on the boot medium, which is drive 0, while
     # the filesystem is on drive 1, so every one of these reads the
     # other drive and puts the mounted one back, in the middle of a
@@ -98,9 +95,6 @@ echo "booting $BOOTIMG and driving the monitor over serial..."
     printf 'src verify\r'; sleep 20
     printf 'src unpack /work/src\r'; sleep 12
     printf 'sync\r';   sleep 2
-    # and what the unpack wrote is checked by the same fsck that has
-    # been checking the disk all along
-    printf 'fsck work\r'; sleep 6
 } | timeout 300 qemu-system-x86_64 \
         -M q35 -m 2G -smp "${CPUS:-2}" -boot order=c \
         -drive id=boot,file="$BOOTIMG",format=raw,if=none \
@@ -177,7 +171,6 @@ check 'journal started'  'journalled: every change is written down'
 # somewhere to go and the check is that it went there
 check 'work mounted'     '"work" at /work'
 check 'resize grows'     'group(s), was'
-check 'fsck agrees'      'nothing wrong with it'
 # the source tree, out on the medium and not in memory. every one of
 # these is a read of a drive that is not the mounted one, from a machine
 # that is using the mounted one, and the last two are the whole claim
@@ -188,11 +181,6 @@ check 'source found'     'source     :'
 check 'source mounted'   '/boot/src'
 check 'source verifies'  'this is the source this kernel was built from'
 check 'source unpacks'   'they are yours to edit'
-# a checker that runs here, and a second run of it that finds nothing:
-# a checker that finds something new every time it runs is one that
-# does not understand what it sees
-check 'fsck runs'        'inodes,'
-check 'fsck is happy'    'nothing wrong with it'
 check 'mount table'      'a module the bootloader handed the kernel'
 check 'arcana works'     'COMPUTER ARCANA'
 # not its header, monitor@velvet, which every prompt above already says

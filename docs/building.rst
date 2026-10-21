@@ -46,7 +46,7 @@ the targets
 
 ``make tools``
    the C build tools, into ``bin/tests/``: ``mkext4``, ``mkfat``,
-   ``mkboot``, ``gensyms``, ``bin2c``, ``checkfmt`` and ``fsck``.
+   ``mkboot``, ``gensyms``, ``bin2c``, ``checkfmt`` and ``fsckext4``.
 
 ``make kernelrelease``
    print the version: ``VERSION``, ``PATCHLEVEL`` and ``SUBLEVEL`` from the

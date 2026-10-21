@@ -37,7 +37,6 @@
 #include <velvet/source.h>
 #include <velvet/hash.h>
 #include <velvet/disk.h>
-#include <velvet/fsck.h>
 #include <velvet/netif.h>
 #include <velvet/ether.h>
 #include <velvet/ip.h>
@@ -367,53 +366,6 @@ static void cmd_resize(int argc, char **argv)
                 "fraction of itself\n",
                 (uint64_t)r.inodes_after, (uint64_t)r.inodes_before);
     }
-    kprintf("`fsck` will say whether the kernel is telling the truth\n");
-}
-
-/* the checker, on the machine it is for. */
-static void cmd_fsck(int argc, char **argv)
-{
-    bool mend = true;
-    size_t which = DISK_ROOT;
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-n") == 0) {
-            mend = false;
-        } else if (strcmp(argv[i], "work") == 0)
-{
-            which = DISK_WORK;
-        }
-    }
-
-    struct fsck_report r;
-    const char *error = NULL;
-    if (!disk_fsck(which, mend, &r, &error)) {
-        kprintf("%s\n", error != NULL ? error : "cannot check it");
-        return;
-    }
-
-    kprintf("%s\n", disk_mount_point(which));
-
-    kprintf("%u blocks of %u, %u inodes, %u group(s)\n",
-            r.blocks, r.block_size, r.inodes, r.groups);
-
-    if (r.total_found == 0) {
-        kprintf("nothing wrong with it\n");
-        return;
-    }
-    for (int i = 0; i < FSCK_PROBLEMS; i++) {
-        if (r.found[i] == 0) {
-            continue;
-        }
-        kprintf("  %u x %s", r.found[i],
-                fsck_problem_name((enum fsck_problem)i));
-        if (r.mended[i] > 0) {
-            kprintf("  (%u mended)", r.mended[i]);
-        } else if (mend) {
-            kprintf("  (left alone, no answer to it but yours)");
-        }
-        kprintf("\n");
-    }
-    kprintf("%u problem(s), %u mended\n", r.total_found, r.total_mended);
 }
 
 static void cmd_cd(int argc, char **argv)
@@ -2173,7 +2125,6 @@ static const struct command commands[] = {
     { "slabs",  "the object caches, and what they hold", cmd_slabs, false, NULL },
     { "disk",   "the drive, and the filesystem on it",  cmd_disk, false, NULL },
     { "sync",   "put what is in memory onto the disk",  cmd_sync, false, NULL },
-    { "fsck",   "check the filesystem, and mend what has one answer", cmd_fsck, true, "fsck [work] [-n]" },
     { "resize", "grow a filesystem into the partition it sits in", cmd_resize, false, "resize [work] [blocks]" },
     { "mount",  "which filesystem is where; mount <n> moves it", cmd_mount, false, "mount [number]" },
     { "parts",  "what each drive says it holds",        cmd_parts, false, NULL },

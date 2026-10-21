@@ -2,7 +2,7 @@
 """break a filesystem on purpose, and see whether fsck notices.
 
 a checker that agrees about a clean filesystem has agreed about
-nothing. every check in `fs/fsck.c` is here as a *break*: an
+nothing. every check in `tools/fsck.c` is here as a *break*: an
 image is damaged in one specific way, fsck is run over it, and the run
 has to find that kind of problem and no other.
 
@@ -29,7 +29,7 @@ import tempfile
 import shutil
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-FSCK = os.path.join(ROOT, "bin", "tests", "fsck")
+FSCK = os.path.join(ROOT, "bin", "tests", "fsckext4")
 MKEXT4 = os.path.join(ROOT, "bin", "tests", "mkext4")
 
 
@@ -246,7 +246,7 @@ BREAKS = [
 
 def main():
     if not os.path.exists(FSCK):
-        print("  bin/tests/fsck is not built")
+        print("  bin/tests/fsckext4 is not built")
         return 1
     if not os.path.exists(MKEXT4):
         print("  bin/tests/mkext4 is not built")

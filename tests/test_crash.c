@@ -22,7 +22,7 @@ void panic(const char *fmt, ...)
 
 #include <velvet/ext4.h>
 #include "tools/mkfs.h"
-#include <velvet/fsck.h>
+#include "tools/fsck.h"
 
 /*
  * the image is a file (or memory), so what has been written to it

@@ -613,7 +613,7 @@ $(T)/hash:     tests/test_hash.c     lib/hash.c \
 # to have, and it would look exactly like a build that worked
 TOOL_BINS := $(T)/bin2c $(T)/checkfmt $(T)/gensyms \
              $(T)/mkboot $(T)/mkext4 $(T)/mkfat \
-             $(T)/fsck
+             $(T)/fsckext4
 
 tools: $(TOOL_BINS)
 	@:
@@ -638,9 +638,10 @@ $(T)/mkext4:   tools/mkext4.c        tools/mkfs.c \
 # files go in through the same driver the kernel uses
 $(T)/mkfat:    tools/mkfat.c         fs/fat32.c \
                lib/string.c
-# and the checker, the same driver-over-a-host-file shape: fs/fsck.c is
-# what the machine runs, this points it at an image
-$(T)/fsck:     tools/fsck.c          fs/fsck.c \
+# and the checker, the same driver-over-a-host-file shape: fsck.c
+# checks a filesystem through two function pointers, and this points it
+# at an image
+$(T)/fsckext4: tools/fsckext4.c      tools/fsck.c \
                lib/string.c
 # pulling the plug at every write there is. the driver, the formatter
 # and the checker all at once, because what is under test is not any one
@@ -648,7 +649,7 @@ $(T)/fsck:     tools/fsck.c          fs/fsck.c \
 # has an answer
 $(T)/crash:    tests/test_crash.c    fs/ext4.c \
                fs/jbd2.c \
-               tools/mkfs.c fs/fsck.c \
+               tools/mkfs.c tools/fsck.c \
                lib/string.c
 # growing a filesystem onto a disk bigger than the one it was made for.
 # the formatter, the driver and the checker again, and for the same
@@ -656,7 +657,7 @@ $(T)/crash:    tests/test_crash.c    fs/ext4.c \
 # which is not a question the thing doing the resizing may answer
 $(T)/resize:   tests/test_resize.c   fs/ext4.c \
                fs/jbd2.c \
-               tools/mkfs.c fs/fsck.c \
+               tools/mkfs.c tools/fsck.c \
                lib/string.c
 
 # the framebuffer is an array here, so what the screen shows can be read
@@ -725,7 +726,7 @@ $(T)/shell:    tests/test_shell.c    lib/string.c \
                fs/source.c \
                sched/spinlock.c fs/path.c \
                lib/env.c sched/init.c \
-               drivers/part.c lib/hash.c fs/fsck.c \
+               drivers/part.c lib/hash.c \
                net/net.c net/arp.c \
                net/tcp.c \
                net/ip.c mm/pressure.c \
@@ -738,7 +739,7 @@ $(T)/shell:    SRCS = tests/test_shell.c lib/string.c \
                       fs/source.c \
                       sched/spinlock.c fs/path.c \
                       lib/env.c sched/init.c \
-                      drivers/part.c lib/hash.c fs/fsck.c \
+                      drivers/part.c lib/hash.c \
                       net/net.c net/arp.c \
                       net/tcp.c \
                       net/ip.c \

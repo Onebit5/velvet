@@ -23,7 +23,7 @@ void panic(const char *fmt, ...)
 
 #include <velvet/ext4.h>
 #include "tools/mkfs.h"
-#include <velvet/fsck.h>
+#include "tools/fsck.h"
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \

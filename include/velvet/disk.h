@@ -18,7 +18,6 @@
 #include <velvet/fat32.h>
 #include <velvet/ext4.h>
 #include <velvet/bcache.h>
-#include <velvet/fsck.h>
 #include <velvet/part.h>
 
 /*
@@ -145,10 +144,6 @@ bool disk_system_read(void *ctx, uint64_t lba, uint32_t count, void *buf);
 
 int disk_system_drive(void);
 
-/* is there anything to lose? cheap enough to ask on a timer */
-bool disk_fsck(size_t which, bool mend, struct fsck_report *out,
-               const char **error);
-
 /*
  * the filesystem describes the disk it was made for, and its partition
  * is usually longer than that. growing it is the driver's work; how
@@ -161,6 +156,7 @@ bool disk_resize(size_t which, uint64_t blocks, struct ext4_resize *out,
 uint64_t disk_room(size_t which);
 uint64_t disk_ceiling(size_t which);
 
+/* is there anything to lose? cheap enough to ask on a timer */
 bool disk_dirty(void);
 
 void disk_cache_stats(struct bcache_stats *out);

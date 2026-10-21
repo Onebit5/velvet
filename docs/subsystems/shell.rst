@@ -53,7 +53,6 @@ alt+5 lands you at the monitor's prompt, ``monitor@velvet[5]:/#``:
     slabs     the object caches, and what they hold
     disk      the drive, and the filesystem on it
     sync      put what is in memory onto the disk
-    fsck      check the filesystem, and mend what has one answer
     resize    grow a filesystem into the partition it sits in
     mount     which filesystem is where; mount <n> moves it
     parts     what each drive says it holds

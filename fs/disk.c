@@ -14,8 +14,6 @@
 #include <velvet/rtc.h>
 #include <velvet/epoch.h>
 #include <velvet/bcache.h>
-#include <velvet/fsck.h>
-#include <velvet/kmalloc.h>
 #include <velvet/part.h>
 #include <velvet/philemon.h>
 
@@ -69,8 +67,8 @@ static uint32_t ext4_now(void)
  * as long as the operation takes rather than for as long as the scratch
  * sector needs protecting. the note above is about the sector; what the
  * duration costs is the clock. disk_write_at holds this across an entire
- * write, however many blocks that is, and disk_fsck holds it across the
- * whole filesystem scan, so the timer does not fire for the duration:
+ * write, however many blocks that is, and disk_resize holds it across
+ * the whole of a resize, so the timer does not fire for the duration:
  * ticks stop, a sleep_ms in another thread overshoots, and the machine
  * is deaf and blind until the call returns. a sleeping lock would suit
  * a hold this long, or the hold could be narrowed to the sector copies
@@ -800,10 +798,9 @@ bool disk_unmount(void)
  * question the driver cannot answer for itself, because how long the
  * partition is belongs to the layer that knows about partitions.
  *
- * the sync first is the same argument `disk_fsck` makes: what a
- * write-back cache is holding is newer than the disk, and a resize
- * reads bitmaps to decide what is safe. the sync after is the other
- * end of it
+ * the sync first, because what a write-back cache is holding is newer
+ * than the disk, and a resize reads bitmaps to decide what is safe. the
+ * sync after is the other end of it
  */
 bool disk_resize(size_t which, uint64_t blocks, struct ext4_resize *out,
                  const char **error)
@@ -874,55 +871,6 @@ uint64_t disk_ceiling(size_t which)
         return 0;
     }
     return ext4_resize_ceiling(&m->ext);
-}
-
-/* check the mounted filesystem, and mend what has exactly one right answer. */
-bool disk_fsck(size_t which, bool mend, struct fsck_report *out,
-               const char **error)
-{
-    *error = NULL;
-
-    struct mount *m = at(which);
-    if (!m->ready || m->kind != DISK_EXT4) {
-        *error = "there is no ext4 filesystem mounted there to check";
-        return false;
-    }
-    if (!disk_sync()) {
-        *error = "the drive would not take what was waiting for it";
-        return false;
-    }
-
-    uint32_t blocks, inodes;
-    uint64_t flags = enter();
-    bool measured = fsck_measure(view_read, m, &blocks, &inodes);
-    leave(flags);
-    if (!measured) {
-        *error = "no filesystem where one was mounted";
-        return false;
-    }
-
-    size_t need = fsck_workspace_bytes(blocks, inodes);
-    void *work = kmalloc(need);
-    if (work == NULL) {
-        *error = "not enough memory to check a filesystem this size";
-        return false;
-    }
-
-    flags = enter();
-    bool ok = fsck_run(view_read, mend ? view_write : NULL, m,
-                       work, need, out);
-    leave(flags);
-    kfree(work);
-
-    if (!ok) {
-        *error = out->stopped != NULL ? out->stopped : "cannot check it";
-        return false;
-    }
-    if (mend && out->total_mended > 0 && !disk_sync()) {
-        *error = "mended, and the drive would not take it";
-        return false;
-    }
-    return true;
 }
 
 bool disk_dirty(void)

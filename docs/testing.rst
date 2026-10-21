@@ -147,8 +147,7 @@ what it checks is what the kernel can show with no system on its medium:
 the boot itself, the memory map and the allocators, both cores, the
 scheduler, ``/init`` asking and the monitor answering, every builtin it
 types, both disks mounted, the journal started, a ``resize`` that grows
-the work filesystem into its partition, ``fsck`` finding nothing twice
-running, and the source on the medium verified against the stamp and
+the work filesystem into its partition, and the source on the medium verified against the stamp and
 unpacked onto the disk. ring 3 is the other half of the machine: the
 selftests below check what the kernel promises it, and the programs a
 system ships are that system's to check.

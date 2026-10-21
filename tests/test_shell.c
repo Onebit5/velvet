@@ -642,18 +642,6 @@ bool disk_resize(size_t w, uint64_t blocks, struct ext4_resize *out,
     return true;
 }
 
-bool disk_fsck(size_t w, bool mend, struct fsck_report *out,
-               const char **error)
-{
-    (void)w; (void)mend;
-    *error = NULL;
-    memset(out, 0, sizeof *out);
-    out->blocks = 16384;
-    out->block_size = 1024;
-    out->inodes = 1024;
-    out->groups = 2;
-    return true;
-}
 void disk_cache_stats(struct bcache_stats *out)
 {
     memset(out, 0, sizeof *out);

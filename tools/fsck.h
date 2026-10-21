@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * include/velvet/fsck.h
+ * tools/fsck.h
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
  * checking a filesystem, and mending it.
  */
 
-/* the design notes for fsck.h are in docs/subsystems/mm.rst */
+/* the design notes for fsck.h are in docs/subsystems/tools.rst */
 
-#ifndef VELVET_FSCK_H
-#define VELVET_FSCK_H
+#ifndef TOOLS_FSCK_H
+#define TOOLS_FSCK_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -21,8 +21,21 @@ typedef bool (*fsck_io)(void *ctx, uint64_t lba, uint32_t count, void *buf);
 typedef bool (*fsck_out)(void *ctx, uint64_t lba, uint32_t count,
                          const void *buf);
 
-/* the kinds of problem are a program's to name, so they are its header's */
-#include <uapi/velvet/fsck.h>
+enum fsck_problem {
+    FSCK_SUPERBLOCK,        /* it does not describe itself consistently */
+    FSCK_BLOCK_UNMARKED,    /* a file claims a block the bitmap calls free */
+    FSCK_BLOCK_CROSSED,     /* two files claim the same block */
+    FSCK_BLOCK_LEAKED,      /* the bitmap says used and nobody claims it */
+    FSCK_INODE_UNMARKED,    /* a name points at an inode marked free */
+    FSCK_INODE_ORPHANED,    /* in use, and no name points at it */
+    FSCK_LINKS_WRONG,       /* the count is not the number of names */
+    FSCK_DIR_NO_DOTS,       /* a directory without . or .. */
+    FSCK_DIR_BAD_PARENT,    /* .. that is not the parent */
+    FSCK_DIR_BAD_RECORD,    /* a record whose length walks off the block */
+    FSCK_EXTENT_BAD,        /* a tree that does not parse */
+    FSCK_COUNTS_WRONG,      /* a free count that is not the true one */
+    FSCK_PROBLEMS
+};
 
 struct fsck_report {
     uint32_t found[FSCK_PROBLEMS];      /* how many of each kind */
@@ -40,9 +53,8 @@ struct fsck_report {
 /*
  * how much scratch the check needs for a filesystem this size: a bit
  * per block, a bit per inode, and a link count per inode. handed in
- * rather than allocated, because nothing else in fs/ allocates either
- *, the kernel has kmalloc and the host test has malloc and this file
- * should not have to know which one it is talking to
+ * rather than allocated, so that this file does not have to know where
+ * its caller's memory comes from
  */
 size_t fsck_workspace_bytes(uint32_t blocks_count, uint32_t inodes_count);
 
