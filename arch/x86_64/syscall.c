@@ -1778,18 +1778,15 @@ static bool enter_handler(struct pt_regs *regs, int sig, uint64_t handler)
     sp &= ~(uint64_t)15;
 
     /*
-     * XXX: the frame is checked as readable and then written, and the
-     * return address further down is checked the same way. that holds up
-     * only because a write from ring 0 to a page that is present and
-     * read-only is caught by the page fault handler and turned into a
-     * copy on the spot, which is exactly what a forked child's stack
-     * pages are until it writes to them itself. tighten the fault
-     * handler so that only ring 3 faults consult the regions, and this
-     * becomes a kernel panic the first time a child is signalled.
+     * checked as writable, since it is about to be written: a stack the
+     * program pointed somewhere it may only read has no room for a frame,
+     * and writing one there anyway is a fault in ring 0, which is a
+     * panic. the check also makes the copy of a page a forked child
+     * still shares with its parent
      */
     sp -= sizeof(struct pt_regs);
     uint64_t frame = sp;
-    if (!user_range_ok(frame, sizeof(struct pt_regs))) {
+    if (!user_range_writable(frame, sizeof(struct pt_regs))) {
         return false;
     }
     memcpy((void *)frame, regs, sizeof *regs);
@@ -1800,7 +1797,7 @@ static bool enter_handler(struct pt_regs *regs, int sig, uint64_t handler)
      * function expects to find on entry
      */
     sp -= 8;
-    if (!user_range_ok(sp, 8)) {
+    if (!user_range_writable(sp, 8)) {
         return false;
     }
     *(uint64_t *)sp = tramp;
@@ -2057,17 +2054,7 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
          */
         return (int64_t)process_set_alarm(caller_pid(), a0, pit_uptime_ms());
     case SYS_WINSIZE: {
-        /*
-         * FIXME: a0 is checked as readable and then written to a few
-         * lines down; a1, beside it, uses the check that is right. a
-         * program handing over a pointer into its own .rodata has the
-         * kernel write through it, and that survives only because a
-         * supervisor write to a read-only page is caught by the fault
-         * handler and quietly turned into a copy. sys_screen above does
-         * this same pair correctly, which is what makes this a slip
-         * rather than a decision.
-         */
-        if (!user_range_ok(a0, sizeof(uint32_t))
+        if (!user_range_writable(a0, sizeof(uint32_t))
          || !user_range_writable(a1, sizeof(uint32_t))) {
             return -1;
         }

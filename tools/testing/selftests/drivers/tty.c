@@ -19,7 +19,7 @@ int main(int i_argc, char **pp_argv)
     (void)i_argc;
     (void)pp_argv;
     ksft_print_header();
-    ksft_set_plan(6);
+    ksft_set_plan(7);
 
     /* run as a job of one, so its group is its pid */
     ksft_test_result(tcgetpgrp() == i_me,
@@ -45,5 +45,13 @@ int main(int i_argc, char **pp_argv)
                      "and, no longer in front, may not take it back\n");
     ksft_test_result(i_status == 0 && tcgetpgrp() == i_me,
                      "but the group it went to may hand it back\n");
+
+    /* the size is written where it is asked for, so that has to be writable */
+    static const uint32_t s_u_cols = 7;
+    uint32_t u_rows = 0;
+    ksft_test_result(ksft_syscall(SYS_WINSIZE, (int64_t)&s_u_cols,
+                                  (int64_t)&u_rows, 0) == -1
+                     && *(volatile const uint32_t *)&s_u_cols == 7,
+                     "winsize refuses to write into what is read only\n");
     ksft_finished();
 }
