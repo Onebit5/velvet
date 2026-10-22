@@ -14,6 +14,8 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#include <asm/thread.h>
+
 struct addrspace;
 struct waitq;
 
@@ -81,6 +83,13 @@ struct thread {
      * core because a handler can switch threads before it returns
      */
     unsigned u_in_interrupt;
+
+    /*
+     * what the architecture keeps for the thread while it is off the cpu,
+     * beyond what the switch leaves on its stack: on x86_64 the fpu's
+     * registers and the fs base
+     */
+    struct thread_arch arch;
 };
 
 const char *thread_state_name(enum thread_state s);

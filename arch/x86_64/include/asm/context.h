@@ -14,6 +14,8 @@
 #include <asm/gdt.h>
 #include <asm/tss.h>
 #include <asm/syscall.h>
+#include <asm/thread.h>
+#include <asm/fpu.h>
 
 /* a thread's hardware state on x86_64. included as <asm/context.h>. */
 
@@ -56,6 +58,27 @@ ARCH_INLINE uint64_t context_make_stack(uint64_t stack_top,
     *--sp = 0;                      /* r15 */
 
     return (uint64_t)sp;
+}
+
+/* a new thread's: the fpu as a program finds it, and no fs base */
+ARCH_INLINE void context_init_thread(struct thread_arch *p_arch)
+{
+    fpu_init_state(&p_arch->fpu);
+    p_arch->u_fs_base = 0;
+}
+
+/*
+ * the half of a switch that switch_context leaves: the registers a
+ * program owns and the kernel never touches. what the fpu holds is the
+ * outgoing thread's, so it is saved as it stands, and the incoming
+ * thread's goes in before its stack does
+ */
+ARCH_INLINE void context_switch_arch(struct thread_arch *p_prev,
+                                     const struct thread_arch *p_next)
+{
+    fpu_save(&p_prev->fpu);
+    fpu_restore(&p_next->fpu);
+    fs_base_load(p_next->u_fs_base);
 }
 
 /*

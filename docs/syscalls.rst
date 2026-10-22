@@ -79,6 +79,7 @@ number  name          arguments                                         returns
 65      SETUID        (uid)                                             0, or -1
 66      REBOOT        (how)                                             does not return, or -1
 67      LSEEK         (fd, offset, whence)                              the position, or -1
+158     ARCH_PRCTL    (code, addr)                                      0, or -1
 ======  ============  ================================================  ======================
 
 the kernel side
@@ -132,6 +133,8 @@ run as uid from now on. root may become anybody, which is how a login becomes th
 stop the machine: REBOOT_RESTART or REBOOT_POWER_OFF, and root's alone. on success it does not return. every program but init is asked to stop, then the kernel's own services, and the disk is written out and closed before the machine goes. -1 for anyone else, or for anything else asked
 
 move a file's position: to offset from its start, SEEK_SET, from where it is, SEEK_CUR, or from its end, SEEK_END, which is how a write goes on the end of a file rather than over its start. the new position, or -1 for a pipe, a terminal or a place outside the file
+
+the architecture's own settings for the caller. on x86_64 that is where %fs points, which is how a program finds its thread's data: ARCH_SET_FS sets it to addr, ARCH_GET_FS writes it into the uint64_t at addr. gs is the kernel's on this machine, so ARCH_SET_GS and ARCH_GET_GS are refused. 0, or -1 for an address that is not the program's. the number is the one x86_64 programs already use for it
 
 who a datagram came from, filled in by recvfrom. a struct rather than two more registers because the syscall abi has six and recvfrom would otherwise want seven
 

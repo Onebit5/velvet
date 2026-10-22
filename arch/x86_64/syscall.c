@@ -9,6 +9,7 @@
 #include <velvet/epoch.h>
 #include <asm/smp.h>
 #include <asm/msr.h>
+#include <asm/fpu.h>
 #include <stdbool.h>
 #include <asm/gdt.h>
 #include <velvet/input.h>
@@ -639,6 +640,14 @@ static int64_t sys_fork(struct pt_regs *regs)
     }
     t->space = space;
     t->pid = pid;
+
+    /*
+     * and the registers the frame does not hold: the fpu's as they are
+     * this moment, which is as they were at the call, since the kernel
+     * touches none of them, and the same fs base
+     */
+    fpu_save(&t->arch.fpu);
+    t->arch.u_fs_base = me->arch.u_fs_base;
     process_set_thread(pid, t->id);
 
     /*
@@ -1235,8 +1244,15 @@ static int64_t sys_execve(struct pt_regs *regs, uint64_t u_ptr,
     /*
      * the frame the exit path restores is the new program's start: its
      * entry, its stack, its arguments where _start looks for them, the
-     * flags a fresh program gets, and nothing of the old one's
+     * flags a fresh program gets, and nothing of the old one's. that
+     * goes for the fpu and the fs base as well
      */
+    struct thread *me = sched_current();
+    fpu_init_state(&me->arch.fpu);
+    fpu_restore(&me->arch.fpu);
+    me->arch.u_fs_base = 0;
+    fs_base_load(0);
+
     memset(regs, 0, sizeof *regs);
     regs->rip = e.u_entry;
     regs->rsp = e.u_stack_top;
@@ -1760,6 +1776,9 @@ static int64_t sys_recv(int handle, uint64_t buf, uint64_t len,
  * into every program to point at either. so `signal()` hands the
  * address over at install time
  */
+/* what a handler's frame holds: the registers, then the fpu's */
+#define SIGNAL_FRAME_SIZE (sizeof(struct pt_regs) + sizeof(struct fpu_state))
+
 static bool enter_handler(struct pt_regs *regs, int sig, uint64_t handler)
 {
     uint64_t tramp = process_trampoline(caller_pid());
@@ -1775,6 +1794,13 @@ static bool enter_handler(struct pt_regs *regs, int sig, uint64_t handler)
      * whatever the program was in the middle of
      */
     sp -= 128;
+
+    /*
+     * the fpu's registers go above the frame, on the boundary fxrstor
+     * wants. the handler is given a fresh set, so that what it computes
+     * cannot disturb what it interrupted, and sigreturn puts these back
+     */
+    sp -= sizeof(struct fpu_state);
     sp &= ~(uint64_t)15;
 
     /*
@@ -1786,10 +1812,14 @@ static bool enter_handler(struct pt_regs *regs, int sig, uint64_t handler)
      */
     sp -= sizeof(struct pt_regs);
     uint64_t frame = sp;
-    if (!user_range_writable(frame, sizeof(struct pt_regs))) {
+    if (!user_range_writable(frame, SIGNAL_FRAME_SIZE)) {
         return false;
     }
     memcpy((void *)frame, regs, sizeof *regs);
+
+    struct fpu_state fpu;
+    fpu_save(&fpu);
+    memcpy((void *)(frame + sizeof *regs), &fpu, sizeof fpu);
 
     /*
      * and the return address, which leaves rsp eight past a sixteen
@@ -1805,6 +1835,9 @@ static bool enter_handler(struct pt_regs *regs, int sig, uint64_t handler)
     regs->rsp = sp;
     regs->rdi = (uint64_t)sig;      /* the handler's argument */
     regs->rip = handler;            /* where `iretq` will go */
+
+    fpu_init_state(&fpu);
+    fpu_restore(&fpu);
     return true;
 }
 
@@ -1958,10 +1991,19 @@ static int64_t sys_sigreturn(uint64_t frame, struct pt_regs *regs)
 {
     struct signal_state *st = process_signal_state(caller_pid());
     if (st == NULL || regs == NULL
-     || !user_range_ok(frame, sizeof(struct pt_regs))) {
+     || !user_range_ok(frame, SIGNAL_FRAME_SIZE)) {
         return -1;
     }
     memcpy(regs, (const void *)frame, sizeof *regs);
+
+    /*
+     * the fpu's too, with the mxcsr bits the cpu lacks cleared, since
+     * fxrstor faults in ring 0 on any it is handed
+     */
+    struct fpu_state fpu;
+    memcpy(&fpu, (const void *)(frame + sizeof *regs), sizeof fpu);
+    fpu_sanitize(&fpu);
+    fpu_restore(&fpu);
 
     /*
      * the frame came out of the program's own memory, so nothing in it is
@@ -1978,6 +2020,37 @@ static int64_t sys_sigreturn(uint64_t frame, struct pt_regs *regs)
     }
     signal_handler_returned(st);
     return (int64_t)regs->rax;      /* what it was holding, not an answer */
+}
+
+/*
+ * where %fs points in ring 3, which the thread keeps and the switch
+ * loads, so no program ever runs on another's. gs is not offered: the
+ * kernel names the core with it, in both rings
+ */
+static int64_t sys_arch_prctl(uint64_t u_code, uint64_t u_addr)
+{
+    struct thread *me = sched_current();
+    if (me == NULL || me->pid == 0) {
+        return -1;
+    }
+
+    switch (u_code) {
+    case ARCH_SET_FS:
+        if (u_addr >= USER_ADDRESS_END) {
+            return -1;
+        }
+        me->arch.u_fs_base = u_addr;
+        fs_base_load(u_addr);
+        return 0;
+    case ARCH_GET_FS:
+        if (!user_range_writable(u_addr, sizeof(uint64_t))) {
+            return -1;
+        }
+        *(uint64_t *)u_addr = me->arch.u_fs_base;
+        return 0;
+    default:
+        return -1;
+    }
 }
 
 static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
@@ -2170,6 +2243,8 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
     case SYS_YIELD:
         sched_yield();
         return 0;
+    case SYS_ARCH_PRCTL:
+        return sys_arch_prctl(a0, a1);
     case SYS_SLEEP:
         sleep_ms(a0);
         /*

@@ -111,6 +111,7 @@ static struct thread *create(const char *name, void (*entry)(void *),
      * a field nobody sets below would start as that thread's
      */
     memset(t, 0, sizeof *t);
+    context_init_thread(&t->arch);
 
     /* one extra page at the bottom, which the kernel then unmap. */
     uint64_t phys = pmm_alloc_pages(THREAD_STACK_PAGES + 1);

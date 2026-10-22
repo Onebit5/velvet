@@ -324,7 +324,11 @@ out of ring 3. a call comes in by ``syscall``, an interrupt or a fault through
 the idt, onto the stack the tss's ``rsp0`` names, and each leaves the same
 frame, ``struct pt_regs``. every way back out is ``iretq`` from that frame, and
 on the way, a pending signal is delivered, from a call, an interrupt or a
-fault alike. a fault in ring 3 is the program's: it becomes its signal,
+fault alike. the x87 and sse registers and the fs base are the program's
+too, saved into the thread on every switch, copied by ``fork``, set to
+what a new program expects by ``exec``, and set aside for a signal
+handler, which starts with a fresh set. a fault in ring 3 is the
+program's: it becomes its signal,
 SIGSEGV, SIGILL, SIGFPE, SIGTRAP or SIGBUS, which a handler may catch and
 which nothing may ignore or block, and by default the program dies of it. a program gets its own address space (see
 `memory <mm.rst>`_), its own process slot, and a set of descriptors. the

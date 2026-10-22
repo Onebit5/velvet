@@ -16,13 +16,10 @@
 ; that yielded voluntarily get theirs back from irq_restore(); brand
 ; new threads sti for themselves in the bootstrap. see thread.c
 ;
-; TODO: no xmm and no x87 state is saved here either, and nothing saves
-; it on the syscall path. that is safe for exactly one reason: the kernel
-; and the userland are both built -mno-sse -mno-80387, so no compiler in
-; this build emits one. the flag is load bearing rather than an
-; optimisation. a program that reaches for xmm anyway, through inline
-; asm, shares those registers with every other thread on the core.
-; saving them is what unlocks turning sse on at all
+; the x87 and sse registers and the fs base are not saved here either.
+; they are the program's rather than the compiler's, and the kernel is
+; built never to touch them, so they are saved into the thread just
+; before this is called, by context_switch_arch in asm/context.h
 
 bits 64
 section .text

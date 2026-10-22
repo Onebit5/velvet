@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include <velvet/compiler.h>
+#include <asm/thread.h>
 
 /*
  * left undefined rather than stubbed, deliberately. these two are the
@@ -25,6 +26,18 @@ void context_enter_user(uint64_t entry, uint64_t stack_top,
 ARCH_INLINE void context_set_kernel_stack(uint64_t top)
 {
     (void)top;
+}
+
+ARCH_INLINE void context_init_thread(struct thread_arch *p_arch)
+{
+    (void)p_arch;
+}
+
+ARCH_INLINE void context_switch_arch(struct thread_arch *p_prev,
+                                     const struct thread_arch *p_next)
+{
+    (void)p_prev;
+    (void)p_next;
 }
 
 /*

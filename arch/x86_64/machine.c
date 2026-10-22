@@ -14,6 +14,7 @@
 #include <asm/smp.h>
 #include <asm/tss.h>
 #include <asm/syscall.h>
+#include <asm/fpu.h>
 #include <velvet/serial.h>
 #include <velvet/keyboard.h>
 #include <velvet/mouse.h>
@@ -148,7 +149,10 @@ void machine_bring_up_late(void)
     kprintf("  -> tss loaded, double faults land on their own stack\n");
 
     syscall_init();
-    kprintf("  -> syscall/sysret armed, ring 3 has a way in\n\n");
+    kprintf("  -> syscall armed, ring 3 has a way in\n");
+
+    fpu_init_cpu();
+    kprintf("  -> x87 and sse on, a set of registers for every thread\n\n");
 
     /*
      * before init reclaims the loader's memory, since the ramdisk was

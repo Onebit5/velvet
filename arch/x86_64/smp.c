@@ -19,6 +19,7 @@
 #include <asm/idt.h>
 #include <velvet/sched.h>
 #include <asm/syscall.h>
+#include <asm/fpu.h>
 #include <velvet/thread.h>
 
 /*
@@ -128,6 +129,7 @@ void smp_ap_entry(struct cpu *me)
      * user's stack, which is exactly as bad as it sounds
      */
     syscall_init();
+    fpu_init_cpu();
     ap_say('I');
 
     lapic_enable_here();

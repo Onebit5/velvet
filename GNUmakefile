@@ -488,7 +488,7 @@ $(T)/tty:      tests/test_tty.c      sched/spinlock.c \
 # stdout end up somewhere other than the terminal when a pipeline says
 # they should, and a stubbed pipe could only ever agree with itself
 $(T)/syscall:  tests/test_syscall.c  sched/spinlock.c \
-               fs/path.c arch/x86_64/syscall.c \
+               fs/path.c arch/x86_64/syscall.c arch/x86_64/fpu.c \
                sched/process.c sched/signal.c lib/string.c \
                lib/env.c \
                fs/vfs.c fs/proc.c \

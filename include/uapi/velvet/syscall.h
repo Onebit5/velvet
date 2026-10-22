@@ -266,7 +266,22 @@ struct user_stat {
 #define SEEK_CUR 1
 #define SEEK_END 2
 
-#define SYSCALL_COUNT 68
+/*
+ * the architecture's own settings for the caller. on x86_64 that is
+ * where %fs points, which is how a program finds its thread's data:
+ * ARCH_SET_FS sets it to addr, ARCH_GET_FS writes it into the uint64_t
+ * at addr. gs is the kernel's on this machine, so ARCH_SET_GS and
+ * ARCH_GET_GS are refused. 0, or -1 for an address that is not the
+ * program's. the number is the one x86_64 programs already use for it
+ */
+#define SYS_ARCH_PRCTL 158
+
+#define ARCH_SET_GS 0x1001
+#define ARCH_SET_FS 0x1002
+#define ARCH_GET_FS 0x1003
+#define ARCH_GET_GS 0x1004
+
+#define SYSCALL_COUNT 159
 
 #define RESIZE_WHY_MAX 128
 

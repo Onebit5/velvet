@@ -24,6 +24,9 @@
 #define MSR_GS_BASE        0xc0000101
 #define MSR_KERNEL_GS_BASE 0xc0000102
 
+/* where %fs points, which in ring 3 is the program's thread pointer */
+#define MSR_FS_BASE        0xc0000100
+
 static inline uint64_t rdmsr(uint32_t msr)
 {
     uint32_t lo, hi;

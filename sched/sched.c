@@ -248,6 +248,7 @@ static void schedule(void)
      * the lock travels with the switch
      */
     ME->handoff = prev;
+    context_switch_arch(&prev->arch, &next->arch);
     switch_context(&prev->sp, &next->sp);
 
     /* the kernel is the thread that was switched to, back after however long. */
@@ -667,6 +668,7 @@ void sched_init(void)
     boot_thread.wait_next = NULL;
     boot_thread.cpu_ticks = 0;
     boot_thread.from_heap = false;      /* it lives in .bss */
+    context_init_thread(&boot_thread.arch);
 
     boot_thread.on_cpu = 0;
 
