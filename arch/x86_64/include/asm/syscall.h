@@ -13,51 +13,26 @@
 /* the numbers, and the structs ring 3 reads, are the abi */
 #include <uapi/velvet/syscall.h>
 
-/*
- * everything ring 3 was holding when it made the call, written down by
- * the entry stub in the order it pushes them.
- *
- * this exists for fork and for nothing else. a forked child has to come
- * back from a syscall it never made, holding exactly what its parent
- * held, and the callee-saved half of that is in the cpu at the moment
- * of the call and gone a moment later, buried under some C prologue.
- *
- * the layout is the stack layout. changing either without the other is
- * a program that resumes with its registers shuffled, which is the kind
- * of bug that looks like the compiler being wrong
- */
-struct user_regs {
-    uint64_t r15, r14, r13, r12, rbx, rbp;
-    uint64_t r9, r8, r10, rdx, rsi, rdi;
-    uint64_t r11;       /* the user's rflags, courtesy of syscall */
-    uint64_t rcx;       /* the user's rip, likewise */
-    uint64_t rsp;
-};
+#include <asm/ptrace.h>
 
 /*
- * fifteen registers, fifteen pushes. this catches a field appearing or
- * going away and cannot catch a reordering, for that the only real
- * check is reading the two exit paths in
- * `objdump -d bin/velvet --disassemble=syscall_entry` and
- * `--disassemble=fork_return` and seeing the same order twice
- */
-_Static_assert(sizeof(struct user_regs) == 15 * 8,
-               "user_regs and the pushes in syscall.asm have drifted apart");
-
-/*
- * leave for ring 3 through a frame rather than through a call. rax is
- * zeroed on the way out, because the only caller is a forked child and
+ * leave for ring 3 through a frame rather than through a call. the only
+ * caller is a forked child, whose frame already holds the zero in rax
  * that is how it finds out it is the child
  */
-void fork_return(struct user_regs *frame);
+void fork_return(struct pt_regs *frame) __attribute__((noreturn));
+
+/* called by the entry stub with the frame it built, which it answers in */
+void syscall_from_user(struct pt_regs *regs);
 
 /*
- * for an interrupt about to go back to ring 3: a pending signal that
- * ends the process ends it here. a program busy in a loop makes no
- * calls for one to be delivered on the way out of, and SIGKILL has to
- * end it all the same
+ * everything that has to happen on the way back to ring 3, from a call,
+ * an interrupt or an exception alike: a pending signal is delivered,
+ * run in a handler or acted on. a program busy in a loop makes no calls
+ * to be signalled on the way out of, and SIGKILL has to reach it all the
+ * same
  */
-void syscall_end_if_fatal(void);
+void exit_to_user(struct pt_regs *regs);
 
 /* wire up STAR/LSTAR/SFMASK and turn on EFER.SCE */
 void syscall_init(void);

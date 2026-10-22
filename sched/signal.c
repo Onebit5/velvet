@@ -203,6 +203,7 @@ const char *signal_name(int sig)
     case SIGILL:  return "illegal instruction";
     case SIGTRAP: return "trap";
     case SIGABRT: return "abort";
+    case SIGBUS:  return "bus error";
     case SIGFPE:  return "arithmetic fault";
     case SIGKILL: return "killed";
     case SIGSEGV: return "bad address";

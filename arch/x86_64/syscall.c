@@ -47,6 +47,16 @@
 #define RFLAGS_DF (1ull << 10)
 #define RFLAGS_TF (1ull << 8)
 
+/*
+ * the flags a program may hand back through sigreturn: the arithmetic
+ * ones, direction, trap, resume and alignment check. iopl and the rest
+ * stay the kernel's
+ */
+#define RFLAGS_USER 0x50dd5ull
+
+/* the first address that is not ring 3's: the canonical hole's start */
+#define USER_ADDRESS_END 0x0000800000000000ull
+
 /* implemented in syscall.asm */
 extern void syscall_entry(void);
 
@@ -556,7 +566,7 @@ static int64_t sys_close(int fd)
  */
 static void fork_child_start(void *arg);
 
-static int64_t sys_fork(struct user_regs *regs)
+static int64_t sys_fork(struct pt_regs *regs)
 {
     if (regs == NULL) {
         return -1;
@@ -574,7 +584,7 @@ static int64_t sys_fork(struct user_regs *regs)
      * stack, which is where it lives right now, is not the child's
      * to stand on
      */
-    struct user_regs *frame = kmalloc(sizeof *frame);
+    struct pt_regs *frame = kmalloc(sizeof *frame);
     if (frame == NULL) {
         return -1;
     }
@@ -639,7 +649,7 @@ static int64_t sys_fork(struct user_regs *regs)
 
     /*
      * and the two answers. the parent's is the return value below; the
-     * child's is the zero fork_return writes into rax
+     * child's is the zero fork_child_start writes into its frame's rax
      */
     return pid;
 }
@@ -856,13 +866,14 @@ static int64_t sys_munmap(uint64_t addr)
  * the child's first instruction as a thread. it has never been in ring
  * 3, so there is nothing to return *from*, it leaves through a copy
  * of the frame its parent was holding, which fork_return restores whole
- * and then sysrets out of
+ * on the way out
  */
 static void fork_child_start(void *arg)
 {
-    struct user_regs *frame = arg;
-    struct user_regs local = *frame;
+    struct pt_regs *frame = arg;
+    struct pt_regs local = *frame;
     kfree(frame);
+    local.rax = 0;                  /* "you are the child" */
 
     /*
      * on this thread's own kernel stack now, which is the one stack
@@ -1163,7 +1174,7 @@ static bool copy_user_string(uint64_t u_str, char *str_out, size_t sz_size)
 /* how much of the arguments the kernel carries across, strings and all */
 #define EXEC_ARGS_MAX 2048
 
-static int64_t sys_execve(struct user_regs *regs, uint64_t u_ptr,
+static int64_t sys_execve(struct pt_regs *regs, uint64_t u_ptr,
                           uint64_t u_len, uint64_t u_argv)
 {
     char arr_path[PATH_MAX];
@@ -1227,11 +1238,13 @@ static int64_t sys_execve(struct user_regs *regs, uint64_t u_ptr,
      * flags a fresh program gets, and nothing of the old one's
      */
     memset(regs, 0, sizeof *regs);
-    regs->rcx = e.u_entry;
+    regs->rip = e.u_entry;
     regs->rsp = e.u_stack_top;
     regs->rdi = e.u_argc;
     regs->rsi = e.u_argv;
-    regs->r11 = RFLAGS_IF | 0x2;
+    regs->rflags = RFLAGS_IF | 0x2;
+    regs->cs = GDT_USER_CODE3;
+    regs->ss = GDT_USER_DATA3;
     return 0;
 }
 
@@ -1569,10 +1582,6 @@ static int64_t sys_wait(uint64_t u_pid, uint64_t u_status, uint64_t u_flags)
 }
 
 /*
- * the number is in rax, arguments in rdi rsi rdx rcx (the asm moved r10
- * there for the kernel) and r8. returns into rax
- */
-/*
  * three calls over the socket table in net/socket.c. what they do about
  * *pointers* is the same as every other call here: nothing ring 3 hands
  * over is touched until user_range_ok has said the whole span belongs to
@@ -1751,7 +1760,7 @@ static int64_t sys_recv(int handle, uint64_t buf, uint64_t len,
  * into every program to point at either. so `signal()` hands the
  * address over at install time
  */
-static bool enter_handler(struct user_regs *regs, int sig, uint64_t handler)
+static bool enter_handler(struct pt_regs *regs, int sig, uint64_t handler)
 {
     uint64_t tramp = process_trampoline(caller_pid());
     if (tramp == 0 || handler == 0) {
@@ -1778,9 +1787,9 @@ static bool enter_handler(struct user_regs *regs, int sig, uint64_t handler)
      * handler so that only ring 3 faults consult the regions, and this
      * becomes a kernel panic the first time a child is signalled.
      */
-    sp -= sizeof(struct user_regs);
+    sp -= sizeof(struct pt_regs);
     uint64_t frame = sp;
-    if (!user_range_ok(frame, sizeof(struct user_regs))) {
+    if (!user_range_ok(frame, sizeof(struct pt_regs))) {
         return false;
     }
     memcpy((void *)frame, regs, sizeof *regs);
@@ -1798,22 +1807,11 @@ static bool enter_handler(struct user_regs *regs, int sig, uint64_t handler)
 
     regs->rsp = sp;
     regs->rdi = (uint64_t)sig;      /* the handler's argument */
-    regs->rcx = handler;            /* where `sysret` will go */
+    regs->rip = handler;            /* where `iretq` will go */
     return true;
 }
 
-void syscall_end_if_fatal(void)
-{
-    int i_pid = caller_pid();
-    int i_sig = (i_pid > 0) ? process_take_fatal(i_pid) : 0;
-
-    if (i_sig != 0) {
-        process_died_by_signal(i_pid, i_sig);
-        thread_exit(128 + i_sig);       /* never returns */
-    }
-}
-
-static void deliver_signals(struct user_regs *regs)
+static void deliver_signals(struct pt_regs *regs)
 {
     int pid = caller_pid();
     if (pid <= 0) {
@@ -1959,20 +1957,34 @@ static int64_t sys_signal(uint64_t sig, uint64_t handler, uint64_t tramp)
  * which may be in the middle of a syscall that has to be retried, and
  * that is the program's problem to notice
  */
-static int64_t sys_sigreturn(uint64_t frame, struct user_regs *regs)
+static int64_t sys_sigreturn(uint64_t frame, struct pt_regs *regs)
 {
     struct signal_state *st = process_signal_state(caller_pid());
     if (st == NULL || regs == NULL
-     || !user_range_ok(frame, sizeof(struct user_regs))) {
+     || !user_range_ok(frame, sizeof(struct pt_regs))) {
         return -1;
     }
     memcpy(regs, (const void *)frame, sizeof *regs);
+
+    /*
+     * the frame came out of the program's own memory, so nothing in it is
+     * believed that decides who the program is: it goes back to ring 3
+     * with ring 3's selectors, flags a program may set and interrupts on,
+     * and an address the cpu can return to. without this a program could
+     * write cs = the kernel's into its own stack and sigreturn into ring 0
+     */
+    regs->cs = GDT_USER_CODE3;
+    regs->ss = GDT_USER_DATA3;
+    regs->rflags = (regs->rflags & RFLAGS_USER) | RFLAGS_IF | 0x2;
+    if (regs->rip >= USER_ADDRESS_END || regs->rsp >= USER_ADDRESS_END) {
+        process_force_signal(caller_pid(), SIGSEGV);
+    }
     signal_handler_returned(st);
-    return (int64_t)regs->rdi;      /* whatever rax will be overwritten by */
+    return (int64_t)regs->rax;      /* what it was holding, not an answer */
 }
 
 static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
-                          uint64_t a3, uint64_t a4, struct user_regs *regs)
+                          uint64_t a3, uint64_t a4, struct pt_regs *regs)
 {
     switch (nr) {
     case SYS_EXIT:
@@ -2242,7 +2254,7 @@ void syscall_init(void)
 }
 
 int64_t syscall_dispatch(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
-                         uint64_t a3, uint64_t a4, struct user_regs *regs)
+                         uint64_t a3, uint64_t a4, struct pt_regs *regs)
 {
     if (nr < SYSCALL_COUNT) {
     }
@@ -2255,6 +2267,15 @@ int64_t syscall_dispatch(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
     process_check_alarms(pit_uptime_ms());
 
     int64_t result = syscall_do(nr, a0, a1, a2, a3, a4, regs);
+
+    /*
+     * the answer goes into the frame before any handler is entered, so
+     * that the frame a handler saves holds it, and sigreturn gives the
+     * program the answer to the call it made rather than the question
+     */
+    if (regs != NULL) {
+        regs->rax = (uint64_t)result;
+    }
 
     /*
      * and then, on the way out, whatever has been raised since.
@@ -2274,4 +2295,15 @@ int64_t syscall_dispatch(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
         deliver_signals(regs);
     }
     return result;
+}
+
+void syscall_from_user(struct pt_regs *regs)
+{
+    (void)syscall_dispatch(regs->vector, regs->rdi, regs->rsi, regs->rdx,
+                           regs->r10, regs->r8, regs);
+}
+
+void exit_to_user(struct pt_regs *regs)
+{
+    deliver_signals(regs);
 }

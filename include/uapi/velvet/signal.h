@@ -14,6 +14,7 @@
 #define SIGILL   4
 #define SIGTRAP  5
 #define SIGABRT  6
+#define SIGBUS   7      /* an access the bus refused, misaligned */
 #define SIGFPE   8
 #define SIGKILL  9      /* cannot be caught, blocked or ignored */
 #define SIGSEGV 11

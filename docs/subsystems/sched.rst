@@ -217,13 +217,20 @@ handler waits rather than nesting, without it, ctrl+c held down is a stack
 that grows until it hits the guard page. see `sigsuspend` and the rest in
 `the system calls <../syscalls.rst>`_.
 
-signals are delivered on the way back to ring 3 from a call, where the
-kernel has the program's registers to hand for a handler. a program busy
-in a loop makes no calls, so an interrupt that is about to return to
-ring 3 also looks, for a pending signal whose action is to end the
-process, and ends it there. SIGKILL ending anything at all is the whole
-of its promise. a handler still waits for the next call: running one
-needs the frame a call leaves, and an interrupt's is shaped differently.
+signals are delivered on every way back to ring 3, from a call, an
+interrupt or a fault, since each leaves the same frame and the kernel has
+the program's registers to hand in all three. a program busy in a loop
+makes no calls, and the timer's next tick delivers to it all the same,
+handler included. SIGKILL ending anything at all is the whole of its
+promise.
+
+a fault in ring 3 is raised as a signal against the program that made
+it: SIGSEGV for memory, SIGILL for an instruction the cpu will not run,
+SIGFPE for arithmetic, SIGTRAP for a breakpoint and SIGBUS for an
+unaligned access the program asked to hear about. a handler may catch
+it, and nothing may ignore or block it: one that is goes back to its
+default first, since returning to the instruction that faulted would
+fault again forever. the log says which program, which fault and where.
 
 stopping and continuing are acted on when the signal is sent rather than
 delivered. a stopped thread never runs to come back from a call, so a
@@ -313,8 +320,13 @@ ring 3
 ------
 
 ``usermode.c`` and ``arch/x86_64/{syscall,usermode}.asm`` are the way in and
-out of ring 3. ``syscall``/``sysret`` is the fast path; the tss's ``rsp0`` is
-the stack a trap lands on. a program gets its own address space (see
+out of ring 3. a call comes in by ``syscall``, an interrupt or a fault through
+the idt, onto the stack the tss's ``rsp0`` names, and each leaves the same
+frame, ``struct pt_regs``. every way back out is ``iretq`` from that frame, and
+on the way, a pending signal is delivered, from a call, an interrupt or a
+fault alike. a fault in ring 3 is the program's: it becomes its signal,
+SIGSEGV, SIGILL, SIGFPE, SIGTRAP or SIGBUS, which a handler may catch and
+which nothing may ignore or block, and by default the program dies of it. a program gets its own address space (see
 `memory <mm.rst>`_), its own process slot, and a set of descriptors. the
 syscall interface itself is documented in `the system calls
 <../syscalls.rst>`_.

@@ -12,23 +12,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <asm/acpi.h>
+#include <asm/ptrace.h>
 
-/*
- * what isr_common in isr.asm leaves on the stack, low address first.
- * if you touch the push order over there, touch this too. the static
- * asserts in interrupts.c will yell at you if you forget
- */
-
-struct interrupt_frame {
-    uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
-    uint64_t rbp, rdi, rsi, rdx, rcx, rbx, rax;
-    uint64_t vector;
-    uint64_t error_code;
-    /* pushed by the cpu itself */
-    uint64_t rip, cs, rflags, rsp, ss;
-};
-
-void interrupt_dispatch(struct interrupt_frame *frame);
+void interrupt_dispatch(struct pt_regs *frame);
 
 /*
  * bring up the apics if the firmware describes any, and move every

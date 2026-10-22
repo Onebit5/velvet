@@ -17,8 +17,8 @@
 ; so the two words are per core, found through gs, which can be read
 ; without clobbering a single register, and that matters here more than
 ; anywhere: rax holds the call number, rcx and r11 hold the return
-; address and flags sysret needs, everything else holds arguments, and
-; there is no stack yet to save anything on.
+; address and flags, everything else holds arguments, and there is no
+; stack yet to save anything on.
 ;
 ;   gs:0   this core's kernel stack, kept current by the scheduler
 ;   gs:8   somewhere to park the user's stack for two instructions
@@ -55,147 +55,75 @@
 bits 64
 section .text
 
-extern syscall_dispatch
+extern syscall_from_user
+extern interrupt_return
+
+%define USER_CS 0x23                        ; GDT_USER_CODE3, asm/gdt.h
+%define USER_SS 0x1b                        ; GDT_USER_DATA3
 
 global syscall_entry
 
+; the frame built here is a struct pt_regs, the same one an interrupt
+; leaves, so that everything after this point, a signal, a fork, a
+; program that faults inside a call, has one layout to read and one way
+; out. what the cpu would have pushed for an interrupt from ring 3 is
+; pushed by hand: the user's stack and flags and where it was, with the
+; selectors it was running under.
+;
+; the way out is `iretq` rather than `sysret`. sysret puts rcx and r11
+; back from wherever the user's rip and flags are, so a frame a signal
+; handler or sigreturn rewrote could only ever come back with those two
+; registers wrong; iretq gives back every register the frame says. it
+; costs a few hundred cycles a call, which nothing here will notice.
 syscall_entry:
     mov [gs:8], rsp                         ; park the user stack briefly
     mov rsp, [gs:0]                         ; and stand on my own
 
-    push qword [gs:8]                       ; now it is per-thread, on my
-                                            ; own stack, and the per-core
-                                            ; word is free again
-    push rcx                                ; user rip, courtesy of syscall
-    push r11                                ; user rflags, likewise
+    push qword USER_SS                      ; ss
+    push qword [gs:8]                       ; rsp, now per-thread
+    push r11                                ; rflags, courtesy of syscall
+    push qword USER_CS                      ; cs
+    push rcx                                ; rip, likewise
+    push qword 0                            ; error code
+    push rax                                ; vector: the call's number
 
-    ; ring 3 gets every register back except rax, which carries the
-    ; result, and rcx and r11, which the syscall instruction itself
-    ; destroyed on the way in. user code is compiled against exactly
-    ; that promise, so anything else coming back changed is kernel
-    ; state leaking into a program that will happily use it as a
-    ; pointer.
-    ;
-    ; the caller-saved ones are mine to keep, because the C below may
-    ; clobber them and the shuffle certainly does. rbx, rbp and r12-r15
-    ; need no saving here: syscall_dispatch is an ordinary C function
-    ; and the abi makes preserving those its problem, not mine.
-    push rdi
-    push rsi
+    ; and then exactly what isr_common pushes, in its order. rcx and r11
+    ; hold the rip and flags syscall put there, which is what a program
+    ; finds in them after a call either way
+    push rax
+    push rbx
+    push rcx
     push rdx
-    push r10
+    push rsi
+    push rdi
+    push rbp
     push r8
     push r9
-
-    ; and now the six the abi says are somebody else's problem.
-    ;
-    ; they are pushed for exactly one caller: fork. a forked child has
-    ; to come back from a `syscall` it never made, holding everything
-    ; its parent held, and the parent's rbx, rbp and r12-r15 are in
-    ; the cpu right now and will be on some C prologue's stack a moment
-    ; from now, where nothing can reach them.
-    ;
-    ; so the whole of ring 3's state gets written down, in an order that
-    ; makes it a `struct user_regs`, and the address of it is handed to
-    ; the dispatcher. six pushes and six pops on every system call is
-    ; the price of fork existing at all, and it is a dozen cycles
-    push rbp
-    push rbx
+    push r10
+    push r11
     push r12
     push r13
     push r14
     push r15
 
-    mov r11, rsp                            ; the frame, for the 7th argument
-                                            ; (r11's own value is already
-                                            ; saved, so it is free)
-
     sti                                     ; safe now, I am on my own stack
-
-    ; two calling conventions meet here and they are NOT the same one.
-    ;
-    ;   ring 3 hands me:  nr=rax  a0=rdi a1=rsi a2=rdx a3=r10 a4=r8
-    ;   sysv C wants:     arg1=rdi arg2=rsi arg3=rdx arg4=rcx arg5=r8 arg6=r9
-    ;
-    ; and syscall_dispatch's first argument is the number, so everything
-    ; shifts one place right to make room for it. (r10 rather than rcx
-    ; on the way in because the syscall instruction ate rcx for the
-    ; return address.)
-    ;
-    ; the order below matters: each register is read before anything
-    ; overwrites it. do it the other way round and arguments quietly
-    ; become copies of each other.
-    mov r9, r8                              ; a4
-    mov r8, r10                             ; a3
-    mov rcx, rdx                            ; a2
-    mov rdx, rsi                            ; a1
-    mov rsi, rdi                            ; a0
-    mov rdi, rax                            ; and the number itself
-
-    ; the seventh argument goes on the stack, which is where sysv puts
-    ; everything past the sixth. after `call` pushes the return address
-    ; the callee finds it at [rsp+8], exactly where it looks
-    push r11
-    call syscall_dispatch                   ; returns its result in rax
-    add rsp, 8
+    cld
+    mov rdi, rsp                            ; the frame is the one argument
+    call syscall_from_user                  ; which writes the answer into it
 
     cli                                     ; nothing may interrupt the unwind
-
-    pop r15
-    pop r14
-    pop r13
-    pop r12
-    pop rbx
-    pop rbp
-
-    pop r9
-    pop r8
-    pop r10
-    pop rdx
-    pop rsi
-    pop rdi                                 ; rax is left alone: it is the result
-
-    pop r11                                 ; flags to restore
-    pop rcx                                 ; address to return to
-    pop rsp                                 ; back onto the user's stack
-
-    o64 sysret                              ; and back to ring 3
+    jmp interrupt_return
 
 ;
-; the child is a thread that has never been in ring 3. it does not
-; return through the stub above, because it never came in through it,
-; so it is handed a copy of what its parent's frame looked like, and
-; leaves by the same door with one register changed.
+; the child is a thread that has never been in ring 3, so it leaves
+; through a copy of its parent's frame, already holding the zero that
+; tells it which of the two it is.
 ;
-; that one register is rax, and it is the entire interface: the parent
-; gets the child's pid and the child gets zero, so a program can tell
-; which of the two it is by looking at what fork answered.
-;
-; fork_return(struct user_regs *frame): never returns
+; fork_return(struct pt_regs *frame): never returns
 global fork_return
 fork_return:
-    cli                                     ; sysret wants rcx and r11 intact
+    cli
     mov rsp, rdi                            ; stand on the copy
-    xor rax, rax                            ; "you are the child"
-
-    pop r15
-    pop r14
-    pop r13
-    pop r12
-    pop rbx
-    pop rbp
-
-    pop r9
-    pop r8
-    pop r10
-    pop rdx
-    pop rsi
-    pop rdi
-
-    pop r11                                 ; flags
-    pop rcx                                 ; rip
-    pop rsp                                 ; and the user stack it was on
-
-    o64 sysret
+    jmp interrupt_return
 
 section .note.GNU-stack noalloc noexec nowrite progbits

@@ -162,26 +162,30 @@ int main(void)
     }
 
     /*
-     * what an interrupt back to ring 3 may act on: a pending, unblocked
-     * signal that ends the process, and nothing that needs a handler
+     * a fault's signal cannot be refused: one the program ignored or
+     * blocked goes back to its default, so the program dies of it rather
+     * than returning to the same instruction to fault again forever
      */
     {
         int i_busy = process_create("busy", 0, 0, false, 600);
         struct signal_state *p_sig = process_signal_state(i_busy);
 
-        signal_set_handler(p_sig, SIGINT, 0x401000);
-        process_signal(i_busy, SIGINT);
-        process_signal(i_busy, SIGCHLD);
-        CHECK(process_take_fatal(i_busy) == 0
-              && (p_sig->pending & (1u << SIGINT)),
-              "a handled signal is left for delivery, an ignored one too");
-        p_sig->blocked |= 1u << SIGTERM;
-        process_signal(i_busy, SIGTERM);
-        CHECK(process_take_fatal(i_busy) == 0, "a blocked one waits");
-        p_sig->blocked = 0;
-        CHECK(process_take_fatal(i_busy) == SIGTERM
-              && !(p_sig->pending & (1u << SIGTERM)),
-              "and an unblocked SIGTERM is taken, to end it");
+        signal_set_handler(p_sig, SIGSEGV, SIG_IGNORE);
+        process_force_signal(i_busy, SIGSEGV);
+        CHECK(signal_action_for(p_sig, SIGSEGV) == SIGNAL_ACTION_TERMINATE
+              && (p_sig->pending & (1u << SIGSEGV)),
+              "an ignored SIGSEGV is raised all the same, to end it");
+        p_sig->pending = 0;
+        p_sig->blocked |= 1u << SIGILL;
+        process_force_signal(i_busy, SIGILL);
+        CHECK(!(p_sig->blocked & (1u << SIGILL))
+              && process_interrupt_pending(i_busy),
+              "a blocked SIGILL is unblocked and delivered");
+        p_sig->pending = 0;
+        signal_set_handler(p_sig, SIGFPE, 0x401000);
+        process_force_signal(i_busy, SIGFPE);
+        CHECK(signal_action_for(p_sig, SIGFPE) == SIGNAL_ACTION_HANDLER,
+              "and a handled one keeps its handler");
         process_exited(i_busy, 0, 610);
         process_collect(i_busy, NULL);
     }

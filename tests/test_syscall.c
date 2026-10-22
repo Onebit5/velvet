@@ -557,7 +557,6 @@ void user_start(int pid)
  * both defined in headers included further down, and both only ever
  * pointed at here
  */
-struct user_regs;
 struct spawn_io;
 static int forked_spaces, forked_threads, freed_spaces;
 
@@ -607,9 +606,11 @@ struct thread *thread_create_parked(const char *name, void (*entry)(void *),
     kfree(arg);
     return &child_thread;
 }
-void fork_return(struct user_regs *frame)
+struct pt_regs;
+__attribute__((noreturn)) void fork_return(struct pt_regs *frame)
 {
     (void)frame;
+    abort();
 }
 
 /* when the child was let loose. */
@@ -690,17 +691,17 @@ bool user_collect(int i_pid, int *p_code)
 #include <asm/syscall.h>
 extern int64_t syscall_dispatch(uint64_t nr, uint64_t a0, uint64_t a1,
                                 uint64_t a2, uint64_t a3, uint64_t a4,
-                                struct user_regs *regs);
+                                struct pt_regs *regs);
 
 /*
  * what ring 3 was holding, which the entry stub writes down on every
- * call so that fork has something to hand a child. nothing else reads
- * it, so one frame with recognisable values in it is plenty
+ * call. one frame with recognisable values in it is plenty
  */
-static struct user_regs caller_frame = {
+static struct pt_regs caller_frame = {
     .r15 = 15, .r14 = 14, .r13 = 13, .r12 = 12, .rbx = 3, .rbp = 5,
     .r9 = 9, .r8 = 8, .r10 = 10, .rdx = 2, .rsi = 6, .rdi = 7,
-    .r11 = 0x202, .rcx = 0x400123, .rsp = 0x6ffffffff000ull,
+    .r11 = 0x202, .rcx = 0x400123, .rip = 0x400123, .rflags = 0x202,
+    .cs = 0x23, .ss = 0x1b, .rsp = 0x6ffffffff000ull,
 };
 
 static int failures;
@@ -1610,7 +1611,7 @@ int main(void)
      * frame holding the new program's start and none of the old one
      */
     {
-        struct user_regs frame = caller_frame;
+        struct pt_regs frame = caller_frame;
         uint64_t *p_list = (uint64_t *)(page + 256);
 
         strcpy(page, "bin/two");
@@ -1628,9 +1629,11 @@ int main(void)
               && strcmp(s_arr_exec_argv[1], "-n") == 0
               && strcmp(s_arr_exec_argv[2], "3") == 0,
               "with the path resolved and every argument copied across");
-        CHECK(frame.rcx == 0x401000 && frame.rsp == 0x6fffffffef00ull
+        CHECK(frame.rip == 0x401000 && frame.rsp == 0x6fffffffef00ull
               && frame.rdi == 3 && frame.rsi == 0x6fffffffef10ull
-              && frame.r11 == 0x202 && frame.rbx == 0 && frame.r15 == 0,
+              && frame.rflags == 0x202 && frame.cs == 0x23
+              && frame.ss == 0x1b && frame.rbx == 0 && frame.r15 == 0
+              && frame.rcx == 0 && frame.rax == 0,
               "and returns into its start, holding nothing of the old one");
 
         CHECK(syscall_dispatch(SYS_EXECVE, user_page, 7, 0, 0, 0,
@@ -1646,7 +1649,7 @@ int main(void)
         p_list[MAX_ARGS + 1] = 0;
         CHECK(syscall_dispatch(SYS_EXECVE, user_page, 7, user_page + 256,
                                0, 0, &frame) == -1
-              && frame.rcx == caller_frame.rcx,
+              && frame.rip == caller_frame.rip,
               "one argument too many is refused, not cut short");
 
         p_list[0] = kernel_page;
@@ -1662,7 +1665,7 @@ int main(void)
         s_b_exec_fails = true;
         CHECK(syscall_dispatch(SYS_EXECVE, user_page, 7, user_page + 256,
                                0, 0, &frame) == -1
-              && frame.rcx == caller_frame.rcx && frame.rbx == 3,
+              && frame.rip == caller_frame.rip && frame.rbx == 3,
               "a program that will not load leaves the caller as it was");
         s_b_exec_fails = false;
         strcpy(page, "motd.txt");

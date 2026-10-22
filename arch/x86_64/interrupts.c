@@ -20,17 +20,10 @@
 #include <velvet/addrspace.h>
 #include <velvet/console.h>
 #include <velvet/sched.h>
+#include <velvet/thread.h>
+#include <velvet/process.h>
 #include <asm/syscall.h>
 #include <stddef.h>
-
-/*
- * if isr.asm and the frame struct ever drift apart, fail the build
- * instead of debugging garbage register dumps at 2am
- */
-_Static_assert(offsetof(struct interrupt_frame, vector) == 15 * 8,
-               "interrupt_frame drifted from isr.asm push order");
-_Static_assert(sizeof(struct interrupt_frame) == 22 * 8,
-               "interrupt_frame drifted from isr.asm push order");
 
 static const char *exception_names[32] = {
     "#DE divide error",
@@ -70,7 +63,7 @@ static uint64_t read_cr2(void)
     return v;
 }
 
-static void dump_frame(struct interrupt_frame *f)
+static void dump_frame(struct pt_regs *f)
 {
     kprintf("rax=%016lx rbx=%016lx rcx=%016lx\n", f->rax, f->rbx, f->rcx);
     kprintf("rdx=%016lx rsi=%016lx rdi=%016lx\n", f->rdx, f->rsi, f->rdi);
@@ -127,7 +120,7 @@ void irq_install(uint8_t line, void (*handler)(void))
     }
 }
 
-static void interrupt_handle(struct interrupt_frame *f);
+static void interrupt_handle(struct pt_regs *f);
 
 /*
  * every interrupt and exception comes through here, counted on the thread
@@ -135,7 +128,7 @@ static void interrupt_handle(struct interrupt_frame *f);
  * variable, so it is still the right thread's when the handler switched
  * to another and back before returning
  */
-void interrupt_dispatch(struct interrupt_frame *f)
+void interrupt_dispatch(struct pt_regs *f)
 {
     struct thread *p_thread = sched_current();
 
@@ -143,15 +136,35 @@ void interrupt_dispatch(struct interrupt_frame *f)
         p_thread->u_in_interrupt++;
     }
     interrupt_handle(f);
-    if ((f->cs & 3) == 3) {
-        syscall_end_if_fatal();
-    }
     if (p_thread != NULL) {
         p_thread->u_in_interrupt--;
     }
+    if (user_mode(f)) {
+        exit_to_user(f);
+    }
 }
 
-static void interrupt_handle(struct interrupt_frame *f)
+/*
+ * which signal a fault in ring 3 is, the way every unix has numbered
+ * them: memory is SIGSEGV, an instruction the cpu will not run is
+ * SIGILL, arithmetic is SIGFPE, a debug trap is SIGTRAP, and an
+ * unaligned access the program asked to be told about is SIGBUS
+ */
+static int fault_signal(uint64_t vector)
+{
+    switch (vector) {
+    case 0:  return SIGFPE;     /* #DE */
+    case 1:
+    case 3:  return SIGTRAP;    /* #DB, #BP */
+    case 6:  return SIGILL;     /* #UD */
+    case 16:
+    case 19: return SIGFPE;     /* #MF, #XM */
+    case 17: return SIGBUS;     /* #AC */
+    default: return SIGSEGV;    /* #GP, #PF, #SS, #NP, and the rest */
+    }
+}
+
+static void interrupt_handle(struct pt_regs *f)
 {
     /*
      * the apic timer arrives on a vector of its own, above the range
@@ -254,19 +267,27 @@ static void interrupt_handle(struct interrupt_frame *f)
     }
 
     /*
-     * FIXME: a fault from ring 3 ends the machine rather than the
-     * program. nothing from here on looks at f->cs, so a user process
-     * that executes an illegal opcode, divides by zero, or touches an
-     * address outside its own space falls through to the panic at the
-     * bottom and takes the kernel down with it, from one line any
-     * logged-in guest can run. SIGSEGV, SIGILL and SIGFPE already exist,
-     * and process_died_by_signal and thread_exit do the right thing for
-     * the SIGPIPE in sys_write, so the machinery is here and the fault
-     * path simply never reaches for it. when (f->cs & 3) == 3, raise the
-     * signal this vector maps to against the current process and take
-     * its default action the way deliver_signals does, and leave the
-     * panic below for the faults that are genuinely the kernel's.
+     * a fault from ring 3 is the program's, and it ends the program
+     * rather than the machine. it becomes the signal that vector has
+     * always been, raised against the process so that a handler can
+     * catch it, and the way back to ring 3 then delivers it, which by
+     * default ends the program with that signal. the line is the one
+     * every unix prints, so somebody watching the log knows what died
+     * and where. what reaches the panic below is the kernel's own fault
      */
+    if (user_mode(f) && me != NULL && me->pid != 0 && f->vector != 8
+        && f->vector != 2 && f->vector != 18) {
+        int i_sig = fault_signal(f->vector);
+        kprintf("[kernel] pid %d (%s): %s at rip %p, sp %p",
+                me->pid, me->name, exception_names[f->vector],
+                (void *)f->rip, (void *)f->rsp);
+        if (f->vector == 14) {
+            kprintf(", address %p", (void *)read_cr2());
+        }
+        kprintf("\n");
+        process_force_signal(me->pid, i_sig);
+        return;
+    }
 
     /* cpu exception. print everything the kernel knows, then panic */
     console_set_colors(0xe64553, 0x101018);

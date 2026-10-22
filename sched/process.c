@@ -128,28 +128,6 @@ int process_create(const char *name, int parent, int uid, bool announce,
     return pid;
 }
 
-int process_take_fatal(int i_pid)
-{
-    uint64_t u_flags = spin_lock_irq(&process_lock);
-    struct process *p = slot_for(i_pid);
-    int i_found = 0;
-
-    if (p != NULL) {
-        uint32_t u_ready = p->sig.pending & ~p->sig.blocked;
-        for (int i_sig = 1; i_sig < SIGNAL_MAX && i_found == 0; i_sig++) {
-            if ((u_ready & (1u << i_sig))
-                && signal_action_for(&p->sig, i_sig)
-                   == SIGNAL_ACTION_TERMINATE) {
-                p->sig.pending &= ~(1u << i_sig);
-                i_found = i_sig;
-            }
-        }
-        p->interrupted = signal_deliverable(&p->sig);
-    }
-    spin_unlock_irq(&process_lock, u_flags);
-    return i_found;
-}
-
 void process_set_thread(int pid, int thread_id)
 {
     uint64_t flags = spin_lock_irq(&process_lock);
@@ -336,6 +314,29 @@ static int settle_now(struct process *p, int i_sig)
         return -1;
     }
     return 0;
+}
+
+/*
+ * a fault's own signal, which cannot be refused: blocked or ignored, it
+ * goes back to its default first. a program that ignores SIGSEGV and
+ * then dereferences null would otherwise return to the same instruction
+ * forever, faulting each time
+ */
+void process_force_signal(int i_pid, int i_sig)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    if (p != NULL && !p->exited && i_sig > 0 && i_sig < SIGNAL_MAX) {
+        uint32_t u_bit = 1u << i_sig;
+        if (p->sig.handler[i_sig] == SIG_IGNORE
+            || (p->sig.blocked & u_bit) != 0) {
+            p->sig.handler[i_sig] = SIG_DEFAULT;
+            p->sig.blocked &= ~u_bit;
+        }
+        signal_raise(&p->sig, i_sig);
+        p->interrupted = true;
+    }
+    spin_unlock_irq(&process_lock, u_flags);
 }
 
 bool process_signal(int pid, int sig)

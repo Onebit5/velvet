@@ -3,7 +3,7 @@
 ; some exceptions push an error code on the stack and most dont, so the
 ; ones that dont get a fake 0 pushed. that way every vector lands in
 ; isr_common with the exact same frame layout and C only needs one
-; struct to describe it (struct interrupt_frame, keep in sync!)
+; struct to describe it (struct pt_regs in asm/ptrace.h, keep in sync!)
 
 bits 64
 section .text
@@ -48,6 +48,12 @@ isr_common:
     mov rdi, rsp            ; first arg = pointer to the frame I just built
     call interrupt_dispatch
 
+; the one way back out of the kernel, for interrupts, exceptions and
+; system calls alike: rsp points at a struct pt_regs, and whatever is in
+; it is what the interrupted code, or the program, gets back. a fork's
+; child and a signal handler arrive here with a frame the kernel wrote
+global interrupt_return
+interrupt_return:
     pop r15
     pop r14
     pop r13

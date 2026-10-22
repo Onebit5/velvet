@@ -61,6 +61,13 @@ void idt_init(void)
         };
     }
 
+    /*
+     * int3 is an instruction a program may execute, a debugger's
+     * breakpoint, so its gate is open to ring 3. closed, it is a #GP, and
+     * a program stopping at a breakpoint would be told SIGSEGV
+     */
+    idt[3].flags = 0xee;
+
     struct idtr idtr = {
         .limit = sizeof(idt) - 1,
         .base  = (uint64_t)idt,

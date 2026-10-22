@@ -213,6 +213,9 @@ bool env_block_set(char *block, size_t *len, size_t max, const char *name,
 void process_interrupt(int pid);
 
 bool process_signal(int pid, int sig);
+
+/* a fault's signal, which a handler may catch and nothing may refuse */
+void process_force_signal(int pid, int sig);
 bool process_signal_group(int pgid, int sig);
 
 /* stopped by `i_sig` on its way back to ring 3, rather than when sent */
@@ -242,12 +245,6 @@ void process_check_alarms(uint64_t now_ms);
 
 void process_died_by_signal(int pid, int sig);
 
-/*
- * a pending, unblocked signal whose action is to end the process, taken
- * off it: which, or 0. the others are left for delivery, since running
- * a handler needs the frame a call leaves and an interrupt does not
- */
-int process_take_fatal(int i_pid);
 int  process_killed_by(int pid);
 
 bool process_interrupt_pending(int pid);
