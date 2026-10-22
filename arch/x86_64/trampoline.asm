@@ -91,8 +91,15 @@ start:
     mov al, 'D'
     call putc
 
+    ; and the same control bits as the bootstrap processor, which are not
+    ; the ones INIT leaves. INIT sets CD and NW, so a core that keeps them
+    ; runs with its caches off, and it clears WP, so ring 0 on that core
+    ; writes straight through a read-only page: a page a forked child
+    ; shares with its parent, or the parent's own code, written for the
+    ; child by a system call and changed under the parent
     mov eax, cr0
-    or eax, (1 << 31) | 1   ; paging and protection at once
+    and eax, ~((1 << 30) | (1 << 29))       ; CD, NW: caches on
+    or eax, (1 << 31) | (1 << 16) | 1       ; paging, write protect, protection
     mov cr0, eax
 
     jmp dword 0x08:long_mode
