@@ -169,8 +169,17 @@ long_mode:
     ; and into C, which switches to the kernel's own page tables as its
     ; first act: it cannot be done here, because the moment the
     ; identity map goes the next instruction fetch would fault
+    ;
+    ; with a return address of 0 on the stack, as a call would have left
+    ; one. a C function starts with rsp 8 off a 16 byte boundary, and the
+    ; stack top is page aligned, so without it every frame on this core
+    ; sits 8 off where the compiler put it. nothing in the kernel needs
+    ; more than 8 yet, so nothing noticed; fxsave will, and faults on a
+    ; misaligned operand. the 0 is also where a call trace on this core
+    ; stops, rather than reading on past the top
     mov rdi, [ARG_CPU]
     mov rax, [ARG_ENTRY]
+    push qword 0
     jmp rax
 
 bits 16
