@@ -149,8 +149,17 @@ are legitimately empty. every not-present fault is answered out of that
 table or not at all, so a stack that wants to grow and a program
 dereferencing nonsense are told apart.
 
-- ``addrspace_reserve()`` records a range of anonymous memory without
-  mapping it. that is the whole of ``mmap``.
+- ``addrspace_reserve()`` and ``addrspace_map_anon()`` record a range of
+  anonymous memory without mapping it. that is the whole of ``mmap``.
+- ``addrspace_unmap()`` and ``addrspace_protect()`` take any range, cutting
+  a region where the range crosses its edge, so a hole in the middle of a
+  region leaves two, and ``addrspace_brk()`` grows and shrinks the heap
+  above the program's last segment. anonymous neighbours with the same
+  flags merge, so a heap grown a page at a time is still one region.
+- every segment of a program is a region, whether its pages arrive as
+  they are touched or were read in at exec, because the region is what
+  says what a page there may be. a page still shared after a fork is
+  copied to be written only when its region allows writing.
 - ``addrspace_fault()`` either makes a private copy of a
   copy-on-write page, or populates a page inside an agreed region, or
   reports that the fault was real.
@@ -225,7 +234,7 @@ on when it switches is up there. what a space has agreed to is a table of
 regions, and a fault inside one of them is a page arriving rather than a
 program going wrong.
 
-``#define VMA_MAX 16``
+``#define VMA_MAX 64``
     how many regions one space may hold. a program that wants more has to be
     told no rather than quietly given a smaller machine.
 
@@ -240,6 +249,21 @@ program going wrong.
 ``uint64_t addrspace_reserve(struct addrspace *as, uint64_t len, uint64_t flags)``
     find somewhere `len` bytes will fit and agree to it, for memory with no
     file behind it.
+
+``uint64_t addrspace_map_anon(as, hint, len, flags, fixed)``
+    the same at a hint when it is free, or at the hint and over whatever was
+    there when fixed. nothing is mapped below 64 KiB, where NULL points.
+
+``bool addrspace_unmap(struct addrspace *as, uint64_t start, uint64_t len)``
+    nothing in a range any more, whichever regions it cut through. false
+    only when a hole needs a slot there is no room for, with nothing changed
+
+``bool addrspace_protect(struct addrspace *as, uint64_t start, uint64_t len, uint64_t flags)``
+    a range allowed to be flags from now on, the pages already there with
+    it. false when part of it is in no region
+
+``uint64_t addrspace_brk(struct addrspace *as, uint64_t want, uint64_t flags)``
+    the program break moved: where it is afterwards.
 
 ``struct addrspace *addrspace_create(uint64_t kernel_pml4)``
     a new space with the kernel half already visible and nothing else.

@@ -317,6 +317,349 @@ uint64_t addrspace_reserve(struct addrspace *as, uint64_t len, uint64_t flags)
     return at;
 }
 
+/*
+ * the lowest a program may map anything. page 0 and the few after it are
+ * never anybody's, so a NULL pointer, or a small offset from one, faults
+ * rather than reading something a program put there
+ */
+#define MAP_MIN 0x10000ull
+
+/* and the most: the top of the lower half */
+#define USER_TOP 0x0000800000000000ull
+
+#define PAGE_UP(x) (((x) + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1))
+
+static struct vma *free_slot(struct addrspace *p_as)
+{
+    for (size_t sz_at = 0; sz_at < VMA_MAX; sz_at++) {
+        if (p_as->vmas[sz_at].kind == VMA_NONE) {
+            return &p_as->vmas[sz_at];
+        }
+    }
+    return NULL;
+}
+
+static size_t free_slots(const struct addrspace *p_as)
+{
+    size_t sz_count = 0;
+    for (size_t sz_at = 0; sz_at < VMA_MAX; sz_at++) {
+        sz_count += (p_as->vmas[sz_at].kind == VMA_NONE) ? 1 : 0;
+    }
+    return sz_count;
+}
+
+/* nothing at all is in [start, end) */
+static bool range_free(const struct addrspace *p_as, uint64_t u_start,
+                       uint64_t u_end)
+{
+    for (size_t sz_at = 0; sz_at < VMA_MAX; sz_at++) {
+        const struct vma *p_vma = &p_as->vmas[sz_at];
+        if (p_vma->kind != VMA_NONE && u_start < p_vma->end
+            && u_end > p_vma->start) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* every page of [start, end) is in some region */
+static bool range_covered(const struct addrspace *p_as, uint64_t u_start,
+                          uint64_t u_end)
+{
+    uint64_t u_at = u_start;
+    for (bool b_moved = true; b_moved && u_at < u_end; ) {
+        b_moved = false;
+        for (size_t sz_at = 0; sz_at < VMA_MAX; sz_at++) {
+            const struct vma *p_vma = &p_as->vmas[sz_at];
+            if (p_vma->kind != VMA_NONE && u_at >= p_vma->start
+                && u_at < p_vma->end) {
+                u_at = p_vma->end;
+                b_moved = true;
+            }
+        }
+    }
+    return u_at >= u_end;
+}
+
+/*
+ * cut p_vma in two at u_at, which is inside it: the part from u_at up
+ * becomes a region of its own in p_slot, starting that far into the image
+ */
+static void split_at(struct vma *p_vma, struct vma *p_slot, uint64_t u_at)
+{
+    *p_slot = *p_vma;
+    p_slot->start = u_at;
+    if (p_vma->kind == VMA_FILE) {
+        p_slot->image_offset += u_at - p_vma->start;
+    }
+    p_vma->end = u_at;
+}
+
+/* how many cuts at start and end would split a region in two */
+static size_t cuts_needed(const struct addrspace *p_as, uint64_t u_start,
+                          uint64_t u_end)
+{
+    size_t sz_count = 0;
+    for (size_t sz_at = 0; sz_at < VMA_MAX; sz_at++) {
+        const struct vma *p_vma = &p_as->vmas[sz_at];
+        if (p_vma->kind == VMA_NONE) {
+            continue;
+        }
+        sz_count += (p_vma->start < u_start && p_vma->end > u_start) ? 1 : 0;
+        sz_count += (p_vma->start < u_end && p_vma->end > u_end) ? 1 : 0;
+    }
+    return sz_count;
+}
+
+/*
+ * cut every region crossing start or end there, so that afterwards each
+ * region is either wholly inside [start, end) or wholly out of it. the
+ * caller has made sure of the slots
+ */
+static void cut_at_edges(struct addrspace *p_as, uint64_t u_start,
+                         uint64_t u_end)
+{
+    for (size_t sz_at = 0; sz_at < VMA_MAX; sz_at++) {
+        struct vma *p_vma = &p_as->vmas[sz_at];
+        if (p_vma->kind == VMA_NONE) {
+            continue;
+        }
+        if (p_vma->start < u_start && p_vma->end > u_start) {
+            split_at(p_vma, free_slot(p_as), u_start);
+        }
+        if (p_vma->start < u_end && p_vma->end > u_end) {
+            split_at(p_vma, free_slot(p_as), u_end);
+        }
+    }
+}
+
+/* every page made in [start, end) given back */
+static void drop_pages(struct addrspace *p_as, uint64_t u_start,
+                       uint64_t u_end)
+{
+    for (uint64_t u_addr = u_start; u_addr < u_end; u_addr += PAGE_SIZE) {
+        uint64_t *p_pte = leaf_for(p_as->pml4, u_addr);
+        if (p_pte == NULL || !(*p_pte & PTE_PRESENT)) {
+            continue;
+        }
+        uint64_t u_phys = *p_pte & PTE_ADDR_MASK;
+        *p_pte = 0;
+        pmm_unref(u_phys);
+        vmm_flush_page(u_addr);
+        if (p_as->pages_in_use > 0) {
+            p_as->pages_in_use--;
+        }
+    }
+}
+
+bool addrspace_unmap(struct addrspace *p_as, uint64_t u_start, uint64_t u_len)
+{
+    if (p_as == NULL || u_len == 0 || (u_start & (PAGE_SIZE - 1)) != 0
+        || u_start + PAGE_UP(u_len) < u_start) {
+        return false;
+    }
+    uint64_t u_end = u_start + PAGE_UP(u_len);
+
+    /*
+     * trimming either end of a region keeps it one region. only a hole
+     * strictly inside one makes two, and the second needs a slot
+     */
+    for (size_t sz_at = 0; sz_at < VMA_MAX; sz_at++) {
+        const struct vma *p_vma = &p_as->vmas[sz_at];
+        if (p_vma->kind != VMA_NONE && p_vma->start < u_start
+            && p_vma->end > u_end && free_slots(p_as) == 0) {
+            return false;
+        }
+    }
+    for (size_t sz_at = 0; sz_at < VMA_MAX; sz_at++) {
+        struct vma *p_vma = &p_as->vmas[sz_at];
+        if (p_vma->kind == VMA_NONE || p_vma->end <= u_start
+            || p_vma->start >= u_end) {
+            continue;
+        }
+        if (p_vma->start < u_start && p_vma->end > u_end) {
+            split_at(p_vma, free_slot(p_as), u_end);
+            p_vma->end = u_start;
+        } else if (p_vma->start < u_start) {
+            p_vma->end = u_start;
+        } else if (p_vma->end > u_end) {
+            if (p_vma->kind == VMA_FILE) {
+                p_vma->image_offset += u_end - p_vma->start;
+            }
+            p_vma->start = u_end;
+        } else {
+            p_vma->kind = VMA_NONE;
+        }
+    }
+    drop_pages(p_as, u_start, u_end);
+    smp_tlb_shootdown();
+    return true;
+}
+
+/*
+ * what a page already there becomes under new flags. a page still shared
+ * after a fork stays read-only and marked, whatever the region allows:
+ * the first write makes the copy, and writing through to the other
+ * space's page would be the bug
+ */
+static uint64_t reprotect(uint64_t u_pte, uint64_t u_flags)
+{
+    uint64_t u_kept = u_pte & (PTE_ADDR_MASK | PTE_COW);
+    uint64_t u_want = u_flags & ~(uint64_t)PTE_ADDR_MASK;
+    if (u_pte & PTE_COW) {
+        u_want &= ~(uint64_t)PTE_WRITE;
+    }
+    return u_kept | u_want | PTE_PRESENT;
+}
+
+bool addrspace_protect(struct addrspace *p_as, uint64_t u_start,
+                       uint64_t u_len, uint64_t u_flags)
+{
+    if (p_as == NULL || u_len == 0 || (u_start & (PAGE_SIZE - 1)) != 0
+        || u_start + PAGE_UP(u_len) < u_start) {
+        return false;
+    }
+    uint64_t u_end = u_start + PAGE_UP(u_len);
+    if (!range_covered(p_as, u_start, u_end)
+        || cuts_needed(p_as, u_start, u_end) > free_slots(p_as)) {
+        return false;
+    }
+    cut_at_edges(p_as, u_start, u_end);
+    for (size_t sz_at = 0; sz_at < VMA_MAX; sz_at++) {
+        struct vma *p_vma = &p_as->vmas[sz_at];
+        if (p_vma->kind == VMA_NONE || p_vma->start < u_start
+            || p_vma->end > u_end) {
+            continue;
+        }
+        p_vma->flags = u_flags;
+        for (uint64_t u_addr = p_vma->start; u_addr < p_vma->end;
+             u_addr += PAGE_SIZE) {
+            uint64_t *p_pte = leaf_for(p_as->pml4, u_addr);
+            if (p_pte != NULL && (*p_pte & PTE_PRESENT)) {
+                *p_pte = reprotect(*p_pte, u_flags);
+                vmm_flush_page(u_addr);
+            }
+        }
+    }
+    smp_tlb_shootdown();
+    return true;
+}
+
+/*
+ * an anonymous region at [start, end), merged with an anonymous
+ * neighbour of the same flags on either side rather than taking a slot
+ * of its own. the caller has checked the range is free
+ */
+static bool add_anon(struct addrspace *p_as, uint64_t u_start,
+                     uint64_t u_end, uint64_t u_flags)
+{
+    struct vma *p_below = NULL;
+    struct vma *p_above = NULL;
+    for (size_t sz_at = 0; sz_at < VMA_MAX; sz_at++) {
+        struct vma *p_vma = &p_as->vmas[sz_at];
+        if (p_vma->kind != VMA_ANON || p_vma->flags != u_flags) {
+            continue;
+        }
+        if (p_vma->end == u_start) {
+            p_below = p_vma;
+        }
+        if (p_vma->start == u_end) {
+            p_above = p_vma;
+        }
+    }
+    if (p_below != NULL && p_above != NULL) {
+        p_below->end = p_above->end;
+        p_above->kind = VMA_NONE;
+        return true;
+    }
+    if (p_below != NULL) {
+        p_below->end = u_end;
+        return true;
+    }
+    if (p_above != NULL) {
+        p_above->start = u_start;
+        return true;
+    }
+    return addrspace_add_region(p_as, u_start, u_end, u_flags, VMA_ANON,
+                                NULL, 0, 0);
+}
+
+/* the lowest free stretch of u_len in the mmap area, or 0 */
+static uint64_t find_room(const struct addrspace *p_as, uint64_t u_len)
+{
+    uint64_t u_at = MMAP_BASE;
+    for (bool b_moved = true; b_moved; ) {
+        b_moved = false;
+        for (size_t sz_at = 0; sz_at < VMA_MAX; sz_at++) {
+            const struct vma *p_vma = &p_as->vmas[sz_at];
+            if (p_vma->kind != VMA_NONE && u_at < p_vma->end
+                && u_at + u_len > p_vma->start) {
+                u_at = p_vma->end;
+                b_moved = true;
+            }
+        }
+        if (u_at + u_len > MMAP_LIMIT) {
+            return 0;
+        }
+    }
+    return u_at;
+}
+
+uint64_t addrspace_map_anon(struct addrspace *p_as, uint64_t u_hint,
+                            uint64_t u_len, uint64_t u_flags, bool b_fixed)
+{
+    if (p_as == NULL || u_len == 0 || PAGE_UP(u_len) < u_len) {
+        return 0;
+    }
+    u_len = PAGE_UP(u_len);
+
+    if (b_fixed) {
+        if ((u_hint & (PAGE_SIZE - 1)) != 0 || u_hint < MAP_MIN
+            || u_hint + u_len < u_hint || u_hint + u_len > USER_TOP
+            || !addrspace_unmap(p_as, u_hint, u_len)) {
+            return 0;
+        }
+        return add_anon(p_as, u_hint, u_hint + u_len, u_flags) ? u_hint : 0;
+    }
+
+    /* a hint is taken when it is free, and is only a hint when it is not */
+    u_hint = PAGE_UP(u_hint);
+    bool b_hint = u_hint >= MAP_MIN && u_hint + u_len > u_hint
+                  && u_hint + u_len <= USER_TOP
+                  && range_free(p_as, u_hint, u_hint + u_len);
+    uint64_t u_at = b_hint ? u_hint : find_room(p_as, u_len);
+    if (u_at == 0) {
+        return 0;
+    }
+    return add_anon(p_as, u_at, u_at + u_len, u_flags) ? u_at : 0;
+}
+
+uint64_t addrspace_brk(struct addrspace *p_as, uint64_t u_want,
+                       uint64_t u_flags)
+{
+    if (p_as == NULL) {
+        return 0;
+    }
+    if (u_want < p_as->u_brk_start) {
+        return p_as->u_brk;
+    }
+    uint64_t u_old_top = PAGE_UP(p_as->u_brk);
+    uint64_t u_new_top = PAGE_UP(u_want);
+
+    if (u_new_top > u_old_top) {
+        if (u_new_top > MMAP_BASE || !range_free(p_as, u_old_top, u_new_top)
+            || !add_anon(p_as, u_old_top, u_new_top, u_flags)) {
+            return p_as->u_brk;
+        }
+    } else if (u_new_top < u_old_top) {
+        if (!addrspace_unmap(p_as, u_new_top, u_old_top - u_new_top)) {
+            return p_as->u_brk;
+        }
+    }
+    p_as->u_brk = u_want;
+    return u_want;
+}
+
 /* give a not-present address the page it was always going to have */
 static bool populate(struct addrspace *as, struct vma *v, uint64_t virt)
 {
@@ -376,6 +719,13 @@ bool addrspace_fault(struct addrspace *as, uint64_t virt, bool write,
         if (v == NULL) {
             return false;
         }
+        /*
+         * a region that allows nothing is there to be in the way, and a
+         * page made for it would only fault again
+         */
+        if (!(v->flags & PTE_USER)) {
+            return false;
+        }
         if (write && !(v->flags & PTE_WRITE)) {
             return false;   /* a write to a region that was never writable */
         }
@@ -389,6 +739,15 @@ bool addrspace_fault(struct addrspace *as, uint64_t virt, bool write,
     uint64_t *pte = leaf_for(as->pml4, virt);
     if (pte == NULL || !(*pte & PTE_PRESENT) || !(*pte & PTE_COW)) {
         return false;       /* not the kernel's. a real fault */
+    }
+
+    /*
+     * shared after a fork, and its region since made read-only: the copy
+     * would hand the program a writable page it was told it may not have
+     */
+    const struct vma *p_region = region_for(as, virt);
+    if (p_region == NULL || !(p_region->flags & PTE_WRITE)) {
+        return false;
     }
 
     uint64_t old = *pte & PTE_ADDR_MASK;

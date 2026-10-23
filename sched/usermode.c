@@ -212,25 +212,39 @@ static bool image_build(const char *str_path, int i_argc,
     struct elf_segment segs[ELF_SEGMENTS_MAX];
     size_t seg_count = 0;
     const char *why = NULL;
-    bool lazy = false;
+    bool lazy = !owned;
 
-    if (!owned && elf_describe(image, image_size, segs, ELF_SEGMENTS_MAX,
-                               &seg_count, &loaded.entry, &loaded.brk,
-                               &why)) {
-        lazy = true;
-        for (size_t i = 0; i < seg_count; i++) {
-            if (!addrspace_add_region(space, segs[i].vaddr, segs[i].end,
-                                      segs[i].flags, VMA_FILE,
-                                      (const uint8_t *)image,
-                                      segs[i].offset, segs[i].file_end)) {
-                lazy = false;   /* no room to describe it. copy it in */
-                break;
-            }
-        }
-        loaded.ok = lazy;
+    if (!elf_describe(image, image_size, segs, ELF_SEGMENTS_MAX, &seg_count,
+                      &loaded.entry, &loaded.brk, &why)) {
+        vfs_release(image, owned);
+        addrspace_destroy(space);
+        *pp_error = why;
+        return false;
     }
 
-    if (!lazy) {
+    /*
+     * every segment is a region either way, since a region is what says
+     * what a page there may be: what a fault makes, and whether a page
+     * shared after a fork may be copied to be written. one read in now
+     * has its pages made already, and its regions are only that
+     */
+    for (size_t sz_at = 0; sz_at < seg_count; sz_at++) {
+        if (!addrspace_add_region(space, segs[sz_at].vaddr, segs[sz_at].end,
+                                  segs[sz_at].flags,
+                                  lazy ? VMA_FILE : VMA_ANON,
+                                  lazy ? (const uint8_t *)image : NULL,
+                                  lazy ? segs[sz_at].offset : 0,
+                                  lazy ? segs[sz_at].file_end : 0)) {
+            vfs_release(image, owned);
+            addrspace_destroy(space);
+            *pp_error = "no room to describe the program";
+            return false;
+        }
+    }
+
+    if (lazy) {
+        loaded.ok = true;
+    } else {
         loaded = elf_load(image, image_size, space->pml4);
     }
 
@@ -248,6 +262,11 @@ static bool image_build(const char *str_path, int i_argc,
         *pp_error = (loaded.error != NULL) ? loaded.error : why;
         return false;
     }
+
+    /* the break starts on the page after the last segment, and grows up */
+    space->u_brk_start = (loaded.brk + PAGE_SIZE - 1)
+                         & ~(uint64_t)(PAGE_SIZE - 1);
+    space->u_brk = space->u_brk_start;
 
     /* a stack for ring 3: writable, never executable, mapped user. */
     uint64_t stack_flags = PTE_USER | PTE_WRITE | vmm_nx();

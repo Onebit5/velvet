@@ -169,6 +169,16 @@ uint64_t pmm_free_bytes(void)
     return 1024ull * 1024 * 1024;
 }
 
+/* how many regions a space holds */
+static int regions(const struct addrspace *p_sp)
+{
+    int i_count = 0;
+    for (size_t sz_at = 0; sz_at < VMA_MAX; sz_at++) {
+        i_count += (p_sp->vmas[sz_at].kind != VMA_NONE) ? 1 : 0;
+    }
+    return i_count;
+}
+
 int main(void)
 {
     arena = aligned_alloc(4096, (size_t)ARENA_PAGES * 4096);
@@ -268,6 +278,10 @@ int main(void)
         uint64_t data = pmm_alloc_pages(1);
         vmm_map_range(p->pml4, 0x400000, code, 4096, PTE_USER);
         vmm_map_range(p->pml4, 0x401000, data, 4096, PTE_USER | PTE_WRITE);
+        addrspace_add_region(p, 0x400000, 0x401000, PTE_USER, VMA_ANON,
+                             NULL, 0, 0);
+        addrspace_add_region(p, 0x401000, 0x402000, PTE_USER | PTE_WRITE,
+                             VMA_ANON, NULL, 0, 0);
 
         uint8_t *code_bytes = pmm_phys_to_virt(code);
         uint8_t *data_bytes = pmm_phys_to_virt(data);
@@ -279,7 +293,11 @@ int main(void)
         CHECK(c != NULL, "a space can be forked");
 
         /* the tables are copied and the pages are not. */
-        CHECK(outstanding == before_fork + 4,
+        /*
+         * four tables, and the page the space's own record takes: with
+         * room for 64 regions, one record fills a page of the slab
+         */
+        CHECK(outstanding == before_fork + 5,
               "forking costs the page tables and not one page of memory");
 
         CHECK(vmm_translate(c->pml4, 0x401000) == data,
@@ -359,6 +377,8 @@ int main(void)
         struct addrspace *p = addrspace_create(kernel_space);
         uint64_t page = pmm_alloc_pages(1);
         vmm_map_range(p->pml4, 0x400000, page, 4096, PTE_USER | PTE_WRITE);
+        addrspace_add_region(p, 0x400000, 0x401000, PTE_USER | PTE_WRITE,
+                             VMA_ANON, NULL, 0, 0);
 
         struct addrspace *c = addrspace_fork(p, kernel_space);
         addrspace_destroy(c);
@@ -592,6 +612,139 @@ int main(void)
         CHECK(outstanding == level, "and nothing leaked");
     }
 
+
+    /*
+     * ranges: mapped, unmapped and protected wherever they fall, which
+     * cuts regions where they cross an edge and merges neighbours that
+     * are alike
+     */
+    {
+        uint64_t u_level = outstanding;
+        uint64_t u_rw = PTE_USER | PTE_WRITE;
+        struct addrspace *p_sp = addrspace_create(kernel_space);
+
+        uint64_t u_a = addrspace_map_anon(p_sp, 0, 4 * 4096, u_rw, false);
+        uint64_t u_b = addrspace_map_anon(p_sp, 0, 4 * 4096, u_rw, false);
+        CHECK(u_a != 0 && u_b == u_a + 4 * 4096 && regions(p_sp) == 1,
+              "two mappings side by side with the same flags are one region");
+
+        for (uint64_t u_at = u_a; u_at < u_a + 8 * 4096; u_at += 4096) {
+            addrspace_fault(p_sp, u_at, true, false);
+        }
+        uint64_t u_made = outstanding;
+        CHECK(addrspace_unmap(p_sp, u_a + 2 * 4096, 3 * 4096)
+              && regions(p_sp) == 2,
+              "a hole in the middle cuts the region in two");
+        CHECK(outstanding == u_made - 3, "and gives back the pages in it");
+        CHECK(!addrspace_fault(p_sp, u_a + 3 * 4096, false, false)
+              && vmm_translate(p_sp->pml4, u_a + 1 * 4096) != VMM_NO_MAPPING
+              && vmm_translate(p_sp->pml4, u_a + 5 * 4096) != VMM_NO_MAPPING,
+              "nothing is there any more, and either side is untouched");
+
+        CHECK(addrspace_protect(p_sp, u_a, 2 * 4096, PTE_USER)
+              && !(vmm_flags(p_sp->pml4, u_a) & PTE_WRITE)
+              && !addrspace_fault(p_sp, u_a, true, true),
+              "a range made read-only takes the pages already there with it");
+        CHECK(addrspace_protect(p_sp, u_a, 2 * 4096, u_rw)
+              && (vmm_flags(p_sp->pml4, u_a) & PTE_WRITE),
+              "and gives them back when it is made writable again");
+        CHECK(!addrspace_protect(p_sp, u_a, 6 * 4096, PTE_USER)
+              && (vmm_flags(p_sp->pml4, u_a) & PTE_WRITE),
+              "a range with a hole in it is refused, with nothing changed");
+
+        CHECK(addrspace_protect(p_sp, u_a + 6 * 4096, 4096, 0)
+              && !(vmm_flags(p_sp->pml4, u_a + 6 * 4096) & PTE_USER)
+              && !addrspace_fault(p_sp, u_a + 6 * 4096, false, true),
+              "a range that allows nothing keeps ring 3 out of its pages");
+        addrspace_unmap(p_sp, u_a + 6 * 4096, 4096);
+        CHECK(addrspace_protect(p_sp, u_a + 7 * 4096, 4096, 0)
+              && addrspace_map_anon(p_sp, u_a + 6 * 4096, 4096, 0, true) != 0
+              && !addrspace_fault(p_sp, u_a + 6 * 4096, false, false),
+              "and one never touched is never made");
+
+        /* fixed: there and nowhere else, over whatever was there */
+        u_made = outstanding;
+        CHECK(addrspace_map_anon(p_sp, u_a + 4096, 2 * 4096, u_rw, true)
+                 == u_a + 4096
+              && outstanding == u_made - 1
+              && vmm_translate(p_sp->pml4, u_a + 4096) == VMM_NO_MAPPING,
+              "a fixed mapping replaces what it lands on");
+        CHECK(addrspace_map_anon(p_sp, 0, 4096, u_rw, true) == 0
+              && addrspace_map_anon(p_sp, 0x1000, 4096, u_rw, true) == 0,
+              "but not at the bottom, where NULL points");
+        CHECK(addrspace_map_anon(p_sp, u_a + 4096 * 7, 4096, u_rw,
+                                 false) != u_a + 4096 * 7,
+              "and a hint over something already there is only a hint");
+
+        /* the break */
+        p_sp->u_brk_start = p_sp->u_brk = 0x500000;
+        CHECK(addrspace_brk(p_sp, 0, u_rw) == 0x500000
+              && addrspace_brk(p_sp, 0x4ff000, u_rw) == 0x500000,
+              "asking below where the break began says where it is");
+        CHECK(addrspace_brk(p_sp, 0x503010, u_rw) == 0x503010
+              && addrspace_brk(p_sp, 0x505000, u_rw) == 0x505000,
+              "it grows");
+        int i_heap = regions(p_sp);
+        CHECK(addrspace_fault(p_sp, 0x504fff, true, false)
+              && addrspace_fault(p_sp, 0x500000, true, false),
+              "into memory the program may use");
+        u_made = outstanding;
+        CHECK(addrspace_brk(p_sp, 0x501000, u_rw) == 0x501000
+              && outstanding == u_made - 1 && regions(p_sp) == i_heap
+              && !addrspace_fault(p_sp, 0x502000, true, false),
+              "and shrinks, giving back what it leaves");
+        addrspace_add_region(p_sp, 0x510000, 0x520000, u_rw, VMA_ANON,
+                             NULL, 0, 0);
+        CHECK(addrspace_brk(p_sp, 0x518000, u_rw) == 0x501000,
+              "and does not grow over something else");
+
+        addrspace_destroy(p_sp);
+        CHECK(outstanding == u_level, "with nothing leaked");
+    }
+
+    /* a page still shared after a fork, in a range made read-only */
+    {
+        uint64_t u_level = outstanding;
+        uint64_t u_rw = PTE_USER | PTE_WRITE;
+        struct addrspace *p_parent = addrspace_create(kernel_space);
+        uint64_t u_at = addrspace_map_anon(p_parent, 0, 4096, u_rw, false);
+        addrspace_fault(p_parent, u_at, true, false);
+        struct addrspace *p_child = addrspace_fork(p_parent, kernel_space);
+
+        CHECK(addrspace_protect(p_child, u_at, 4096, PTE_USER)
+              && !addrspace_fault(p_child, u_at, true, true),
+              "is not copied to be written: it may not be written");
+        CHECK(addrspace_protect(p_child, u_at, 4096, u_rw)
+              && !(vmm_flags(p_child->pml4, u_at) & PTE_WRITE)
+              && addrspace_fault(p_child, u_at, true, true)
+              && vmm_translate(p_child->pml4, u_at)
+                 != vmm_translate(p_parent->pml4, u_at),
+              "and made writable again, it is still shared until a write "
+              "makes the copy");
+
+        addrspace_destroy(p_child);
+        addrspace_destroy(p_parent);
+        CHECK(outstanding == u_level, "and nothing leaked");
+    }
+
+    /* one region becoming two needs somewhere to put the second */
+    {
+        uint64_t u_rw = PTE_USER | PTE_WRITE;
+        struct addrspace *p_sp = addrspace_create(kernel_space);
+        uint64_t u_big = addrspace_map_anon(p_sp, 0, 16 * 4096, u_rw, false);
+        for (size_t sz_at = 1; sz_at < VMA_MAX; sz_at++) {
+            addrspace_add_region(p_sp, 0x10000000 + sz_at * 0x10000,
+                                 0x10000000 + sz_at * 0x10000 + 4096, u_rw,
+                                 VMA_FILE, NULL, 0, 0);
+        }
+        CHECK(regions(p_sp) == VMA_MAX
+              && !addrspace_unmap(p_sp, u_big + 4096, 4096)
+              && regions(p_sp) == VMA_MAX,
+              "so with no room, a hole is refused and nothing changes");
+        CHECK(addrspace_unmap(p_sp, u_big, 4096),
+              "while trimming an end needs no room at all");
+        addrspace_destroy(p_sp);
+    }
 
     before = outstanding;
     struct addrspace *empty = addrspace_create(kernel_space);
