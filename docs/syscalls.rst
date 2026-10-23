@@ -94,6 +94,16 @@ that directory is the part of the kernel a program compiles against, and
 it includes nothing else of the kernel's. the entry stub, the saved frame
 and the rest of what follows are x86's, in ``<asm/syscall.h>``.
 
+a pointer a program hands over is never read or written where it lies.
+it goes through ``copy_from_user``, ``copy_to_user`` or
+``strncpy_from_user`` in ``<asm/uaccess.h>``, which check that the range is
+below the end of ring 3 and copy. a page not touched yet, or one a forked
+child still shares, is made or copied by the fault the copy takes, the way
+a store from the program would. one that is not the program's at all, or
+not its to write, is a fault in an instruction listed in ``__ex_table``,
+and the fault handler sends it to its fixup: the call fails, and the
+machine carries on.
+
 the door between ring 3 and here. numbers are the kernel's, deliberately small in number, there is no libc out there to satisfy, only the handful of things a program in this kernel could want
 
 wait(pid, &status, flags). pid is a child, or -1 for any. the status is what the child passed to exit, 128 plus the signal that ended it, or with WUNTRACED, WAIT_STOPPED plus the signal that stopped it, told once per stop. WNOHANG returns 0 rather than waiting when no child has anything to tell yet. -1 for no such child, or an interrupted wait

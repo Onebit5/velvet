@@ -40,6 +40,16 @@ SECTIONS
     } :rodata
 
     /*
+     * the instructions allowed to fault on a program's memory, each with
+     * where to carry on when one does. see uaccess.asm
+     */
+    .ex_table : ALIGN(8) {
+        __ex_table_start = .;
+        KEEP(*(__ex_table))
+        __ex_table_end = .;
+    } :rodata
+
+    /*
      * the symbol table, generated from a first link pass and folded in
      * by a second. it sits after .text deliberately: growing it shifts
      * .data around but can never move a function, which is the whole

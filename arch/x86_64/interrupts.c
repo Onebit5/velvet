@@ -23,6 +23,7 @@
 #include <velvet/thread.h>
 #include <velvet/process.h>
 #include <asm/syscall.h>
+#include <asm/uaccess.h>
 #include <stddef.h>
 
 static const char *exception_names[32] = {
@@ -262,6 +263,19 @@ static void interrupt_handle(struct pt_regs *f)
         bool present = (f->error_code & 1) != 0;
         bool write = (f->error_code & 2) != 0;
         if (addrspace_fault(me->space, cr2, write, present)) {
+            return;
+        }
+    }
+
+    /*
+     * one of the few instructions allowed to fault on a program's memory,
+     * on an address that was not the program's after all. the copy it
+     * was part of answers -EFAULT, and nothing ends
+     */
+    if (f->vector == 14 && !user_mode(f)) {
+        uint64_t u_fixup = uaccess_fixup(f->rip);
+        if (u_fixup != 0) {
+            f->rip = u_fixup;
             return;
         }
     }

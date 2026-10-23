@@ -10,6 +10,8 @@
 #include <asm/smp.h>
 #include <asm/msr.h>
 #include <asm/fpu.h>
+#include <asm/uaccess.h>
+#include <uapi/velvet/errno.h>
 #include <stdbool.h>
 #include <asm/gdt.h>
 #include <velvet/input.h>
@@ -55,164 +57,36 @@
  */
 #define RFLAGS_USER 0x50dd5ull
 
-/* the first address that is not ring 3's: the canonical hole's start */
-#define USER_ADDRESS_END 0x0000800000000000ull
-
 /* implemented in syscall.asm */
 extern void syscall_entry(void);
 
 static int caller_pid(void);
 
 /*
- * whose page tables decide whether a user pointer is real.
- *
- * it must be the *caller's*, not the kernel's. every program has had an
- * address space of its own, and the kernel's tables have no
- * mapping for a program's memory at all, so checking there says no to
- * every pointer that was ever going to be valid, and a program prints
- * nothing for no visible reason. the kernel is running on the caller's cr3 at
- * this moment, so this is also what the cpu would use if the kernel simply
- * dereferenced the thing
+ * a string the kernel holds, handed to a program's buffer of u_size,
+ * cut short to fit with its NUL kept: its length as handed over, or -1
  */
-static uint64_t caller_pml4(void)
+static int64_t copy_string_out(uint64_t u_out, uint64_t u_size,
+                               const char *str_from)
 {
-    struct thread *me = sched_current();
-    if (me != NULL && me->space != NULL) {
-        return me->space->pml4;
+    if (u_size == 0) {
+        return -1;
     }
-    return vmm_kernel_pml4();
-}
-
-/*
- * a pointer handed to the kernel by ring 3 is a claim, not a fact. check the
- * whole span really is mapped before touching a byte of it, a user
- * program should not be able to make the kernel fault by lying.
- *
- * `for_write` is which way the bytes are about to move, and it matters
- * twice over.
- *
- * it decides what kind of fault to ask for when the page is not there
- * yet, and asking for the wrong one refuses a page the program is
- * perfectly entitled to. this asked for a *write* on every pointer,
- * which meant any read-only region the program had not touched itself
- * was refused, and a program's `.rodata` is exactly that. every
- * string constant `uptime` prints goes straight from .rodata into
- * `write` without the program ever reading it, so the first access is
- * this check, and the check asked to write to it. the program printed
- * its numbers and none of its words.
- *
- * and it decides whether the page has to be *writable* at all. that
- * was not checked before, which let a program hand `read` a pointer
- * into its own .text and have the kernel fill it in, ring 3 editing
- * itself through a syscall, past a mapping that says read-only
- */
-static bool user_range_ok_dir(uint64_t addr, uint64_t len, bool for_write)
-{
-    if (len == 0) {
-        return true;
+    uint64_t u_len = strlen(str_from);
+    if (u_len >= u_size) {
+        u_len = u_size - 1;
     }
-    if (addr + len < addr) {
-        return false;           /* wrapped, so it is a lie by construction */
+    if (copy_to_user(u_out, str_from, u_len) != 0
+        || clear_user(u_out + u_len, 1) != 0) {
+        return -1;
     }
-    /*
-     * nothing in userspace lives in the higher half, and letting a
-     * pointer up there through would hand ring 3 the kernel
-     */
-    if (addr >= 0xffff800000000000ull || (addr + len) > 0xffff800000000000ull) {
-        return false;
-    }
-
-    /*
-     * TODO: this walks, and can fault, every page of the range, so a
-     * megabyte long read is 256 page table walks and up to 256 faults before
-     * the copy starts. a walk that returns the longest run sharing the same
-     * flags would let the loop skip the rest of a mapping, which is most of
-     * the pages in it.
-     */
-    uint64_t pml4 = caller_pml4();
-    struct thread *me = sched_current();
-
-    for (uint64_t p = addr & ~0xfffull; p < addr + len; p += PAGE_SIZE) {
-        uint64_t flags = vmm_flags(pml4, p);
-
-        /*
-         * not present is not the same as not allowed.
-         *
-         * memory from `mmap` is *reserved* rather than mapped: the page
-         * arrives when the program first touches it, which is how a
-         * program can ask for a megabyte and pay for the page it uses.
-         * so a page the program has agreed to and not yet written has
-         * no entry at all, and this check refused it.
-         *
-         * that had never shown up because no program had passed
-         * malloc'd memory to a syscall: `wordcount` reads a byte at a
-         * time into a stack variable and copies it in. `diff` reads a
-         * whole file into the heap, which is the first time a reserved
-         * page reached here, and every read was refused.
-         *
-         * so the page is faulted in the same way touching it would,
-         * and if the address is in no region at all, that fails and the
-         * refusal below stands
-         */
-        if (!(flags & PTE_PRESENT) && me != NULL && me->space != NULL) {
-            if (addrspace_fault(me->space, p, for_write, false)) {
-                flags = vmm_flags(pml4, p);
-            }
-        }
-
-        /*
-         * present, not writable, and about to be written to. that is
-         * either a page shared with somebody after a fork, which
-         * faulting resolves by making the copy, exactly as a store from
-         * ring 3 would, or a region that was never the program's to
-         * change, which the refusal below then catches
-         */
-        if (for_write && (flags & PTE_PRESENT) && !(flags & PTE_WRITE)
-            && me != NULL && me->space != NULL) {
-            if (addrspace_fault(me->space, p, true, true)) {
-                flags = vmm_flags(pml4, p);
-            }
-        }
-
-        if (!(flags & PTE_PRESENT) || !(flags & PTE_USER)) {
-            /*
-             * say so. a refusal returns -1 to a program that will
-             * probably ignore it, and the result is a program that
-             * prints nothing for no reason anyone can see, which is
-             * exactly how this bug stayed hidden
-             */
-            kprintf("[kernel] refused a pointer from pid %d: %p is not "
-                    "this process's memory\n", caller_pid(), (void *)addr);
-            return false;
-        }
-
-        if (for_write && !(flags & PTE_WRITE)) {
-            kprintf("[kernel] refused a pointer from pid %d: %p is not "
-                    "this process's to write to\n",
-                    caller_pid(), (void *)addr);
-            return false;
-        }
-    }
-    return true;
-}
-
-/*
- * the two ways a syscall touches a user buffer, named rather than left
- * as a bare `true` at twenty call sites, `user_range_ok(p, n, true)`
- * reads like a question and answers a different one
- */
-static bool user_range_ok(uint64_t addr, uint64_t len)
-{
-    return user_range_ok_dir(addr, len, false);
-}
-
-/* for a buffer the kernel is about to *fill* */
-static bool user_range_writable(uint64_t addr, uint64_t len)
-{
-    return user_range_ok_dir(addr, len, true);
+    return (int64_t)u_len;
 }
 
 #define WRITE_MAX 4096
+
+/* how much of a read goes through the kernel at a time */
+#define READ_CHUNK 4096
 
 /*
  * the most a program may ask for in one go. a limit rather than "as
@@ -238,12 +112,8 @@ static int caller_pid(void)
  */
 static bool copy_path(uint64_t ptr, uint64_t len, char *out, size_t max)
 {
-    if (len == 0 || len >= max || !user_range_ok(ptr, len)) {
+    if (len == 0 || len >= max || copy_from_user(out, ptr, len) != 0) {
         return false;
-    }
-    const char *src = (const char *)ptr;
-    for (uint64_t i = 0; i < len; i++) {
-        out[i] = src[i];
     }
     out[len] = '\0';
     return true;
@@ -265,8 +135,6 @@ static bool copy_path_resolved(uint64_t ptr, uint64_t len,
     return path_resolve(process_cwd(caller_pid()), raw, out, size);
 }
 
-static int64_t sys_write_console(uint64_t ptr, uint64_t len);
-
 /*
  * the whole of writing, now that a descriptor can be four things.
  *
@@ -277,22 +145,8 @@ static int64_t sys_write_console(uint64_t ptr, uint64_t len);
  * thing, and it is why redirection needed 0, 1 and 2 to become real
  * slots rather than three special cases in here
  */
-static int64_t sys_write(uint64_t fd, uint64_t ptr, uint64_t len)
+static int64_t write_kernel(uint64_t fd, const void *p_buf, uint64_t len)
 {
-    /*
-     * clamp first, then check what the kernel clamped to. a program asking to
-     * write four exabytes gets a short write rather than a refusal,
-     * which is the ordinary contract, and the range actually checked
-     * is the one actually touched, so an absurd length can never widen
-     * what the kernel is willing to read
-     */
-    if (len > WRITE_MAX) {
-        len = WRITE_MAX;
-    }
-    if (!user_range_ok(ptr, len)) {
-        return -1;
-    }
-
     /*
      * a copy rather than a pointer into the table: everything below
      * this may block, and none of it may run while the process table's
@@ -328,27 +182,21 @@ static int64_t sys_write(uint64_t fd, uint64_t ptr, uint64_t len)
             && process_pgid(caller_pid()) != tty_foreground()) {
             return (int64_t)len;
         }
-        return sys_write_console(ptr, len);
+        /*
+         * one call rather than one per byte. this was `kprintf("%c", ...)`
+         * in a loop, which parses a format string and walks a variadic
+         * list for every character a program prints, two thousand of
+         * each to redraw a screen
+         */
+        kwrite(p_buf, (size_t)len);
+        return (int64_t)len;
 
     case FD_PIPE: {
         if (!f.writing) {
             return -1;      /* the reading end. a descriptor goes one way */
         }
-        int64_t n = pipe_write(f.pipe, caller_pid(), (const void *)ptr, len);
-        if (n < 0) {
-            /*
-             * nobody is reading and nobody ever will be. unix raises
-             * SIGPIPE here and the default disposition is to die; the kernel has no signals, so the process is ended for it, which
-             * gets to the same place by a shorter road.
-             *
-             * this is not tidiness. it is what makes `cat huge | head`
-             * stop: head has seen enough and gone, and without this cat
-             * would sit blocked on a buffer that will never drain,
-             * holding the terminal, forever
-             */
-            thread_exit(PROCESS_KILLED);
-        }
-        return n;
+        int64_t n = pipe_write(f.pipe, caller_pid(), p_buf, len);
+        return (n < 0) ? -EPIPE : n;
     }
 
     case FD_DISK: {
@@ -384,7 +232,7 @@ static int64_t sys_write(uint64_t fd, uint64_t ptr, uint64_t len)
         vf.entry_sector = d.entry_sector;
         vf.entry_offset = d.entry_offset;
 
-        int64_t n = vfs_write(&vf, d.pos, (const void *)ptr, len);
+        int64_t n = vfs_write(&vf, d.pos, p_buf, len);
         if (n > 0) {
             process_fd_grew(caller_pid(), (int)fd, vf.cluster, vf.size);
             process_fd_advance(caller_pid(), (int)fd, (uint64_t)n);
@@ -401,41 +249,49 @@ static int64_t sys_write(uint64_t fd, uint64_t ptr, uint64_t len)
     }
 }
 
-static int64_t sys_write_console(uint64_t ptr, uint64_t len)
+static int64_t sys_write(uint64_t fd, uint64_t ptr, uint64_t len)
 {
     /*
-     * clamp first, then check what the kernel clamped to. a program asking to
-     * write four exabytes gets a short write rather than a refusal,
-     * which is the ordinary contract, and the range actually checked
-     * below is the one the kernel actually touch, so an absurd length can
-     * never widen what the kernel is willing to read
+     * clamp first, then copy what the kernel clamped to. a program asking
+     * to write four exabytes gets a short write rather than a refusal,
+     * which is the ordinary contract, and an absurd length can never
+     * widen what the kernel is willing to read
      */
     if (len > WRITE_MAX) {
         len = WRITE_MAX;
     }
-    if (!user_range_ok(ptr, len)) {
+    char *p_buf = kmalloc(WRITE_MAX);
+    if (p_buf == NULL) {
         return -1;
     }
-    /*
-     * one call rather than one per byte. this was `kprintf("%c", ...)`
-     * in a loop, which parses a format string and walks a variadic list
-     * for every character a program prints, two thousand of each to
-     * redraw a screen
-     */
-    kwrite((const char *)ptr, (size_t)len);
-    return (int64_t)len;
+    int64_t n = -1;
+    if (copy_from_user(p_buf, ptr, len) == 0) {
+        n = write_kernel(fd, p_buf, len);
+    }
+    kfree(p_buf);
+
+    if (n == -EPIPE) {
+        /*
+         * nobody is reading and nobody ever will be. unix raises SIGPIPE
+         * here and the default disposition is to die, and this ends the
+         * process for it, which gets to the same place by a shorter road.
+         *
+         * this is not tidiness. it is what makes `cat huge | head` stop:
+         * head has seen enough and gone, and without this cat would sit
+         * blocked on a buffer that will never drain, holding the
+         * terminal, forever
+         */
+        thread_exit(PROCESS_KILLED);
+    }
+    return n;
 }
 
 /*
  * the terminal does the echoing and the line editing, because a program
  * in ring 3 cannot, the keys never pass through it
  */
-static int64_t sys_read(uint64_t fd, uint64_t ptr, uint64_t len)
+static int64_t read_kernel(uint64_t fd, void *p_buf, uint64_t len)
 {
-    if (len == 0 || !user_range_writable(ptr, len)) {
-        return -1;
-    }
-
     struct fd f;
     if (!process_fd_get(caller_pid(), (int)fd, &f)) {
         return -1;
@@ -448,13 +304,13 @@ static int64_t sys_read(uint64_t fd, uint64_t ptr, uint64_t len)
          * program reading stdin neither knows nor cares whether a
          * person or a `cat` is on the other end
          */
-        return tty_read_line(caller_pid(), (char *)ptr, len);
+        return tty_read_line(caller_pid(), p_buf, len);
 
     case FD_PIPE:
         if (f.writing) {
             return -1;
         }
-        return pipe_read(f.pipe, caller_pid(), (void *)ptr, len);
+        return pipe_read(f.pipe, caller_pid(), p_buf, len);
 
     case FD_DISK: {
         /*
@@ -478,7 +334,7 @@ static int64_t sys_read(uint64_t fd, uint64_t ptr, uint64_t len)
         vf.cluster = d.cluster;
         vf.size = d.size;
 
-        int64_t n = vfs_read(&vf, d.pos, (void *)ptr, len);
+        int64_t n = vfs_read(&vf, d.pos, p_buf, len);
         if (n > 0) {
             process_fd_advance(caller_pid(), (int)fd, (uint64_t)n);
         }
@@ -498,7 +354,7 @@ static int64_t sys_read(uint64_t fd, uint64_t ptr, uint64_t len)
         if (left < len) {
             len = left;         /* a short read at the end, as usual */
         }
-        memcpy((void *)ptr, data, len);
+        memcpy(p_buf, data, len);
         process_fd_advance(caller_pid(), (int)fd, len);
         return (int64_t)len;
     }
@@ -514,7 +370,7 @@ static int64_t sys_read(uint64_t fd, uint64_t ptr, uint64_t len)
         vf.kind = VFS_PROC;
         vf.sz_proc = f.sz_proc;
 
-        int64_t i_got = vfs_read(&vf, f.pos, (void *)ptr, len);
+        int64_t i_got = vfs_read(&vf, f.pos, p_buf, len);
         if (i_got > 0) {
             process_fd_advance(caller_pid(), (int)fd, (uint64_t)i_got);
         }
@@ -524,6 +380,51 @@ static int64_t sys_read(uint64_t fd, uint64_t ptr, uint64_t len)
     default:
         return -1;      /* the console. there is nothing to read from it */
     }
+}
+
+/*
+ * a read a piece at a time through the kernel's own buffer. a file is
+ * read until the caller has what it asked for or the file ends, the way
+ * a program expects a file to be read; a pipe or the keyboard answers
+ * with what there is
+ */
+static int64_t sys_read(uint64_t fd, uint64_t ptr, uint64_t len)
+{
+    struct fd f;
+    if (len == 0 || !access_ok(ptr, len)
+        || !process_fd_get(caller_pid(), (int)fd, &f)) {
+        return -1;
+    }
+    bool b_file = f.kind == FD_DISK || f.kind == FD_MEMORY
+                  || f.kind == FD_PROC;
+
+    char *p_buf = kmalloc(READ_CHUNK);
+    if (p_buf == NULL) {
+        return -1;
+    }
+    uint64_t u_done = 0;
+    int64_t i_result = 0;
+    while (u_done < len) {
+        uint64_t u_want = len - u_done;
+        if (u_want > READ_CHUNK) {
+            u_want = READ_CHUNK;
+        }
+        int64_t i_got = read_kernel(fd, p_buf, u_want);
+        if (i_got <= 0) {
+            i_result = i_got;
+            break;
+        }
+        if (copy_to_user(ptr + u_done, p_buf, (size_t)i_got) != 0) {
+            i_result = -1;
+            break;
+        }
+        u_done += (uint64_t)i_got;
+        if (!b_file || (uint64_t)i_got < u_want) {
+            break;
+        }
+    }
+    kfree(p_buf);
+    return (u_done > 0) ? (int64_t)u_done : i_result;
 }
 
 /*
@@ -674,15 +575,11 @@ static int64_t sys_fork(struct pt_regs *regs)
 static int64_t sys_getenv(uint64_t ptr, uint64_t len, uint64_t out_ptr,
                           uint64_t out_size)
 {
-    if (len == 0 || len >= ENV_NAME_MAX || !user_range_ok(ptr, len)) {
-        return -1;
-    }
-    if (out_size == 0 || !user_range_writable(out_ptr, out_size)) {
-        return -1;
-    }
-
     char name[ENV_NAME_MAX];
-    memcpy(name, (const void *)ptr, len);
+    if (len == 0 || len >= ENV_NAME_MAX || out_size == 0
+        || copy_from_user(name, ptr, len) != 0) {
+        return -1;
+    }
     name[len] = '\0';
 
     char value[ENV_VALUE_MAX];
@@ -690,23 +587,17 @@ static int64_t sys_getenv(uint64_t ptr, uint64_t len, uint64_t out_ptr,
         return -1;      /* not set, which is not the same as set to nothing */
     }
 
-    uint64_t n = strlen(value);
-    if (n >= out_size) {
-        n = out_size - 1;
-    }
-    memcpy((void *)out_ptr, value, n);
-    ((char *)out_ptr)[n] = '\0';
-    return (int64_t)n;
+    return copy_string_out(out_ptr, out_size, value);
 }
 
 static int64_t sys_setenv(uint64_t ptr, uint64_t len, uint64_t vptr,
                           uint64_t vlen)
 {
-    if (len == 0 || len >= ENV_NAME_MAX || !user_range_ok(ptr, len)) {
+    char name[ENV_NAME_MAX];
+    if (len == 0 || len >= ENV_NAME_MAX
+        || copy_from_user(name, ptr, len) != 0) {
         return -1;
     }
-    char name[ENV_NAME_MAX];
-    memcpy(name, (const void *)ptr, len);
     name[len] = '\0';
 
     /*
@@ -722,11 +613,10 @@ static int64_t sys_setenv(uint64_t ptr, uint64_t len, uint64_t vptr,
     if (vptr == 0) {
         return process_env_set(caller_pid(), name, NULL) ? 0 : -1;
     }
-    if (vlen >= ENV_VALUE_MAX || !user_range_ok(vptr, vlen)) {
+    char value[ENV_VALUE_MAX];
+    if (vlen >= ENV_VALUE_MAX || copy_from_user(value, vptr, vlen) != 0) {
         return -1;
     }
-    char value[ENV_VALUE_MAX];
-    memcpy(value, (const void *)vptr, vlen);
     value[vlen] = '\0';
 
     return process_env_set(caller_pid(), name, value) ? 0 : -1;
@@ -786,7 +676,9 @@ static int64_t sys_symlink(uint64_t ptr, uint64_t len, uint64_t tptr,
     if (!copy_path_resolved(ptr, len, path, sizeof path)) {
         return -1;
     }
-    if (tlen == 0 || tlen >= PATH_MAX || !user_range_ok(tptr, tlen)) {
+    char target[PATH_MAX];
+    if (tlen == 0 || tlen >= PATH_MAX
+        || copy_from_user(target, tptr, tlen) != 0) {
         return -1;
     }
     /*
@@ -794,8 +686,6 @@ static int64_t sys_symlink(uint64_t ptr, uint64_t len, uint64_t tptr,
      * was given and means it wherever it is later read from, which is
      * the difference between a link and a copy of an answer
      */
-    char target[PATH_MAX];
-    memcpy(target, (const void *)tptr, tlen);
     target[tlen] = '\0';
 
     if (process_uid(caller_pid()) != 0) {
@@ -811,20 +701,11 @@ static int64_t sys_readlink(uint64_t ptr, uint64_t len, uint64_t out_ptr,
     if (!copy_path_resolved(ptr, len, path, sizeof path)) {
         return -1;
     }
-    if (out_size == 0 || !user_range_writable(out_ptr, out_size)) {
-        return -1;
-    }
     char target[PATH_MAX];
-    if (!vfs_readlink(path, target, sizeof target)) {
+    if (out_size == 0 || !vfs_readlink(path, target, sizeof target)) {
         return -1;
     }
-    uint64_t n = strlen(target);
-    if (n >= out_size) {
-        n = out_size - 1;
-    }
-    memcpy((void *)out_ptr, target, n);
-    ((char *)out_ptr)[n] = '\0';
-    return (int64_t)n;
+    return copy_string_out(out_ptr, out_size, target);
 }
 
 /*
@@ -910,9 +791,6 @@ static int64_t sys_getkey(void)
 
 static int64_t sys_screen(uint64_t cols_ptr, uint64_t rows_ptr)
 {
-    if (!user_range_writable(cols_ptr, 4) || !user_range_writable(rows_ptr, 4)) {
-        return -1;
-    }
     size_t c = 0, r = 0;
     console_size(&c, &r, NULL, NULL);
 
@@ -926,8 +804,12 @@ static int64_t sys_screen(uint64_t cols_ptr, uint64_t rows_ptr)
         c = 80;
         r = 24;
     }
-    *(uint32_t *)cols_ptr = (uint32_t)c;
-    *(uint32_t *)rows_ptr = (uint32_t)r;
+    uint32_t u_cols = (uint32_t)c;
+    uint32_t u_rows = (uint32_t)r;
+    if (copy_to_user(cols_ptr, &u_cols, sizeof u_cols) != 0
+        || copy_to_user(rows_ptr, &u_rows, sizeof u_rows) != 0) {
+        return -1;
+    }
     return 0;
 }
 
@@ -1037,17 +919,7 @@ static int64_t sys_chdir(uint64_t ptr, uint64_t len)
 
 static int64_t sys_getcwd(uint64_t ptr, uint64_t len)
 {
-    if (len == 0 || !user_range_writable(ptr, len)) {
-        return -1;
-    }
-    const char *here = process_cwd(caller_pid());
-    uint64_t n = strlen(here);
-    if (n >= len) {
-        n = len - 1;
-    }
-    memcpy((void *)ptr, here, n);
-    ((char *)ptr)[n] = '\0';
-    return (int64_t)n;
+    return copy_string_out(ptr, len, process_cwd(caller_pid()));
 }
 
 /*
@@ -1060,7 +932,7 @@ static int64_t sys_syslog(uint64_t u_type, uint64_t u_ptr, uint64_t u_len)
     if (u_type == SYSLOG_SIZE_BUFFER) {
         return KLOG_SIZE;
     }
-    if (u_type != SYSLOG_READ_ALL || !user_range_writable(u_ptr, u_len)) {
+    if (u_type != SYSLOG_READ_ALL || !access_ok(u_ptr, u_len)) {
         return -1;
     }
 
@@ -1070,9 +942,9 @@ static int64_t sys_syslog(uint64_t u_type, uint64_t u_ptr, uint64_t u_len)
     }
     size_t sz_want = (u_len < KLOG_SIZE) ? (size_t)u_len : KLOG_SIZE;
     size_t sz_got = klog_copy(str_log, sz_want);
-    memcpy((void *)u_ptr, str_log, sz_got);
+    int64_t i_copied = copy_to_user(u_ptr, str_log, sz_got);
     kfree(str_log);
-    return (int64_t)sz_got;
+    return (i_copied == 0) ? (int64_t)sz_got : -1;
 }
 
 static int64_t sys_sync(void)
@@ -1102,15 +974,11 @@ static void say_why(char *str_why, size_t sz_size, const char *str_reason)
     str_why[sz_size - 1] = '\0';
 }
 
-static int64_t sys_resize(uint64_t u_ptr, uint64_t u_len, uint64_t u_blocks,
-                          uint64_t u_out)
+static int64_t resize_into(uint64_t u_ptr, uint64_t u_len, uint64_t u_blocks,
+                           struct user_resize *p_out)
 {
-    struct user_resize *p_out = (struct user_resize *)u_out;
     char arr_path[PATH_MAX];
 
-    if (!user_range_writable(u_out, sizeof *p_out)) {
-        return -1;
-    }
     memset(p_out, 0, sizeof *p_out);
     if (!copy_path_resolved(u_ptr, u_len, arr_path, sizeof arr_path)) {
         say_why(p_out->arr_why, sizeof p_out->arr_why, "that is not a path");
@@ -1159,6 +1027,18 @@ static int64_t sys_resize(uint64_t u_ptr, uint64_t u_len, uint64_t u_blocks,
     return 0;
 }
 
+/* the answer is written out whether it worked or not, since it says why */
+static int64_t sys_resize(uint64_t u_ptr, uint64_t u_len, uint64_t u_blocks,
+                          uint64_t u_out)
+{
+    struct user_resize out;
+    if (!access_ok(u_out, sizeof out)) {
+        return -1;
+    }
+    int64_t i_result = resize_into(u_ptr, u_len, u_blocks, &out);
+    return (copy_to_user(u_out, &out, sizeof out) == 0) ? i_result : -1;
+}
+
 /*
  * a string of the caller's whose length it did not say, into `str_out`.
  * false when it runs past `sz_size` or off the end of what the caller
@@ -1166,18 +1046,7 @@ static int64_t sys_resize(uint64_t u_ptr, uint64_t u_len, uint64_t u_blocks,
  */
 static bool copy_user_string(uint64_t u_str, char *str_out, size_t sz_size)
 {
-    for (size_t sz_at = 0; sz_at < sz_size; sz_at++) {
-        uint64_t u_addr = u_str + sz_at;
-        if ((sz_at == 0 || (u_addr & 0xfff) == 0)
-            && !user_range_ok(u_addr, 1)) {
-            return false;
-        }
-        str_out[sz_at] = *(const char *)u_addr;
-        if (str_out[sz_at] == '\0') {
-            return true;
-        }
-    }
-    return false;
+    return strncpy_from_user(str_out, u_str, sz_size) >= 0;
 }
 
 /* how much of the arguments the kernel carries across, strings and all */
@@ -1209,12 +1078,11 @@ static int64_t sys_execve(struct pt_regs *regs, uint64_t u_ptr,
         arr_argv[i_argc++] = arr_path;
     }
     while (u_argv != 0) {
-        uint64_t u_slot = u_argv + (uint64_t)i_argc * 8;
-        if (!user_range_ok(u_slot, 8)) {
+        uint64_t u_str = 0;
+        if (get_user_u64(&u_str, u_argv + (uint64_t)i_argc * 8) != 0) {
             b_ok = false;
             break;
         }
-        uint64_t u_str = *(const uint64_t *)u_slot;
         if (u_str == 0) {
             break;
         }
@@ -1268,7 +1136,7 @@ static int64_t sys_pipe(uint64_t u_fds)
 {
     int i_pid = caller_pid();
 
-    if (!user_range_writable(u_fds, 2 * sizeof(int32_t))) {
+    if (!access_ok(u_fds, 2 * sizeof(int32_t))) {
         return -1;
     }
     struct pipe *p_pipe = pipe_create();
@@ -1294,8 +1162,13 @@ static int64_t sys_pipe(uint64_t u_fds)
         pipe_close_write(p_pipe);
         return -1;
     }
-    ((int32_t *)u_fds)[0] = i_read;
-    ((int32_t *)u_fds)[1] = i_write;
+    int32_t arr_fds[2] = { i_read, i_write };
+    if (copy_to_user(u_fds, arr_fds, sizeof arr_fds) != 0) {
+        /* nowhere to say which they are, so they are no use to anybody */
+        sys_close(i_read);
+        sys_close(i_write);
+        return -1;
+    }
     return 0;
 }
 
@@ -1392,7 +1265,7 @@ static int64_t sys_stat(uint64_t ptr, uint64_t len, uint64_t out_ptr)
     if (!copy_path_resolved(ptr, len, path, sizeof path)) {
         return -1;
     }
-    if (!user_range_writable(out_ptr, sizeof(struct user_stat))) {
+    if (!access_ok(out_ptr, sizeof(struct user_stat))) {
         return -1;
     }
 
@@ -1424,8 +1297,7 @@ static int64_t sys_stat(uint64_t ptr, uint64_t len, uint64_t out_ptr)
     st.minute = f.written.minute;
     st.second = f.written.second;
 
-    memcpy((void *)out_ptr, &st, sizeof st);
-    return 0;
+    return (copy_to_user(out_ptr, &st, sizeof st) == 0) ? 0 : -1;
 }
 
 /*
@@ -1437,7 +1309,7 @@ static int64_t sys_stat(uint64_t ptr, uint64_t len, uint64_t out_ptr)
 static int64_t sys_readdir(uint64_t index, uint64_t ptr, uint64_t len,
                            uint64_t path_ptr, uint64_t path_len)
 {
-    if (len == 0 || !user_range_writable(ptr, len)) {
+    if (len == 0 || !access_ok(ptr, len)) {
         return -1;
     }
 
@@ -1491,12 +1363,13 @@ static int64_t sys_readdir(uint64_t index, uint64_t ptr, uint64_t len,
      * it. clamp the copy length itself, or take the slash off before
      * bounding n against len rather than after.
      */
-    memcpy((void *)ptr, f.name, slash ? n - 1 : n);
+    char arr_out[VFS_NAME_MAX + 2];
+    memcpy(arr_out, f.name, slash ? n - 1 : n);
     if (slash && n > 0) {
-        ((char *)ptr)[n - 1] = '/';
+        arr_out[n - 1] = '/';
     }
-    ((char *)ptr)[n] = '\0';
-    return (int64_t)n;
+    arr_out[n] = '\0';
+    return (copy_to_user(ptr, arr_out, n + 1) == 0) ? (int64_t)n : -1;
 }
 
 static int64_t sys_spawn(uint64_t ptr, uint64_t len)
@@ -1561,7 +1434,7 @@ static int64_t sys_wait(uint64_t u_pid, uint64_t u_status, uint64_t u_flags)
     int i_pid = (int)u_pid;
 
     if (i_pid == 0 || i_pid < -1
-        || (u_status != 0 && !user_range_writable(u_status, sizeof(int)))) {
+        || (u_status != 0 && !access_ok(u_status, sizeof(int)))) {
         return -1;
     }
 
@@ -1582,8 +1455,8 @@ static int64_t sys_wait(uint64_t u_pid, uint64_t u_status, uint64_t u_flags)
             if (b_ended) {
                 user_collect(i_who, NULL);
             }
-            if (u_status != 0) {
-                *(int *)u_status = i_status;
+            if (u_status != 0 && put_user_i32(u_status, i_status) != 0) {
+                return -1;
             }
             return i_who;
         }
@@ -1599,9 +1472,8 @@ static int64_t sys_wait(uint64_t u_pid, uint64_t u_status, uint64_t u_flags)
 
 /*
  * three calls over the socket table in net/socket.c. what they do about
- * *pointers* is the same as every other call here: nothing ring 3 hands
- * over is touched until user_range_ok has said the whole span belongs to
- * the caller
+ * *pointers* is the same as every other call here: what ring 3 hands
+ * over is copied in or out through uaccess, never read where it lies
  */
 
 static int64_t sys_socket(uint16_t port)
@@ -1618,11 +1490,26 @@ static int64_t sys_sendto(int handle, uint32_t to, uint16_t port,
     if (!net_is_up() || len > SOCKET_DATAGRAM) {
         return -1;
     }
-    if (!user_range_ok(buf, len)) {
+    uint8_t arr_data[SOCKET_DATAGRAM];
+    if (copy_from_user(arr_data, buf, len) != 0) {
         return -1;
     }
     return net_socket_send(caller_pid(), handle, to, port,
-                           (const void *)buf, len) ? (int64_t)len : -1;
+                           arr_data, len) ? (int64_t)len : -1;
+}
+
+/* a datagram taken off a socket, and who sent it, handed to ring 3 */
+static int64_t deliver_datagram(uint64_t u_from, ipv4 who, uint16_t u_port,
+                                uint64_t u_buf, const uint8_t *p_data,
+                                int64_t i_len)
+{
+    struct user_from from = { .address = who, .port = u_port,
+                              .reserved = 0 };
+    if (copy_to_user(u_buf, p_data, (size_t)i_len) != 0
+        || copy_to_user(u_from, &from, sizeof from) != 0) {
+        return -1;
+    }
+    return i_len;
 }
 
 static int64_t sys_recvfrom(int handle, uint64_t from, uint64_t buf,
@@ -1631,25 +1518,21 @@ static int64_t sys_recvfrom(int handle, uint64_t from, uint64_t buf,
     if (!net_is_up() || len > SOCKET_DATAGRAM) {
         return -1;
     }
-    if (!user_range_writable(buf, len)
-        || !user_range_writable(from, sizeof(struct user_from))) {
+    if (!access_ok(buf, len) || !access_ok(from, sizeof(struct user_from))) {
         return -1;
     }
 
     ipv4 who = 0;
     uint16_t whoport = 0;
+    uint8_t arr_data[SOCKET_DATAGRAM];
     int64_t n = net_socket_take(caller_pid(), handle, &who, &whoport,
-                                (void *)buf, len);
+                                arr_data, len);
     if (n < 0) {
         return -1;     /* nothing waiting, which the program sees as
                         * `not yet` rather than as a failure */
     }
 
-    struct user_from *f = (struct user_from *)from;
-    f->address = who;
-    f->port = whoport;
-    f->reserved = 0;
-    return n;
+    return deliver_datagram(from, who, whoport, buf, arr_data, n);
 }
 
 
@@ -1659,23 +1542,19 @@ static int64_t sys_recvwait(int handle, uint64_t from, uint64_t buf,
     if (!net_is_up() || len > SOCKET_DATAGRAM) {
         return -1;
     }
-    if (!user_range_writable(buf, len)
-        || !user_range_writable(from, sizeof(struct user_from))) {
+    if (!access_ok(buf, len) || !access_ok(from, sizeof(struct user_from))) {
         return -1;
     }
 
     ipv4 who = 0;
     uint16_t whoport = 0;
+    uint8_t arr_data[SOCKET_DATAGRAM];
     int64_t n = net_socket_wait(caller_pid(), handle, &who, &whoport,
-                                (void *)buf, len, timeout);
+                                arr_data, len, timeout);
     if (n < 0) {
         return -1;
     }
-    struct user_from *f = (struct user_from *)from;
-    f->address = who;
-    f->port = whoport;
-    f->reserved = 0;
-    return n;
+    return deliver_datagram(from, who, whoport, buf, arr_data, n);
 }
 
 /* wait on several at once, which is what every server is */
@@ -1685,32 +1564,29 @@ static int64_t sys_select(uint64_t handles, uint64_t count, int64_t timeout,
     if (count == 0 || count > SOCKET_MAX) {
         return -1;
     }
-    if (!user_range_ok(handles, count * sizeof(int32_t))
-        || !user_range_writable(ready, count)) {
+    /*
+     * copied out of user memory before use rather than read in place, so
+     * that nothing rewriting it underneath can change a handle between
+     * the check and the use, the oldest trick there is
+     */
+    int32_t arr_handles[SOCKET_MAX];
+    if (copy_from_user(arr_handles, handles, count * sizeof(int32_t)) != 0
+        || !access_ok(ready, count)) {
         return -1;
     }
-
-    /*
-     * copied out of user memory before use rather than read in place.
-     * the check above says the range is the caller's; it does not stop
-     * another thread in the same process rewriting it underneath, and a
-     * handle that changes between the check and the use is the oldest
-     * trick there is
-     */
     int local[SOCKET_MAX];
     bool flags[SOCKET_MAX];
-    const int32_t *u = (const int32_t *)handles;
     for (uint64_t i = 0; i < count; i++) {
-        local[i] = u[i];
+        local[i] = arr_handles[i];
     }
 
     size_t n = net_socket_ready(caller_pid(), local, count, timeout, flags);
 
-    uint8_t *out = (uint8_t *)ready;
+    uint8_t arr_ready[SOCKET_MAX];
     for (uint64_t i = 0; i < count; i++) {
-        out[i] = flags[i] ? 1 : 0;
+        arr_ready[i] = flags[i] ? 1 : 0;
     }
-    return (int64_t)n;
+    return (copy_to_user(ready, arr_ready, count) == 0) ? (int64_t)n : -1;
 }
 
 
@@ -1737,19 +1613,37 @@ static int64_t sys_accept(int handle, int64_t timeout)
 
 static int64_t sys_send(int handle, uint64_t buf, uint64_t len)
 {
-    if (len == 0 || len > TCP_SEND_BUF || !user_range_ok(buf, len)) {
+    if (len == 0 || len > TCP_SEND_BUF) {
         return -1;
     }
-    return net_tcp_send(caller_pid(), handle, (const void *)buf, len);
+    uint8_t *p_data = kmalloc(TCP_SEND_BUF);
+    if (p_data == NULL) {
+        return -1;
+    }
+    int64_t n = -1;
+    if (copy_from_user(p_data, buf, len) == 0) {
+        n = net_tcp_send(caller_pid(), handle, p_data, len);
+    }
+    kfree(p_data);
+    return n;
 }
 
 static int64_t sys_recv(int handle, uint64_t buf, uint64_t len,
                         int64_t timeout)
 {
-    if (len == 0 || len > TCP_RECV_BUF || !user_range_writable(buf, len)) {
+    if (len == 0 || len > TCP_RECV_BUF || !access_ok(buf, len)) {
         return -1;
     }
-    return net_tcp_recv(caller_pid(), handle, (void *)buf, len, timeout);
+    uint8_t *p_data = kmalloc(TCP_RECV_BUF);
+    if (p_data == NULL) {
+        return -1;
+    }
+    int64_t n = net_tcp_recv(caller_pid(), handle, p_data, len, timeout);
+    if (n > 0 && copy_to_user(buf, p_data, (size_t)n) != 0) {
+        n = -1;
+    }
+    kfree(p_data);
+    return n;
 }
 
 /*
@@ -1804,22 +1698,20 @@ static bool enter_handler(struct pt_regs *regs, int sig, uint64_t handler)
     sp &= ~(uint64_t)15;
 
     /*
-     * checked as writable, since it is about to be written: a stack the
-     * program pointed somewhere it may only read has no room for a frame,
-     * and writing one there anyway is a fault in ring 0, which is a
-     * panic. the check also makes the copy of a page a forked child
-     * still shares with its parent
+     * written through copy_to_user like anything else the kernel puts in
+     * a program's memory: a stack the program pointed somewhere it may
+     * only read has no room for a frame, and the copy says so rather
+     * than faulting in ring 0, and a page a forked child still shares
+     * with its parent becomes the child's own on the way
      */
     sp -= sizeof(struct pt_regs);
     uint64_t frame = sp;
-    if (!user_range_writable(frame, SIGNAL_FRAME_SIZE)) {
-        return false;
-    }
-    memcpy((void *)frame, regs, sizeof *regs);
-
     struct fpu_state fpu;
     fpu_save(&fpu);
-    memcpy((void *)(frame + sizeof *regs), &fpu, sizeof fpu);
+    if (copy_to_user(frame, regs, sizeof *regs) != 0
+        || copy_to_user(frame + sizeof *regs, &fpu, sizeof fpu) != 0) {
+        return false;
+    }
 
     /*
      * and the return address, which leaves rsp eight past a sixteen
@@ -1827,10 +1719,9 @@ static bool enter_handler(struct pt_regs *regs, int sig, uint64_t handler)
      * function expects to find on entry
      */
     sp -= 8;
-    if (!user_range_writable(sp, 8)) {
+    if (put_user_u64(sp, tramp) != 0) {
         return false;
     }
-    *(uint64_t *)sp = tramp;
 
     regs->rsp = sp;
     regs->rdi = (uint64_t)sig;      /* the handler's argument */
@@ -1972,8 +1863,7 @@ static int64_t sys_signal(uint64_t sig, uint64_t handler, uint64_t tramp)
         return -1;
     }
     if (handler != SIG_DEFAULT && handler != SIG_IGNORE) {
-        if (!user_range_ok(handler, 1) || tramp == 0
-            || !user_range_ok(tramp, 1)) {
+        if (!access_ok(handler, 1) || tramp == 0 || !access_ok(tramp, 1)) {
             return -1;
         }
         process_set_trampoline(caller_pid(), tramp);
@@ -1990,18 +1880,19 @@ static int64_t sys_signal(uint64_t sig, uint64_t handler, uint64_t tramp)
 static int64_t sys_sigreturn(uint64_t frame, struct pt_regs *regs)
 {
     struct signal_state *st = process_signal_state(caller_pid());
+    struct pt_regs saved;
+    struct fpu_state fpu;
     if (st == NULL || regs == NULL
-     || !user_range_ok(frame, SIGNAL_FRAME_SIZE)) {
+     || copy_from_user(&saved, frame, sizeof saved) != 0
+     || copy_from_user(&fpu, frame + sizeof saved, sizeof fpu) != 0) {
         return -1;
     }
-    memcpy(regs, (const void *)frame, sizeof *regs);
+    *regs = saved;
 
     /*
      * the fpu's too, with the mxcsr bits the cpu lacks cleared, since
      * fxrstor faults in ring 0 on any it is handed
      */
-    struct fpu_state fpu;
-    memcpy(&fpu, (const void *)(frame + sizeof *regs), sizeof fpu);
     fpu_sanitize(&fpu);
     fpu_restore(&fpu);
 
@@ -2043,11 +1934,7 @@ static int64_t sys_arch_prctl(uint64_t u_code, uint64_t u_addr)
         fs_base_load(u_addr);
         return 0;
     case ARCH_GET_FS:
-        if (!user_range_writable(u_addr, sizeof(uint64_t))) {
-            return -1;
-        }
-        *(uint64_t *)u_addr = me->arch.u_fs_base;
-        return 0;
+        return (put_user_u64(u_addr, me->arch.u_fs_base) == 0) ? 0 : -1;
     default:
         return -1;
     }
@@ -2127,14 +2014,14 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
          */
         return (int64_t)process_set_alarm(caller_pid(), a0, pit_uptime_ms());
     case SYS_WINSIZE: {
-        if (!user_range_writable(a0, sizeof(uint32_t))
-         || !user_range_writable(a1, sizeof(uint32_t))) {
-            return -1;
-        }
         size_t c = 0, r = 0;
         console_size(&c, &r, NULL, NULL);
-        *(uint32_t *)a0 = (uint32_t)c;
-        *(uint32_t *)a1 = (uint32_t)r;
+        uint32_t u_cols = (uint32_t)c;
+        uint32_t u_rows = (uint32_t)r;
+        if (copy_to_user(a0, &u_cols, sizeof u_cols) != 0
+         || copy_to_user(a1, &u_rows, sizeof u_rows) != 0) {
+            return -1;
+        }
         return 0;
     }
     case SYS_SIGMASK: {
