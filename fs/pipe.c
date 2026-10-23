@@ -9,6 +9,10 @@
 #include <velvet/kmalloc.h>
 #include <velvet/string.h>
 #include <velvet/process.h>
+#include <velvet/file.h>
+#include <velvet/sched.h>
+#include <velvet/thread.h>
+#include <uapi/velvet/errno.h>
 
 /* how many are alive. only for saying so, nothing depends on it */
 static size_t live;
@@ -141,47 +145,6 @@ void pipe_close_write(struct pipe *p)
     maybe_free(p);
 }
 
-void pipe_share(struct pipe *p, bool writing)
-{
-    if (p == NULL) {
-        return;
-    }
-    uint64_t flags = spin_lock_irq(&p->lock);
-    if (writing) {
-        p->writers++;
-    } else {
-        p->readers++;
-    }
-    spin_unlock_irq(&p->lock, flags);
-}
-
-void pipe_release_for(int pid)
-{
-    if (pid == 0) {
-        return;
-    }
-    /*
-     * taken off the process first and closed after: closing one wakes
-     * threads, and the process table's lock may not be held while
-     * reaching up to the scheduler.
-     *
-     * every pipe it was holding, not just the two ends of a pipeline,
-     * once 0, 1 and 2 were real descriptors there is nothing
-     * special about them, and a process could in principle be holding
-     * a pipe in any slot
-     */
-    struct pipe_end ends[MAX_FDS];
-    size_t n = process_take_pipes(pid, ends, MAX_FDS);
-
-    for (size_t i = 0; i < n; i++) {
-        if (ends[i].writing) {
-            pipe_close_write(ends[i].p);
-        } else {
-            pipe_close_read(ends[i].p);
-        }
-    }
-}
-
 size_t pipe_count(void)
 {
     return live;
@@ -192,7 +155,7 @@ size_t pipe_count(void)
 int64_t pipe_read(struct pipe *p, int pid, void *buf, uint64_t len)
 {
     if (p == NULL || len == 0) {
-        return -1;
+        return -EINVAL;
     }
     if (len > PIPE_BUF) {
         len = PIPE_BUF;
@@ -207,7 +170,7 @@ int64_t pipe_read(struct pipe *p, int pid, void *buf, uint64_t len)
         }
         if (process_interrupt_pending(pid)) {
             spin_unlock_irq(&p->lock, flags);
-            return -1;
+            return -EINTR;
         }
 
         /* on the queue first, then let go, then sleep. */
@@ -228,7 +191,7 @@ int64_t pipe_read(struct pipe *p, int pid, void *buf, uint64_t len)
 int64_t pipe_write(struct pipe *p, int pid, const void *buf, uint64_t len)
 {
     if (p == NULL || len == 0) {
-        return (p == NULL) ? -1 : 0;
+        return (p == NULL) ? -EINVAL : 0;
     }
 
     const uint8_t *src = buf;
@@ -240,12 +203,12 @@ int64_t pipe_write(struct pipe *p, int pid, const void *buf, uint64_t len)
         if (p->readers == 0) {
             spin_unlock_irq(&p->lock, flags);
             /* what was already written stays written. */
-            return (done > 0) ? (int64_t)done : -1;
+            return (done > 0) ? (int64_t)done : -EPIPE;
         }
         if (p->count == PIPE_BUF) {
             if (process_interrupt_pending(pid)) {
                 spin_unlock_irq(&p->lock, flags);
-                return (done > 0) ? (int64_t)done : -1;
+                return (done > 0) ? (int64_t)done : -EINTR;
             }
             waitq_enqueue(&p->writable);
             spin_unlock_irq(&p->lock, flags);
@@ -262,4 +225,85 @@ int64_t pipe_write(struct pipe *p, int pid, const void *buf, uint64_t len)
 
     spin_unlock_irq(&p->lock, flags);
     return (int64_t)done;
+}
+
+/*
+ * a pipe's two ends are two files, one opened for reading and one for
+ * writing. the pipe counts the files open on each end, not descriptors:
+ * dup and fork add descriptors to a file, and the end closes when the
+ * last of them does, which is when the file is released
+ */
+static int caller(void)
+{
+    struct thread *p_me = sched_current();
+    return (p_me != NULL) ? p_me->pid : 0;
+}
+
+static int64_t end_read(struct file *p_file, void *p_buf, size_t sz_len)
+{
+    return pipe_read(p_file->p_private, caller(), p_buf, sz_len);
+}
+
+static int64_t end_write(struct file *p_file, const void *p_buf,
+                         size_t sz_len)
+{
+    return pipe_write(p_file->p_private, caller(), p_buf, sz_len);
+}
+
+static void end_release_read(struct file *p_file)
+{
+    pipe_close_read(p_file->p_private);
+}
+
+static void end_release_write(struct file *p_file)
+{
+    pipe_close_write(p_file->p_private);
+}
+
+static const struct file_operations read_end_ops = {
+    .read = end_read,
+    .release = end_release_read,
+};
+
+static const struct file_operations write_end_ops = {
+    .write = end_write,
+    .release = end_release_write,
+};
+
+bool pipe_open(struct file **pp_read, struct file **pp_write)
+{
+    struct pipe *p = pipe_create();
+    if (p == NULL) {
+        return false;
+    }
+    struct file *p_read = file_alloc(&read_end_ops, FILE_READ,
+                                     FILE_TYPE_PIPE);
+    struct file *p_write = file_alloc(&write_end_ops, FILE_WRITE,
+                                      FILE_TYPE_PIPE);
+    if (p_read == NULL || p_write == NULL) {
+        /*
+         * the ends never made are closed by hand, and the ones that were
+         * by putting them, so the pipe is freed exactly once
+         */
+        if (p_read == NULL) {
+            pipe_close_read(p);
+        }
+        if (p_write == NULL) {
+            pipe_close_write(p);
+        }
+        if (p_read != NULL) {
+            p_read->p_private = p;
+            file_put(p_read);
+        }
+        if (p_write != NULL) {
+            p_write->p_private = p;
+            file_put(p_write);
+        }
+        return false;
+    }
+    p_read->p_private = p;
+    p_write->p_private = p;
+    *pp_read = p_read;
+    *pp_write = p_write;
+    return true;
 }

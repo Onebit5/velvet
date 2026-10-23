@@ -8,7 +8,8 @@
 #include <velvet/process.h>
 #include <asm/irq.h>
 #include <velvet/spinlock.h>
-#include <velvet/pipe.h>
+#include <velvet/file.h>
+#include <uapi/velvet/errno.h>
 #include <velvet/string.h>
 #include <velvet/sched.h>
 #include <uapi/velvet/syscall.h>
@@ -95,10 +96,15 @@ int process_create(const char *name, int parent, int uid, bool announce,
         signal_reset(&p->sig);
         p->started_ms = now_ms;
 
-        /* the three every process is born with. */
-        p->fds[FD_STDIN].kind  = FD_KEYBOARD;
-        p->fds[FD_STDOUT].kind = FD_CONSOLE;
-        p->fds[FD_STDERR].kind = FD_CONSOLE;
+        /*
+         * nothing open: whoever makes a process hands it what it starts
+         * with, a copy of its own for a fork, the console for a program
+         * the kernel starts
+         */
+        for (size_t sz_fd = 0; sz_fd < MAX_FDS; sz_fd++) {
+            p->fds[sz_fd] = NULL;
+        }
+        p->u_cloexec = 0;
 
         /* an empty environment rather than no environment. */
         p->env[0] = '\0';
@@ -152,19 +158,12 @@ void process_exited(int pid, int code, uint64_t now_ms)
         p->ended_ms  = now_ms;
         p->thread_id = 0;
         /*
-         * whatever it had open closes with it, except a pipe. closing
-         * one wakes whoever waits at the other end, which reaches the
-         * scheduler, and this lock may not be held while doing that. so
-         * a pipe end stays in its slot, and pipe_release_for, which
-         * every way a process ends calls after this, takes it out and
-         * closes it with no lock held. clearing it here instead was how
-         * a reader came to wait forever on a writer already gone
+         * what it had open stays in its slots. closing a pipe's end wakes
+         * whoever waits at the other, which reaches the scheduler, and
+         * this lock may not be held while doing that, so
+         * process_fds_release, which every way a process ends calls after
+         * this, closes them with no lock held
          */
-        for (size_t f = 0; f < MAX_FDS; f++) {
-            if (p->fds[f].kind != FD_PIPE) {
-                p->fds[f].kind = FD_FREE;
-            }
-        }
 
         /* and whatever it was the parent of is init's now. */
         for (size_t j = 0; j < MAX_PROCESSES; j++) {
@@ -656,160 +655,6 @@ size_t process_group_pids(int i_pgid, int *p_pids, size_t sz_max)
     return sz_n;
 }
 
-int process_fd_open(int pid, const void *data, uint64_t size)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-    int fd = -1;
-
-    struct process *p = slot_for(pid);
-    if (p != NULL) {
-        for (int i = FD_FIRST_FILE; i < MAX_FDS; i++) {
-            if (p->fds[i].kind != FD_FREE) {
-                continue;
-            }
-            memset(&p->fds[i], 0, sizeof p->fds[i]);
-            p->fds[i].kind = FD_MEMORY;
-            p->fds[i].data = data;
-            p->fds[i].size = size;
-            fd = i;
-            break;
-        }
-    }
-
-    spin_unlock_irq(&process_lock, flags);
-    return fd;
-}
-
-int process_fd_open_disk(int pid, uint32_t cluster, uint64_t size,
-                         uint64_t entry_sector, uint32_t entry_offset,
-                         size_t mount)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-    int fd = -1;
-
-    struct process *p = slot_for(pid);
-    if (p != NULL) {
-        for (int i = FD_FIRST_FILE; i < MAX_FDS; i++) {
-            if (p->fds[i].kind != FD_FREE) {
-                continue;
-            }
-            memset(&p->fds[i], 0, sizeof p->fds[i]);
-            p->fds[i].kind = FD_DISK;
-            p->fds[i].cluster = cluster;
-            p->fds[i].entry_sector = entry_sector;
-            p->fds[i].entry_offset = entry_offset;
-            p->fds[i].mount = mount;
-            p->fds[i].size = size;
-            fd = i;
-            break;
-        }
-    }
-
-    spin_unlock_irq(&process_lock, flags);
-    return fd;
-}
-
-int process_fd_open_proc(int i_pid, size_t sz_proc)
-{
-    uint64_t u_flags = spin_lock_irq(&process_lock);
-    int i_fd = -1;
-
-    struct process *p_proc = slot_for(i_pid);
-    if (p_proc != NULL) {
-        for (int i_at = FD_FIRST_FILE; i_at < MAX_FDS; i_at++) {
-            if (p_proc->fds[i_at].kind != FD_FREE) {
-                continue;
-            }
-            memset(&p_proc->fds[i_at], 0, sizeof p_proc->fds[i_at]);
-            p_proc->fds[i_at].kind = FD_PROC;
-            p_proc->fds[i_at].sz_proc = sz_proc;
-            i_fd = i_at;
-            break;
-        }
-    }
-
-    spin_unlock_irq(&process_lock, u_flags);
-    return i_fd;
-}
-
-bool process_fd_disk(int pid, int fd, struct fd_disk *out)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-    bool ok = false;
-
-    struct process *p = slot_for(pid);
-    if (p != NULL && fd >= 0 && fd < MAX_FDS && p->fds[fd].kind == FD_DISK) {
-        struct fd *f = &p->fds[fd];
-        out->cluster = f->cluster;
-        out->size = f->size;
-        out->pos = f->pos;
-        out->remaining = (f->pos < f->size) ? f->size - f->pos : 0;
-        out->entry_sector = f->entry_sector;
-        out->entry_offset = f->entry_offset;
-        out->mount = f->mount;
-        ok = true;
-    }
-
-    spin_unlock_irq(&process_lock, flags);
-    return ok;
-}
-
-void process_fd_grew(int pid, int fd, uint32_t cluster, uint64_t size)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-
-    struct process *p = slot_for(pid);
-    if (p != NULL && fd >= 0 && fd < MAX_FDS && p->fds[fd].kind == FD_DISK) {
-        p->fds[fd].cluster = cluster;
-        p->fds[fd].size = size;
-    }
-
-    spin_unlock_irq(&process_lock, flags);
-}
-
-bool process_fd_peek(int pid, int fd, const void **data, uint64_t *remaining)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-    bool ok = false;
-
-    struct process *p = slot_for(pid);
-    if (p != NULL && fd >= 0 && fd < MAX_FDS && p->fds[fd].kind == FD_MEMORY) {
-        struct fd *f = &p->fds[fd];
-        if (data != NULL) {
-            *data = f->data + f->pos;
-        }
-        if (remaining != NULL) {
-            *remaining = f->size - f->pos;
-        }
-        ok = true;
-    }
-
-    spin_unlock_irq(&process_lock, flags);
-    return ok;
-}
-
-void process_fd_advance(int pid, int fd, uint64_t n)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-
-    struct process *p = slot_for(pid);
-    if (p != NULL && fd >= 0 && fd < MAX_FDS && p->fds[fd].kind != FD_FREE) {
-        /*
-         * clamped to the size, which is right for both directions: a
-         * read cannot go past the end, and a write has already had the
-         * new size recorded by process_fd_grew before this runs
-         */
-        struct fd *f = &p->fds[fd];
-        if (f->kind == FD_PROC) {
-            f->pos += n;        /* no size to stop at: the read finds the end */
-        } else {
-            f->pos = (f->pos + n > f->size) ? f->size : f->pos + n;
-        }
-    }
-
-    spin_unlock_irq(&process_lock, flags);
-}
-
 /*
  * the block itself is pure arithmetic over a run of strings and lives
  * in lib/env.c, where a suite can hold it to what "already set" means
@@ -899,156 +744,145 @@ void process_set_name(int i_pid, const char *str_name)
     spin_unlock_irq(&process_lock, u_flags);
 }
 
-bool process_fds_inherit(int pid, int from)
+/* whether descriptor i_fd closes when its process runs another program */
+static void mark_cloexec(struct process *p, int i_fd, bool b_cloexec)
 {
-    /* copied out under the lock and the pipes referenced after it. */
-    struct fd copy[MAX_FDS];
-
-    uint64_t flags = spin_lock_irq(&process_lock);
-    struct process *child = slot_for(pid);
-    struct process *parent = slot_for(from);
-    bool ok = (child != NULL && parent != NULL);
-    if (ok) {
-        for (int i = 0; i < MAX_FDS; i++) {
-            copy[i] = parent->fds[i];
-            child->fds[i] = copy[i];
-        }
+    if (b_cloexec) {
+        p->u_cloexec |= 1ull << i_fd;
+    } else {
+        p->u_cloexec &= ~(1ull << i_fd);
     }
-    spin_unlock_irq(&process_lock, flags);
-
-    if (!ok) {
-        return false;
-    }
-    for (int i = 0; i < MAX_FDS; i++) {
-        if (copy[i].kind == FD_PIPE) {
-            pipe_share(copy[i].pipe, copy[i].writing);
-        }
-    }
-    return true;
 }
 
-bool process_fd_get(int pid, int fd, struct fd *out)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-    bool ok = false;
-
-    struct process *p = slot_for(pid);
-    if (p != NULL && fd >= 0 && fd < MAX_FDS && p->fds[fd].kind != FD_FREE) {
-        *out = p->fds[fd];
-        ok = true;
-    }
-
-    spin_unlock_irq(&process_lock, flags);
-    return ok;
-}
-
-int64_t process_fd_seek(int i_pid, int i_fd, int64_t i_offset, int i_whence)
+int process_fd_add(int i_pid, struct file *p_file, int i_from,
+                   bool b_cloexec)
 {
     uint64_t u_flags = spin_lock_irq(&process_lock);
     struct process *p = slot_for(i_pid);
-    int64_t i_to = -1;
+    int i_fd = -EMFILE;
 
-    if (p != NULL && i_fd >= 0 && i_fd < MAX_FDS) {
-        struct fd *p_fd = &p->fds[i_fd];
-        bool b_seekable = p_fd->kind == FD_MEMORY || p_fd->kind == FD_DISK;
-        int64_t i_from = (i_whence == SEEK_SET) ? 0
-                       : (i_whence == SEEK_CUR) ? (int64_t)p_fd->pos
-                       : (i_whence == SEEK_END) ? (int64_t)p_fd->size
-                       : -1;
-        if (b_seekable && i_from >= 0) {
-            i_to = i_from + i_offset;
-            if (i_to < 0 || (uint64_t)i_to > p_fd->size) {
-                i_to = -1;
-            } else {
-                p_fd->pos = (uint64_t)i_to;
-            }
-        }
-    }
-
-    spin_unlock_irq(&process_lock, u_flags);
-    return i_to;
-}
-
-int process_fd_place(int i_pid, const struct fd *p_src)
-{
-    uint64_t u_flags = spin_lock_irq(&process_lock);
-    int i_fd = -1;
-
-    struct process *p = slot_for(i_pid);
-    if (p != NULL) {
-        for (int i_at = FD_FIRST_FILE; i_at < MAX_FDS; i_at++) {
-            if (p->fds[i_at].kind == FD_FREE) {
-                p->fds[i_at] = *p_src;
+    if (p != NULL && i_from >= 0) {
+        for (int i_at = i_from; i_at < MAX_FDS; i_at++) {
+            if (p->fds[i_at] == NULL) {
+                p->fds[i_at] = p_file;
+                mark_cloexec(p, i_at, b_cloexec);
                 i_fd = i_at;
                 break;
             }
         }
     }
-
     spin_unlock_irq(&process_lock, u_flags);
     return i_fd;
 }
 
-bool process_fd_install(int pid, int fd, const struct fd *src)
+struct file *process_fd_file(int i_pid, int i_fd)
 {
-    uint64_t flags = spin_lock_irq(&process_lock);
-    bool ok = false;
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    struct file *p_file = NULL;
 
-    struct process *p = slot_for(pid);
-    if (p != NULL && fd >= 0 && fd < MAX_FDS) {
-        p->fds[fd] = *src;
-        ok = true;
+    if (p != NULL && i_fd >= 0 && i_fd < MAX_FDS) {
+        p_file = p->fds[i_fd];
+        if (p_file != NULL) {
+            file_get(p_file);
+        }
     }
-
-    spin_unlock_irq(&process_lock, flags);
-    return ok;
+    spin_unlock_irq(&process_lock, u_flags);
+    return p_file;
 }
 
-size_t process_take_pipes(int pid, struct pipe_end *out, size_t max)
+bool process_fd_replace(int i_pid, int i_fd, struct file *p_file,
+                        bool b_cloexec, struct file **pp_old)
 {
-    uint64_t flags = spin_lock_irq(&process_lock);
-    size_t n = 0;
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    bool b_done = false;
 
-    struct process *p = slot_for(pid);
-    if (p != NULL) {
-        for (int i = 0; i < MAX_FDS && n < max; i++) {
-            if (p->fds[i].kind != FD_PIPE) {
-                continue;
+    *pp_old = NULL;
+    if (p != NULL && i_fd >= 0 && i_fd < MAX_FDS) {
+        *pp_old = p->fds[i_fd];
+        p->fds[i_fd] = p_file;
+        mark_cloexec(p, i_fd, b_cloexec);
+        b_done = true;
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    return b_done;
+}
+
+struct file *process_fd_take(int i_pid, int i_fd)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    struct file *p_file = NULL;
+
+    if (p != NULL && i_fd >= 0 && i_fd < MAX_FDS) {
+        p_file = p->fds[i_fd];
+        p->fds[i_fd] = NULL;
+        mark_cloexec(p, i_fd, false);
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    return p_file;
+}
+
+bool process_fds_inherit(int pid, int from)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p_child = slot_for(pid);
+    struct process *p_parent = slot_for(from);
+    bool b_ok = (p_child != NULL && p_parent != NULL);
+
+    if (b_ok) {
+        for (int i_at = 0; i_at < MAX_FDS; i_at++) {
+            p_child->fds[i_at] = p_parent->fds[i_at];
+            if (p_child->fds[i_at] != NULL) {
+                file_get(p_child->fds[i_at]);
             }
-            out[n].p = p->fds[i].pipe;
-            out[n].writing = p->fds[i].writing;
-            n++;
-            p->fds[i].kind = FD_FREE;
-            p->fds[i].pipe = NULL;
         }
+        p_child->u_cloexec = p_parent->u_cloexec;
     }
-
-    spin_unlock_irq(&process_lock, flags);
-    return n;
+    spin_unlock_irq(&process_lock, u_flags);
+    return b_ok;
 }
 
-bool process_fd_close(int pid, int fd, struct pipe_end *closing)
+/*
+ * the descriptors in u_which taken out under the lock and their files put
+ * after it, since putting the last reference to a pipe's end wakes
+ * whoever waits at the other one, which reaches the scheduler
+ */
+static void close_fds(int i_pid, uint64_t u_which)
 {
-    if (closing != NULL) {
-        closing->p = NULL;
-    }
-    uint64_t flags = spin_lock_irq(&process_lock);
-    bool closed = false;
+    struct file *arr_files[MAX_FDS];
+    size_t sz_count = 0;
 
-    struct process *p = slot_for(pid);
-    if (p != NULL && fd >= 0 && fd < MAX_FDS && p->fds[fd].kind != FD_FREE) {
-        /* a pipe cannot be let go of here, that wakes threads, and this is holding the table. */
-        if (p->fds[fd].kind == FD_PIPE && closing != NULL) {
-            closing->p = p->fds[fd].pipe;
-            closing->writing = p->fds[fd].writing;
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    if (p != NULL) {
+        for (int i_at = 0; i_at < MAX_FDS; i_at++) {
+            if ((u_which & (1ull << i_at)) != 0 && p->fds[i_at] != NULL) {
+                arr_files[sz_count++] = p->fds[i_at];
+                p->fds[i_at] = NULL;
+                mark_cloexec(p, i_at, false);
+            }
         }
-        p->fds[fd].kind = FD_FREE;
-        p->fds[fd].pipe = NULL;
-        closed = true;
     }
+    spin_unlock_irq(&process_lock, u_flags);
 
-    spin_unlock_irq(&process_lock, flags);
-    return closed;
+    for (size_t sz_at = 0; sz_at < sz_count; sz_at++) {
+        file_put(arr_files[sz_at]);
+    }
+}
+
+void process_fds_release(int i_pid)
+{
+    close_fds(i_pid, ~0ull);
+}
+
+void process_fds_exec(int i_pid)
+{
+    const struct process *p = slot_for(i_pid);
+    if (p != NULL) {
+        close_fds(i_pid, p->u_cloexec);
+    }
 }
 
 size_t process_fd_count(int pid)
@@ -1056,8 +890,8 @@ size_t process_fd_count(int pid)
     size_t n = 0;
     const struct process *p = slot_for(pid);
     if (p != NULL) {
-        for (int i = FD_FIRST_FILE; i < MAX_FDS; i++) {
-            if (p->fds[i].kind != FD_FREE) {
+        for (int i = 0; i < MAX_FDS; i++) {
+            if (p->fds[i] != NULL) {
                 n++;
             }
         }

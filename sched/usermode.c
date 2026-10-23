@@ -22,6 +22,7 @@
 #include <velvet/process.h>
 #include <velvet/pit.h>
 #include <velvet/pipe.h>
+#include <velvet/file.h>
 #include <velvet/netif.h>
 #include <velvet/signal.h>
 #include <asm/irq.h>
@@ -72,7 +73,7 @@ static void reap_abandoned(void)
                  * before the slot goes, since afterwards there is
                  * nothing left to ask which pipes it was holding
                  */
-                pipe_release_for(p->pid);
+                process_fds_release(p->pid);
                 net_socket_close_all(p->pid);
                 net_tcp_close_all(p->pid);
                 process_collect(p->pid, NULL);
@@ -343,6 +344,12 @@ int user_spawn(const char *path, int argc, const char *const argv[],
         return 0;
     }
 
+    /* a program the kernel starts reads and writes the console */
+    for (int i_fd = FD_STDIN; i_fd <= FD_STDERR; i_fd++) {
+        struct file *p_old = NULL;
+        process_fd_replace(pid, i_fd, tty_console_file(), false, &p_old);
+    }
+
     /*
      * parked, not running.
      *
@@ -359,7 +366,7 @@ int user_spawn(const char *path, int argc, const char *const argv[],
     if (t == NULL) {
         int ignored;
         process_exited(pid, PROCESS_KILLED, pit_uptime_ms());
-        pipe_release_for(pid);
+        process_fds_release(pid);
         process_collect(pid, &ignored);
         kfree(start);
         addrspace_destroy(space);
@@ -423,7 +430,7 @@ bool user_exec(const char *str_path, int i_argc, const char *const pp_argv[],
  */
 bool user_collect(int i_pid, int *p_code)
 {
-    pipe_release_for(i_pid);
+    process_fds_release(i_pid);
     return process_collect(i_pid, p_code);
 }
 

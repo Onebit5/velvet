@@ -103,13 +103,27 @@ int input_getchar_blocking(void)
 
 #include <velvet/process.h>
 #include <velvet/tty.h>
+#include <uapi/velvet/errno.h>
 #include <velvet/console.h>
 
-/* a pipe a forked child inherits gains a holder rather than being copied. */
-struct pipe;
-void pipe_share(struct pipe *p, bool writing)
+/*
+ * the console's file is counted and never let go of, and what is written
+ * to it is printed: neither is what this suite is about
+ */
+#include <velvet/file.h>
+void file_get(struct file *p_file)
 {
-    (void)p; (void)writing;
+    p_file->u_refs++;
+}
+void file_put(struct file *p_file)
+{
+    if (p_file != NULL) {
+        p_file->u_refs--;
+    }
+}
+void kwrite(const char *s, size_t n)
+{
+    fwrite(s, 1, n, stdout);
 }
 
 #include <velvet/input.h>
@@ -397,13 +411,15 @@ int main(void)
         process_interrupt(pid2);
         out_reset();
         n = tty_read_line(pid2, buf, sizeof buf);
-        CHECK(n == -1, "an interrupt before the first key abandons the read");
+        CHECK(n == -EINTR,
+              "an interrupt before the first key abandons the read");
 
         /* and a process that is not at the front may not read at all */
         tty_set_foreground(TTY_NOBODY);
-        CHECK(tty_read_line(pid2, buf, sizeof buf) == -1,
+        CHECK(tty_read_line(pid2, buf, sizeof buf) == -EIO,
               "a background process is refused the keyboard");
-        CHECK(tty_read_line(pid2, buf, 0) == -1, "and a zero-length read too");
+        CHECK(tty_read_line(pid2, buf, 0) == -EIO,
+              "and a zero-length read too");
 
         process_exited(pid2, 0, 0);
         process_collect(pid2, NULL);

@@ -340,6 +340,26 @@ static size_t add_file(uint8_t *tar, size_t at, const char *name,
     return at;
 }
 
+/* the slab a file comes from, as plain malloc */
+#include <velvet/file.h>
+#include <velvet/slab.h>
+#include <uapi/velvet/errno.h>
+#include <uapi/velvet/syscall.h>
+void slab_cache_init(struct slab_cache *cache, const char *name,
+                     size_t obj_size)
+{
+    (void)name;
+    cache->obj_size = obj_size;
+}
+void *slab_alloc(struct slab_cache *cache)
+{
+    return malloc(cache->obj_size);
+}
+void slab_free(void *object)
+{
+    free(object);
+}
+
 int main(void)
 {
     static uint8_t tar[64 * 1024];
@@ -753,6 +773,45 @@ int main(void)
     CHECK(vfs_mount_at(2, &m) && strcmp(m.at, VFS_BOOT) == 0, "/boot is one");
     CHECK(m.present && !m.writable, "always there, never writable");
     CHECK(!vfs_mount_at(3, &m), "and there are only the three");
+
+    /*
+     * a file opened from a node: one position, moved by reads and by
+     * seeks, which stay within the file. the ramdisk's welcome is 19
+     * bytes long
+     */
+    {
+        struct file *p_file = NULL;
+        char arr_got[32];
+
+        CHECK(vfs_open("/boot/welcome.txt", &f)
+              && (p_file = vfs_open_file(&f, FILE_READ)) != NULL
+              && p_file->u_refs == 1 && p_file->e_type == FILE_TYPE_REGULAR,
+              "a node opens as a regular file, with one reference");
+        CHECK(p_file->p_ops->read(p_file, arr_got, 4) == 4
+              && p_file->p_ops->read(p_file, arr_got + 4, 4) == 4
+              && memcmp(arr_got, "the ramd", 8) == 0 && p_file->u_pos == 8,
+              "and reads carry on from where the last one stopped");
+        CHECK(p_file->p_ops->seek(p_file, 10, SEEK_SET) == 10
+              && p_file->p_ops->seek(p_file, 5, SEEK_CUR) == 15
+              && p_file->p_ops->seek(p_file, -4, SEEK_END) == 15,
+              "from the start, from where it is, and from the end");
+        CHECK(p_file->p_ops->seek(p_file, 1, SEEK_END) == -EINVAL
+              && p_file->p_ops->seek(p_file, -200, SEEK_CUR) == -EINVAL
+              && p_file->p_ops->seek(p_file, 0, 7) == -EINVAL
+              && p_file->u_pos == 15,
+              "a place outside the file, or a whence it does not know, "
+              "moves nothing");
+        CHECK(p_file->p_ops->read(p_file, arr_got, sizeof arr_got) == 4
+              && p_file->p_ops->read(p_file, arr_got, sizeof arr_got) == 0,
+              "a read stops at the end, and the next one is the end");
+        file_put(p_file);
+
+        CHECK(vfs_open("/proc/version", &f)
+              && (p_file = vfs_open_file(&f, FILE_READ)) != NULL
+              && p_file->p_ops->seek(p_file, 0, SEEK_SET) == -ESPIPE,
+              "a /proc file, which has no size, has no position to move");
+        file_put(p_file);
+    }
 
     if (failures == 0) printf("all good\n");
     return failures;

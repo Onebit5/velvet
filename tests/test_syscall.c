@@ -543,6 +543,66 @@ int64_t tty_read_line(int pid, char *buf, uint64_t len)
     return 1;
 }
 
+/*
+ * the console as tty.c makes it, over the stubs above, and the slab files
+ * come from, as plain malloc
+ */
+#include <velvet/file.h>
+#include <velvet/slab.h>
+#include <velvet/sched.h>
+static int64_t console_read(struct file *p_file, void *p_buf, size_t sz_len)
+{
+    (void)p_file;
+    return tty_read_line(sched_current()->pid, p_buf, sz_len);
+}
+static int64_t console_write(struct file *p_file, const void *p_buf,
+                             size_t sz_len)
+{
+    (void)p_file;
+    kwrite(p_buf, sz_len);
+    return (int64_t)sz_len;
+}
+static const struct file_operations console_ops = {
+    .read = console_read,
+    .write = console_write,
+};
+static struct file console = {
+    .p_ops = &console_ops,
+    .u_refs = 1,
+    .u_mode = FILE_READ | FILE_WRITE,
+    .e_type = FILE_TYPE_TTY,
+};
+struct file *tty_console_file(void)
+{
+    file_get(&console);
+    return &console;
+}
+void slab_cache_init(struct slab_cache *cache, const char *name,
+                     size_t obj_size)
+{
+    (void)name;
+    cache->obj_size = obj_size;
+}
+void *slab_alloc(struct slab_cache *cache)
+{
+    return malloc(cache->obj_size);
+}
+void slab_free(void *object)
+{
+    free(object);
+}
+
+/* the console on 0, 1 and 2, which is what a program is started with */
+static int with_console(int i_pid)
+{
+    for (int i_fd = FD_STDIN; i_fd <= FD_STDERR && i_pid > 0; i_fd++) {
+        struct file *p_old = NULL;
+        process_fd_replace(i_pid, i_fd, tty_console_file(), false, &p_old);
+        file_put(p_old);
+    }
+    return i_pid;
+}
+
 /* spawn and wait live in usermode.c, which needs a real cpu */
 static int started_pid = -1;
 void user_start(int pid)
@@ -835,7 +895,7 @@ int main(void)
      * the caller is a process, since half of these calls are about what
      * that process owns
      */
-    me.pid = process_create("tester", 0, 0, false, 0);
+    me.pid = with_console(process_create("tester", 0, 0, false, 0));
     foreground_pid = me.pid;    /* it holds the terminal, mostly */
 
     /* a page a user program could legitimately own */
@@ -946,10 +1006,14 @@ int main(void)
      * console a moment ago now reaches the buffer instead
      */
     {
-        static struct pipe pout, pin;
         static _Alignas(4096) char pbuf[64];
-        pipe_reset(&pout);
-        pipe_reset(&pin);
+        struct file *p_in_read = NULL, *p_in_write = NULL;
+        struct file *p_out_read = NULL, *p_out_write = NULL;
+        struct file *p_old = NULL;
+        pipe_open(&p_in_read, &p_in_write);
+        pipe_open(&p_out_read, &p_out_write);
+        struct pipe *p_in = p_in_read->p_private;
+        struct pipe *p_out = p_out_read->p_private;
 
         strcpy(page, "down the pipe");
 
@@ -958,25 +1022,20 @@ int main(void)
          * putting a pipe in a slot, the same act as `> file`, which
          * is why one mechanism does both
          */
-        struct fd slot;
-        memset(&slot, 0, sizeof slot);
-        slot.kind = FD_PIPE;
-        slot.pipe = &pin;
-        slot.writing = false;
-        process_fd_install(me.pid, FD_STDIN, &slot);
-        slot.pipe = &pout;
-        slot.writing = true;
-        process_fd_install(me.pid, FD_STDOUT, &slot);
+        process_fd_replace(me.pid, FD_STDIN, p_in_read, false, &p_old);
+        file_put(p_old);
+        process_fd_replace(me.pid, FD_STDOUT, p_out_write, false, &p_old);
+        file_put(p_old);
 
         out_reset();
         CHECK(write_to(FD_STDOUT, user_page, 13) == 13,
               "a write to stdout with a pipe on it succeeds");
         CHECK(out[0] == '\0', "and not one byte of it reaches the console");
-        CHECK(pipe_pending(&pout) == 13, "all of it is in the pipe");
+        CHECK(pipe_pending(p_out) == 13, "all of it is in the pipe");
 
         char got[32];
         memset(got, 0, sizeof got);
-        pipe_get(&pout, got, 13);
+        pipe_get(p_out, got, 13);
         CHECK(strcmp(got, "down the pipe") == 0, "byte for byte");
 
         /*
@@ -988,14 +1047,14 @@ int main(void)
         CHECK(write_to(FD_STDERR, user_page, 13) == 13, "stderr still writes");
         CHECK(strcmp(out, "down the pipe") == 0,
               "and goes to the console even with a pipe on stdout");
-        CHECK(pipe_pending(&pout) == 0, "with nothing added to the pipe");
+        CHECK(pipe_pending(p_out) == 0, "with nothing added to the pipe");
 
         /*
          * reading stdin takes from the pipe rather than the keyboard,
          * and the program has no way to know which it got
          */
         tty_was_read = false;
-        pipe_put(&pin, "from upstream\n", 14);
+        pipe_put(p_in, "from upstream\n", 14);
         user_extra = (uint64_t)pbuf;
         memset(pbuf, 0, sizeof pbuf);
         CHECK(call3(SYS_READ, FD_STDIN, (uint64_t)pbuf, sizeof pbuf) == 14,
@@ -1008,14 +1067,16 @@ int main(void)
          * end of file: the writer goes, and the read returns zero
          * rather than waiting for somebody who has already left
          */
-        pin.writers = 0;
+        file_put(p_in_write);
+        p_in_write = NULL;
         user_extra = (uint64_t)pbuf;
         CHECK(call3(SYS_READ, FD_STDIN, (uint64_t)pbuf, sizeof pbuf) == 0,
               "and reads zero once the writer has gone, which is end of file");
         user_extra = 0;
 
         /* a write with no reader left ends the process. */
-        pout.readers = 0;
+        file_put(p_out_read);
+        p_out_read = NULL;
         exited = 0;
         if (setjmp(jb) == 0) {
             (void)write_to(FD_STDOUT, user_page, 13);
@@ -1024,11 +1085,14 @@ int main(void)
         CHECK(exited, "it ends the process instead");
         CHECK(exit_code_seen == PROCESS_KILLED, "recorded as killed");
 
-        memset(&slot, 0, sizeof slot);
-        slot.kind = FD_KEYBOARD;
-        process_fd_install(me.pid, FD_STDIN, &slot);
-        slot.kind = FD_CONSOLE;
-        process_fd_install(me.pid, FD_STDOUT, &slot);
+        process_fd_replace(me.pid, FD_STDIN, tty_console_file(), false,
+                           &p_old);
+        file_put(p_old);
+        process_fd_replace(me.pid, FD_STDOUT, tty_console_file(), false,
+                           &p_old);
+        file_put(p_old);
+        file_put(p_in_write);
+        file_put(p_out_read);
         out_reset();
         CHECK(write_to(FD_STDOUT, user_page, 13) == 13,
               "and with the pipes gone, stdout is the console again");
@@ -1160,13 +1224,14 @@ int main(void)
     CHECK(spawned_parent == me.pid,
           "and records the caller as its parent, so only it may wait");
 
-    int stranger = process_create("stranger", 0, 0, false, 0);
-    int other = process_create("someone else's", stranger, 0, false, 0);
+    int stranger = with_console(process_create("stranger", 0, 0, false, 0));
+    int other = with_console(
+        process_create("someone else's", stranger, 0, false, 0));
     CHECK(call(SYS_WAIT, other, 0) == -1,
           "waiting for another process's child is refused, otherwise the "
           "exit code would go to the wrong place");
 
-    int mine = process_create("the test's", me.pid, 0, false, 0);
+    int mine = with_console(process_create("the test's", me.pid, 0, false, 0));
     int codeout = 0;
     user_extra = (uint64_t)&codeout;
     CHECK(syscall_dispatch(SYS_WAIT, (uint64_t)mine, (uint64_t)&codeout,
@@ -1180,8 +1245,8 @@ int main(void)
 
     /* -1 is any child, and a stop is told once to a wait that asks */
     {
-        int i_a = process_create("a", me.pid, 0, false, 0);
-        int i_b = process_create("b", me.pid, 0, false, 0);
+        int i_a = with_console(process_create("a", me.pid, 0, false, 0));
+        int i_b = with_console(process_create("b", me.pid, 0, false, 0));
         process_signal(i_b, SIGSTOP);
         CHECK(syscall_dispatch(SYS_WAIT, (uint64_t)-1, (uint64_t)&codeout,
                                WUNTRACED | WNOHANG, 0, 0, &caller_frame)
@@ -1208,7 +1273,7 @@ int main(void)
 
     /* the same call, from a process that is not the master */
     {
-        int guest = process_create("guest", 0, 1000, false, 0);
+        int guest = with_console(process_create("guest", 0, 1000, false, 0));
         int was = me.pid;
         me.pid = guest;
         foreground_pid = guest;
@@ -1294,7 +1359,7 @@ int main(void)
     }
 
     {
-        int guest = process_create("guest2", 0, 1000, false, 0);
+        int guest = with_console(process_create("guest2", 0, 1000, false, 0));
         int was = me.pid;
         me.pid = guest;
         foreground_pid = guest;
@@ -1354,7 +1419,7 @@ int main(void)
         CHECK(call(SYS_GETKEY, 0, 0) == -1, "and gives up when interrupted");
 
         /* the screen belongs to whoever is being typed at. */
-        int other = process_create("background", 0, 0, false, 0);
+        int other = with_console(process_create("background", 0, 0, false, 0));
         int was = me.pid;
         me.pid = other;
 
@@ -1404,9 +1469,9 @@ int main(void)
 
         CHECK(process_fd_count((int)child) == process_fd_count(me.pid),
               "holding every file its parent held");
-        struct fd inherited;
-        CHECK(process_fd_get((int)child, (int)held, &inherited),
-              "including that one");
+        struct file *p_inherited = process_fd_file((int)child, (int)held);
+        CHECK(p_inherited != NULL, "including that one");
+        file_put(p_inherited);
 
         /*
          * the ordering, which is the part that is easy to get wrong and
@@ -1676,9 +1741,9 @@ int main(void)
      * from root, and never to one that is not there
      */
     {
-        int i_rootly = process_create("rootly", 0, 0, false, 0);
-        int i_mine = process_create("mine", 0, 1000, false, 0);
-        int i_guest = process_create("guest5", 0, 1000, false, 0);
+        int i_rootly = with_console(process_create("rootly", 0, 0, false, 0));
+        int i_mine = with_console(process_create("mine", 0, 1000, false, 0));
+        int i_guest = with_console(process_create("guest5", 0, 1000, false, 0));
         int i_was = me.pid;
 
         me.pid = i_guest;
@@ -1706,11 +1771,14 @@ int main(void)
      */
     {
         int i_was = me.pid;
-        int i_shell = process_create("sh", 0, 1000, false, 0);
-        int i_left = process_create("left", i_shell, 1000, false, 0);
-        int i_right = process_create("right", i_shell, 1000, false, 0);
-        int i_stranger = process_create("stranger", 0, 1000, false, 0);
-        int i_rootly = process_create("rootly2", 0, 0, false, 0);
+        int i_shell = with_console(process_create("sh", 0, 1000, false, 0));
+        int i_left = with_console(
+            process_create("left", i_shell, 1000, false, 0));
+        int i_right = with_console(
+            process_create("right", i_shell, 1000, false, 0));
+        int i_stranger = with_console(
+            process_create("stranger", 0, 1000, false, 0));
+        int i_rootly = with_console(process_create("rootly2", 0, 0, false, 0));
 
         me.pid = i_shell;
         CHECK(call3(SYS_SETPGID, 0, 0, 0) == 0
@@ -1754,7 +1822,7 @@ int main(void)
      */
     {
         int i_was = me.pid;
-        int i_guest = process_create("guest7", 0, 1000, false, 0);
+        int i_guest = with_console(process_create("guest7", 0, 1000, false, 0));
 
         me.pid = i_guest;
         CHECK(call3(SYS_REBOOT, REBOOT_POWER_OFF, 0, 0) == -1
@@ -1781,7 +1849,7 @@ int main(void)
      */
     {
         int i_was = me.pid;
-        int i_login = process_create("login", 0, 0, false, 0);
+        int i_login = with_console(process_create("login", 0, 0, false, 0));
 
         me.pid = i_login;
         CHECK(call3(SYS_SETUID, 1000, 0, 0) == 0
@@ -1805,7 +1873,7 @@ int main(void)
      */
     {
         int i_was = me.pid;
-        int i_guest = process_create("guest6", 0, 1000, false, 0);
+        int i_guest = with_console(process_create("guest6", 0, 1000, false, 0));
 
         CHECK(call3(SYS_TTYATTACH, 2, 0, 0) == 0 && s_u_attached == 2,
               "root attaches to a console");
@@ -1910,7 +1978,7 @@ int main(void)
         CHECK(call5(SYS_RESIZE, user_page, 1, 0, kernel_page, 0) == -1,
               "and the answer goes nowhere but the caller's memory");
 
-        int i_guest = process_create("guest4", 0, 1000, false, 0);
+        int i_guest = with_console(process_create("guest4", 0, 1000, false, 0));
         int i_was = me.pid;
         me.pid = i_guest;
         s_u_resized_to = 0;

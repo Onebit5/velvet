@@ -50,8 +50,17 @@ bool tty_is_current(int pid);
 /* which console the calling thread belongs to. */
 unsigned tty_my_console(void);
 
-/* read a line on behalf of a process, echoing it as it is typed. */
+/*
+ * read a line on behalf of a process, echoing it as it is typed: its
+ * length, 0 at the end of input, -EIO for a process not in front, or
+ * -EINTR for a signal while it waited
+ */
 int64_t tty_read_line(int pid, char *buf, uint64_t len);
+
+struct file;
+
+/* the console, opened for reading and writing, with a reference to put */
+struct file *tty_console_file(void);
 
 /*
  * a mode rather than two syscalls, which is what the roadmap asked for

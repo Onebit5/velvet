@@ -14,6 +14,8 @@
 #include <velvet/sched.h>
 #include <velvet/thread.h>
 #include <velvet/console.h>
+#include <velvet/file.h>
+#include <uapi/velvet/errno.h>
 
 /* which process is at the front of the terminal */
 static struct spinlock tty_lock = SPINLOCK("tty", LOCK_RANK_DEVICE);
@@ -194,10 +196,10 @@ int64_t tty_read_line(int pid, char *buf, uint64_t len)
 {
     /* only the job at the front of the console being *looked at* may read. */
     if (len == 0 || !tty_is_current(pid)) {
-        return -1;
+        return -EIO;
     }
     if (process_take_interrupt(pid)) {
-        return -1;              /* interrupted before it even began */
+        return -EINTR;          /* interrupted before it even began */
     }
 
     uint64_t n = 0;
@@ -208,7 +210,7 @@ int64_t tty_read_line(int pid, char *buf, uint64_t len)
         if (c < 0) {
             process_take_interrupt(pid);
             kprintf("\n");
-            return -1;
+            return -EINTR;
         }
 
         /*
@@ -295,4 +297,43 @@ int64_t tty_read_line(int pid, char *buf, uint64_t len)
                                      * word nobody should see */
         }
     }
+}
+
+/*
+ * the console as a file: what a program the kernel starts finds on 0, 1
+ * and 2. reads take a line from the keyboard through the line
+ * discipline, writes go to the console of the thread writing. there is
+ * one, held by the terminal itself, so its last reference never goes
+ */
+static int64_t tty_file_read(struct file *p_file, void *p_buf, size_t sz_len)
+{
+    (void)p_file;
+    struct thread *p_me = sched_current();
+    return tty_read_line((p_me != NULL) ? p_me->pid : 0, p_buf, sz_len);
+}
+
+static int64_t tty_file_write(struct file *p_file, const void *p_buf,
+                              size_t sz_len)
+{
+    (void)p_file;
+    kwrite(p_buf, sz_len);
+    return (int64_t)sz_len;
+}
+
+static const struct file_operations console_ops = {
+    .read = tty_file_read,
+    .write = tty_file_write,
+};
+
+static struct file console_file = {
+    .p_ops = &console_ops,
+    .u_refs = 1,
+    .u_mode = FILE_READ | FILE_WRITE,
+    .e_type = FILE_TYPE_TTY,
+};
+
+struct file *tty_console_file(void)
+{
+    file_get(&console_file);
+    return &console_file;
 }

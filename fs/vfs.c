@@ -6,6 +6,9 @@
  */
 
 #include <velvet/vfs.h>
+#include <velvet/file.h>
+#include <uapi/velvet/errno.h>
+#include <uapi/velvet/syscall.h>
 #include <velvet/ramdisk.h>
 #include <velvet/disk.h>
 #include <velvet/kmalloc.h>
@@ -715,4 +718,77 @@ bool vfs_mount_at(size_t index, struct vfs_mount *out)
         return true;
     }
     return false;
+}
+
+/*
+ * a file on the ramdisk, on a disk or in /proc. vfs_read and vfs_write
+ * already know which of those the node is, so one set of operations
+ * serves all three, and the position is the one thing added here.
+ *
+ * TODO: two processes sharing one file after a fork, reading it at once
+ * on two cores, both start from the same position: nothing holds it for
+ * the length of a read, and the disk is too slow to hold a spinlock over
+ */
+static int64_t node_read(struct file *p_file, void *p_buf, size_t sz_len)
+{
+    int64_t i_got = vfs_read(&p_file->node, p_file->u_pos, p_buf, sz_len);
+    if (i_got > 0) {
+        p_file->u_pos += (uint64_t)i_got;
+    }
+    return (i_got < 0) ? -EIO : i_got;
+}
+
+/*
+ * the node is the file's own, so a write that grows the file leaves its
+ * new size and first cluster where the next write, through any
+ * descriptor on it, will find them
+ */
+static int64_t node_write(struct file *p_file, const void *p_buf,
+                          size_t sz_len)
+{
+    int64_t i_put = vfs_write(&p_file->node, p_file->u_pos, p_buf, sz_len);
+    if (i_put > 0) {
+        p_file->u_pos += (uint64_t)i_put;
+    }
+    return (i_put < 0) ? -EIO : i_put;
+}
+
+/*
+ * anywhere from the start to the end, inclusive. /proc's files are
+ * written afresh on every read and have no size to measure the end by,
+ * so they are read from the start or not at all
+ */
+static int64_t node_seek(struct file *p_file, int64_t i_offset, int i_whence)
+{
+    if (p_file->node.kind == VFS_PROC) {
+        return -ESPIPE;
+    }
+    int64_t i_from = (i_whence == SEEK_SET) ? 0
+                   : (i_whence == SEEK_CUR) ? (int64_t)p_file->u_pos
+                   : (i_whence == SEEK_END) ? (int64_t)p_file->node.size
+                   : -1;
+    if (i_from < 0) {
+        return -EINVAL;
+    }
+    int64_t i_to = i_from + i_offset;
+    if (i_to < 0 || (uint64_t)i_to > p_file->node.size) {
+        return -EINVAL;
+    }
+    p_file->u_pos = (uint64_t)i_to;
+    return i_to;
+}
+
+static const struct file_operations node_ops = {
+    .read = node_read,
+    .write = node_write,
+    .seek = node_seek,
+};
+
+struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode)
+{
+    struct file *p_file = file_alloc(&node_ops, u_mode, FILE_TYPE_REGULAR);
+    if (p_file != NULL) {
+        p_file->node = *p_node;
+    }
+    return p_file;
 }

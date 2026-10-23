@@ -28,12 +28,23 @@ void panic(const char *fmt, ...)
 
 #include <velvet/process.h>
 #include <uapi/velvet/syscall.h>
+#include <uapi/velvet/errno.h>
 
-/* a pipe a forked child inherits gains a holder rather than being copied. */
-static int shared_pipes;
-void pipe_share(struct pipe *p, bool writing)
+/*
+ * files are counted here rather than made: the table under test only
+ * takes and lets go of references, and these say how many it holds
+ */
+#include <velvet/file.h>
+static int s_i_released;
+void file_get(struct file *p_file)
 {
-    (void)p; (void)writing; shared_pipes++;
+    p_file->u_refs++;
+}
+void file_put(struct file *p_file)
+{
+    if (p_file != NULL && --p_file->u_refs == 0) {
+        s_i_released++;
+    }
 }
 
 static int failures;
@@ -137,27 +148,24 @@ int main(void)
 
 
     /*
-     * a process that ends keeps its pipe ends in their slots, for
-     * pipe_release_for to take and close with no lock held, and lets go
-     * of everything else on the spot
+     * a process that ends keeps what it had open in its slots, for
+     * process_fds_release to let go of with no lock held
      */
     {
-        static int s_i_pipe;   /* stands in for a pipe, never looked inside */
-        struct fd pipe_end = { .kind = FD_PIPE, .writing = true,
-                               .pipe = (struct pipe *)&s_i_pipe };
-        struct fd memory_file = { .kind = FD_MEMORY };
-        struct pipe_end arr_ends[MAX_FDS];
+        struct file pipe_end = { .u_refs = 1 };
+        struct file memory_file = { .u_refs = 1 };
+        struct file *p_old = NULL;
         int i_writer = process_create("bin/writer", 0, 0, false, 400);
 
-        process_fd_install(i_writer, FD_STDOUT, &pipe_end);
-        process_fd_install(i_writer, FD_FIRST_FILE, &memory_file);
+        process_fd_replace(i_writer, FD_STDOUT, &pipe_end, false, &p_old);
+        process_fd_add(i_writer, &memory_file, 0, false);
         process_exited(i_writer, 0, 410);
-        CHECK(process_take_pipes(i_writer, arr_ends, MAX_FDS) == 1
-              && arr_ends[0].p == (struct pipe *)&s_i_pipe
-              && arr_ends[0].writing,
-              "an exited process still holds its pipe end for release");
-        CHECK(process_fd_count(i_writer) == 0,
-              "and nothing else, once that end is taken");
+        CHECK(process_fd_count(i_writer) == 2 && pipe_end.u_refs == 1,
+              "an exited process still holds what it had open");
+        process_fds_release(i_writer);
+        CHECK(process_fd_count(i_writer) == 0 && pipe_end.u_refs == 0
+              && memory_file.u_refs == 0,
+              "until its descriptors are released, which puts each file");
         process_collect(i_writer, NULL);
     }
 
@@ -279,32 +287,6 @@ int main(void)
         process_collect(i_child, NULL);
         process_exited(i_parent, 0, 710);
         process_collect(i_parent, NULL);
-    }
-
-    /* a file's position moves within the file and nowhere else */
-    {
-        struct fd file = { .kind = FD_MEMORY, .size = 100 };
-        struct fd end = { .kind = FD_PIPE, .writing = true };
-        int i_reader = process_create("reader", 0, 0, false, 800);
-
-        process_fd_install(i_reader, FD_FIRST_FILE, &file);
-        process_fd_install(i_reader, FD_FIRST_FILE + 1, &end);
-        CHECK(process_fd_seek(i_reader, FD_FIRST_FILE, 10, SEEK_SET) == 10
-              && process_fd_seek(i_reader, FD_FIRST_FILE, 5, SEEK_CUR) == 15
-              && process_fd_seek(i_reader, FD_FIRST_FILE, -4, SEEK_END) == 96,
-              "from the start, from where it is, and from the end");
-        CHECK(process_fd_seek(i_reader, FD_FIRST_FILE, 1, SEEK_END) == -1
-              && process_fd_seek(i_reader, FD_FIRST_FILE, -200, SEEK_CUR)
-                 == -1
-              && process_fd_seek(i_reader, FD_FIRST_FILE, 0, SEEK_CUR) == 96,
-              "a place outside the file is -1, and moves nothing");
-        CHECK(process_fd_seek(i_reader, FD_FIRST_FILE, 0, 7) == -1,
-              "and so is a whence it does not know");
-        CHECK(process_fd_seek(i_reader, FD_FIRST_FILE + 1, 0, SEEK_SET) == -1
-              && process_fd_seek(i_reader, FD_STDOUT, 0, SEEK_SET) == -1,
-              "a pipe and the console have no position to move");
-        process_exited(i_reader, 0, 810);
-        process_collect(i_reader, NULL);
     }
 
     int pid = process_create("bin/hello", 0, 0, false, 1000);
@@ -480,82 +462,92 @@ int main(void)
     }
 
 
+    /* the descriptor table: numbers for files, shared rather than copied */
     {
-        static const char body[] = "hello there";
+        struct file files[MAX_FDS + 1];
+        struct file *p_old = NULL;
         int fp = process_create("reader", 0, 0, false, 0);
 
-        CHECK(process_fd_count(fp) == 0, "a new process holds no files");
-
-        int fd = process_fd_open(fp, body, 11);
-        CHECK(fd >= FD_FIRST_FILE,
-              "an opened file gets a number above the three the console owns");
-        CHECK(process_fd_count(fp) == 1, "and is counted");
-
-        const void *data = NULL;
-        uint64_t left = 0;
-        CHECK(process_fd_peek(fp, fd, &data, &left), "the fd can be looked at");
-        CHECK(left == 11 && data == body, "at the beginning, with it all left");
-
-        process_fd_advance(fp, fd, 5);
-        process_fd_peek(fp, fd, &data, &left);
-        CHECK(left == 6 && data == body + 5,
-              "and remembers where it got to between reads");
-
-        process_fd_advance(fp, fd, 999);
-        process_fd_peek(fp, fd, &data, &left);
-        CHECK(left == 0 && data == body + 11,
-              "reading past the end lands exactly on it, rather than beyond");
-
-        CHECK(!process_fd_peek(fp, FD_STDIN, NULL, NULL), "fd 0 is not a file");
-        CHECK(!process_fd_peek(fp, FD_STDOUT, NULL, NULL), "nor fd 1");
-
-        /* 0, 1 and 2 are real slots, so that redirection has somewhere to put a file. */
-        struct fd std;
-        CHECK(process_fd_get(fp, FD_STDIN, &std) && std.kind == FD_KEYBOARD,
-              "a new process reads from the keyboard");
-        CHECK(process_fd_get(fp, FD_STDOUT, &std) && std.kind == FD_CONSOLE,
-              "and writes to the screen");
-        CHECK(process_fd_get(fp, FD_STDERR, &std) && std.kind == FD_CONSOLE,
-              "on both of them");
-
-        /* which is exactly what redirection replaces */
-        struct fd redirected;
-        memset(&redirected, 0, sizeof redirected);
-        redirected.kind = FD_MEMORY;
-        redirected.data = (const uint8_t *)body;
-        redirected.size = 11;
-        CHECK(process_fd_install(fp, FD_STDOUT, &redirected),
-              "something else can be put in slot 1");
-        CHECK(process_fd_get(fp, FD_STDOUT, &std) && std.kind == FD_MEMORY,
-              "and that is what is there afterwards");
-
-        redirected.kind = FD_CONSOLE;
-        process_fd_install(fp, FD_STDOUT, &redirected);
-        CHECK(!process_fd_peek(fp, 99, NULL, NULL), "nor one out of range");
-        CHECK(!process_fd_peek(fp, -1, NULL, NULL), "nor a negative one");
-
-        struct pipe_end closing;
-        CHECK(process_fd_close(fp, fd, &closing), "closing works");
-        CHECK(closing.p == NULL, "with no pipe to let go of, since it was a file");
-        CHECK(!process_fd_close(fp, fd, &closing), "but only once");
-        CHECK(!process_fd_peek(fp, fd, NULL, NULL), "and the fd is gone");
-
-        int opened = 0;
-        for (int i = 0; i < MAX_FDS + 4; i++) {
-            if (process_fd_open(fp, body, 11) >= 0) opened++;
+        memset(files, 0, sizeof files);
+        for (size_t i = 0; i <= MAX_FDS; i++) {
+            files[i].u_refs = 1;
         }
-        CHECK(opened == MAX_FDS - FD_FIRST_FILE,
-              "it fills to exactly the fds that are not the console");
-        CHECK(process_fd_open(fp, body, 11) == -1,
-              "and then says no rather than overwriting one");
+        CHECK(process_fd_count(fp) == 0,
+              "a new process holds nothing until it is given something");
+
+        CHECK(process_fd_add(fp, &files[0], 0, false) == 0
+              && process_fd_add(fp, &files[1], 0, false) == 1
+              && process_fd_add(fp, &files[2], 5, false) == 5,
+              "a file goes at the lowest free descriptor from where asked");
+        CHECK(process_fd_count(fp) == 3, "and each is counted");
+
+        struct file *p_got = process_fd_file(fp, 1);
+        CHECK(p_got == &files[1] && files[1].u_refs == 2,
+              "looking one up hands back its file, with a reference");
+        file_put(p_got);
+        CHECK(process_fd_file(fp, 2) == NULL && process_fd_file(fp, 99) == NULL
+              && process_fd_file(fp, -1) == NULL,
+              "and nothing for one not open, out of range, or negative");
+
+        file_get(&files[0]);
+        CHECK(process_fd_replace(fp, 5, &files[0], false, &p_old)
+              && p_old == &files[2] && files[0].u_refs == 2,
+              "one file can be at two descriptors, what was there handed "
+              "back to be put");
+        file_put(p_old);
+        CHECK(files[2].u_refs == 0, "and put, it is let go of");
+        CHECK(!process_fd_replace(fp, MAX_FDS, &files[3], false, &p_old)
+              && p_old == NULL,
+              "a descriptor out of range is refused, nothing changed");
+
+        CHECK(process_fd_take(fp, 1) == &files[1]
+              && process_fd_take(fp, 1) == NULL,
+              "closing takes the file out once, and only once");
+        file_put(&files[1]);
+
+        /* what a child is given: the same files, not copies of them */
+        int child = process_create("child", fp, 0, false, 0);
+        CHECK(process_fds_inherit(child, fp) && files[0].u_refs == 4
+              && process_fd_file(child, 5) == &files[0],
+              "a child holds its parent's files, each with one more holder");
+        file_put(&files[0]);
+        process_fds_release(child);
+        CHECK(files[0].u_refs == 2, "and lets go of them when it ends");
+        process_exited(child, 0, 0);
+        process_collect(child, NULL);
+
+        /* the ones marked close-on-exec go when it runs another program */
+        CHECK(process_fd_add(fp, &files[4], 0, true) == 1,
+              "a descriptor can be marked to close on exec");
+        process_fds_exec(fp);
+        CHECK(process_fd_file(fp, 1) == NULL && files[4].u_refs == 0,
+              "and closes when the process runs another program");
+        p_got = process_fd_file(fp, 0);
+        CHECK(p_got == &files[0], "while the rest stay open");
+        file_put(p_got);
+
+        static struct file s_arr_spare[MAX_FDS];
+        int i_opened = 0;
+        for (int i = 0; i < MAX_FDS; i++) {
+            s_arr_spare[i].u_refs = 1;
+            if (process_fd_add(fp, &s_arr_spare[i], 0, false) >= 0) {
+                i_opened++;
+            }
+        }
+        CHECK(i_opened == MAX_FDS - 2 && process_fd_count(fp) == MAX_FDS,
+              "it fills to exactly the number of descriptors there are");
+        CHECK(process_fd_add(fp, &files[3], 0, false) == -EMFILE
+              && files[3].u_refs == 1,
+              "and then says so, leaving the file the caller's");
 
         process_exited(fp, 0, 0);
-        CHECK(process_fd_count(fp) == 0,
-              "a process that ends takes its open files with it");
+        process_fds_release(fp);
+        CHECK(process_fd_count(fp) == 0 && files[0].u_refs == 0,
+              "a process that ends lets go of everything it held");
         process_collect(fp, NULL);
 
-        CHECK(process_fd_open(9999, body, 11) == -1, "no process, no fd");
-        CHECK(!process_fd_peek(9999, 3, NULL, NULL), "and nothing to peek at");
+        CHECK(process_fd_add(9999, &files[3], 0, false) < 0,
+              "no process, no descriptor");
     }
 
     /*

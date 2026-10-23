@@ -151,7 +151,7 @@ static void reap_dead(void)
          * the only place its pipe ends get released. outside the lock,
          * because closing one wakes whoever is waiting on it
          */
-        pipe_release_for(dead[i]->pid);
+        process_fds_release(dead[i]->pid);
         net_socket_close_all(dead[i]->pid);
         net_tcp_close_all(dead[i]->pid);
         thread_free_stack(dead[i]);

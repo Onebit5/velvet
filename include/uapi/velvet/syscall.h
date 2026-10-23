@@ -208,9 +208,9 @@ struct user_stat {
 
 /*
  * make descriptor `to` another handle on whatever `from` is, closing
- * what `to` held first: `to`, or -1 when `from` is not open. a copy of
- * a pipe end is one more holder of it, and a copy of a file keeps a
- * position of its own
+ * what `to` held first: `to`, or -1 when `from` is not open. the two
+ * are the same open file, sharing its position, and a pipe's end
+ * closes only when every descriptor on it has
  */
 #define SYS_DUP2      60
 

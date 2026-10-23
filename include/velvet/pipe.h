@@ -53,13 +53,23 @@ struct pipe *pipe_create(void);
 void pipe_close_read(struct pipe *p);
 void pipe_close_write(struct pipe *p);
 
-void pipe_share(struct pipe *p, bool writing);
-
+/*
+ * up to len bytes, waiting for some: how many, 0 once every writer is
+ * gone, or -EINTR for a signal while waiting
+ */
 int64_t pipe_read(struct pipe *p, int pid, void *buf, uint64_t len);
 
+/*
+ * all of len, waiting for room: how many went, which is fewer only for a
+ * signal or a reader leaving part way, -EPIPE when no reader is left
+ * before any did, or -EINTR
+ */
 int64_t pipe_write(struct pipe *p, int pid, const void *buf, uint64_t len);
 
-void pipe_release_for(int pid);
+struct file;
+
+/* a new pipe, as two files: one to read it and one to write it */
+bool pipe_open(struct file **pp_read, struct file **pp_write);
 
 size_t pipe_count(void);
 

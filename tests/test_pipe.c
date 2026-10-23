@@ -33,6 +33,9 @@ void kfree(void *p)
 
 #include <velvet/process.h>
 #include <velvet/pipe.h>
+#include <velvet/file.h>
+#include <velvet/slab.h>
+#include <uapi/velvet/errno.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \
@@ -73,25 +76,29 @@ bool process_interrupt_pending(int pid)
     (void)pid; return interrupt_pending;
 }
 
-/* what a process was holding, so pipe_release_for has something to take away. */
-static struct pipe *held_in, *held_out;
-size_t process_take_pipes(int pid, struct pipe_end *out, size_t max)
+/*
+ * the files a pipe is opened as are real, and so is the slab they come
+ * from, as far as this suite can tell: plain malloc
+ */
+void slab_cache_init(struct slab_cache *cache, const char *name,
+                     size_t obj_size)
 {
-    (void)pid;
-    size_t n = 0;
-    if (held_in != NULL && n < max) {
-        out[n].p = held_in;
-        out[n].writing = false;
-        n++;
-        held_in = NULL;
-    }
-    if (held_out != NULL && n < max) {
-        out[n].p = held_out;
-        out[n].writing = true;
-        n++;
-        held_out = NULL;
-    }
-    return n;
+    (void)name;
+    cache->obj_size = obj_size;
+}
+void *slab_alloc(struct slab_cache *cache)
+{
+    return malloc(cache->obj_size);
+}
+void slab_free(void *object)
+{
+    free(object);
+}
+
+/* nobody is running: a pipe read here is nobody's */
+struct thread *sched_current(void)
+{
+    return NULL;
 }
 
 int main(void)
@@ -204,7 +211,7 @@ int main(void)
 
     pipe_reset(&p);
     p.readers = 0;
-    CHECK(pipe_write(&p, 1, "nobody is listening", 19) == -1,
+    CHECK(pipe_write(&p, 1, "nobody is listening", 19) == -EPIPE,
           "writing with no reader left fails rather than filling a buffer");
 
     /* a write that got partway before the reader left reports what it managed. */
@@ -218,7 +225,7 @@ int main(void)
         int64_t n = pipe_write(&p, 1, big, 4);
         CHECK(n == 4, "a write that exactly fills the pipe returns");
         p.readers = 0;
-        CHECK(pipe_write(&p, 1, big, 4) == -1,
+        CHECK(pipe_write(&p, 1, big, 4) == -EPIPE,
               "and the next one has nowhere to go");
     }
 
@@ -237,7 +244,7 @@ int main(void)
     /* an interrupt gets a blocked reader out. */
     pipe_reset(&p);
     interrupt_pending = true;
-    CHECK(pipe_read(&p, 1, out, sizeof out) == -1,
+    CHECK(pipe_read(&p, 1, out, sizeof out) == -EINTR,
           "an interrupted read gives up rather than waiting for ever");
     interrupt_pending = false;
 
@@ -263,32 +270,38 @@ int main(void)
     CHECK(pipe_count() == before, "and closing nothing does nothing");
 
     /*
-     * the thing that has to be true is that calling it twice is
-     * harmless, because there are three places that call it and no way
-     * to know which will get there first: a program that leaves runs
-     * one, a program that is killed never does and gets another
+     * a pipe opened as two files, one to read and one to write. an end
+     * closes when its file is let go of, whatever number of descriptors
+     * held it, and the pipe goes with the second end
      */
     {
-        struct pipe *a = pipe_create();
-        struct pipe *b = pipe_create();
-        CHECK(pipe_count() == before + 2, "two pipes for a process to hold");
+        struct file *p_read = NULL;
+        struct file *p_write = NULL;
+        char arr_got[16];
 
-        held_in = a;
-        held_out = b;
-        pipe_release_for(7);
-        CHECK(a->readers == 0, "releasing lets go of the reading end");
-        CHECK(b->writers == 0, "and the writing one");
-        CHECK(pipe_count() == before + 2,
-              "though neither is freed while the other end is still held");
+        CHECK(pipe_open(&p_read, &p_write) && pipe_count() == before + 1,
+              "a pipe opens as two files");
+        CHECK((p_read->u_mode & FILE_READ) && !(p_read->u_mode & FILE_WRITE)
+              && p_read->p_ops->write == NULL
+              && (p_write->u_mode & FILE_WRITE)
+              && p_write->p_ops->read == NULL,
+              "one that only reads and one that only writes");
+        CHECK(p_write->p_ops->write(p_write, "both ends", 9) == 9
+              && p_read->p_ops->read(p_read, arr_got, sizeof arr_got) == 9
+              && memcmp(arr_got, "both ends", 9) == 0,
+              "and what goes in one comes out of the other");
 
-        pipe_release_for(7);
-        CHECK(a->readers == 0 && b->writers == 0,
-              "and a second release takes nothing further, which is what "
-              "lets three different paths all call it safely");
-
-        pipe_close_write(a);
-        pipe_close_read(b);
-        CHECK(pipe_count() == before, "and then both go");
+        struct pipe *p_pipe = p_read->p_private;
+        file_get(p_write);
+        file_put(p_write);
+        CHECK(p_pipe->writers == 1,
+              "another descriptor on the writing end is not another writer");
+        file_put(p_write);
+        CHECK(p_pipe->writers == 0
+              && p_read->p_ops->read(p_read, arr_got, sizeof arr_got) == 0,
+              "the last one let go of is the end of the file for the reader");
+        file_put(p_read);
+        CHECK(pipe_count() == before, "and the reading end going frees it");
     }
 
     CHECK(pipe_count() == before, "nothing leaked along the way");

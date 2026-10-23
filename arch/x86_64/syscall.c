@@ -34,6 +34,7 @@
 #include <velvet/console.h>
 #include <velvet/input.h>
 #include <velvet/pipe.h>
+#include <velvet/file.h>
 #include <velvet/kmalloc.h>
 #include <velvet/addrspace.h>
 #include <velvet/vmm.h>
@@ -136,121 +137,40 @@ static bool copy_path_resolved(uint64_t ptr, uint64_t len,
 }
 
 /*
- * the whole of writing, now that a descriptor can be four things.
- *
- * one lookup and a switch. a program asks for descriptor 1 and gets
- * whatever was put there before it started, the screen, a pipe, or a
- * file, and cannot tell which. that is the entire reason `echo hi`,
- * `echo hi | wc` and `echo hi > x` are the same program doing the same
- * thing, and it is why redirection needed 0, 1 and 2 to become real
- * slots rather than three special cases in here
+ * a file just opened, at the caller's lowest free descriptor: which, or
+ * -1 with the file let go of when there is none, or no file at all
  */
-static int64_t write_kernel(uint64_t fd, const void *p_buf, uint64_t len)
+static int64_t install_file(struct file *p_file)
 {
-    /*
-     * a copy rather than a pointer into the table: everything below
-     * this may block, and none of it may run while the process table's
-     * lock is held
-     */
-    struct fd f;
-    if (!process_fd_get(caller_pid(), (int)fd, &f)) {
+    if (p_file == NULL) {
         return -1;
     }
-
-    switch (f.kind) {
-    case FD_CONSOLE:
-        /*
-         * the console belongs to whoever is at the front of the
-         * terminal, exactly the way the keyboard does. a job put in the
-         * background with `&` printing over the prompt is the noise
-         * that `&` was supposed to spare you, and worse than noise,
-         * because it lands in the middle of a line you are typing.
-         *
-         * so it is dropped rather than refused. a program has no way to
-         * know it is in the background and no sensible thing to do
-         * about it, and a write that fails would have it either die or
-         * loop; a write that quietly went nowhere is what a terminal
-         * nobody is watching actually is.
-         *
-         * descriptor 2 is the exception, and it is the exception
-         * everywhere for the same reason: it is the one that reaches
-         * the terminal whatever else is going on, so a job that failed
-         * in the background still gets to say so. the same call was
-         * made for pipes, errors are not data
-         */
-        if (fd != FD_STDERR
-            && process_pgid(caller_pid()) != tty_foreground()) {
-            return (int64_t)len;
-        }
-        /*
-         * one call rather than one per byte. this was `kprintf("%c", ...)`
-         * in a loop, which parses a format string and walks a variadic
-         * list for every character a program prints, two thousand of
-         * each to redraw a screen
-         */
-        kwrite(p_buf, (size_t)len);
-        return (int64_t)len;
-
-    case FD_PIPE: {
-        if (!f.writing) {
-            return -1;      /* the reading end. a descriptor goes one way */
-        }
-        int64_t n = pipe_write(f.pipe, caller_pid(), p_buf, len);
-        return (n < 0) ? -EPIPE : n;
-    }
-
-    case FD_DISK: {
-        /*
-         * FIXME: nothing here checks that this descriptor was opened for
-         * writing, or that the caller may write this file at all. sys_open
-         * hands back an FD_DISK on a read check alone and records no write
-         * intent, and the only write guards in this file, in sys_create
-         * and in redirect, cover making a new file as uid 0. so a guest
-         * opens a root-owned 0644 file for reading and writes through the
-         * same descriptor, and the bytes reach the disk: the one promise
-         * this system is built to keep, that a uid cannot reach what is
-         * not its own, does not hold for a file that already exists. the
-         * fd wants a writable bit set at open time, and a vfs_may_write to
-         * gate the write the way vfs_may_read already gates the read.
-         */
-        struct fd_disk d;
-        if (!process_fd_disk(caller_pid(), (int)fd, &d)) {
-            return -1;
-        }
-
-        /*
-         * the descriptor remembered where this file's directory record
-         * is, which is what lets the new size be written back to the
-         * right place without looking the path up all over again
-         */
-        struct vfs_file vf;
-        memset(&vf, 0, sizeof vf);
-        vf.kind = VFS_DISK;
-        vf.mount = d.mount;
-        vf.cluster = d.cluster;
-        vf.size = d.size;
-        vf.entry_sector = d.entry_sector;
-        vf.entry_offset = d.entry_offset;
-
-        int64_t n = vfs_write(&vf, d.pos, p_buf, len);
-        if (n > 0) {
-            process_fd_grew(caller_pid(), (int)fd, vf.cluster, vf.size);
-            process_fd_advance(caller_pid(), (int)fd, (uint64_t)n);
-        }
-        return n;
-    }
-
-    default:
-        /*
-         * the keyboard, and a file in read-only memory. neither takes
-         * anything, and saying so beats pretending it went somewhere
-         */
+    int i_fd = process_fd_add(caller_pid(), p_file, 0, false);
+    if (i_fd < 0) {
+        file_put(p_file);
         return -1;
     }
+    return i_fd;
 }
 
+/*
+ * the whole of writing: one lookup and a call through the file. a
+ * program asks for descriptor 1 and gets whatever was put there before
+ * it started, the console, a pipe, or a file, and cannot tell which.
+ * that is the entire reason `echo hi`, `echo hi | wc` and `echo hi > x`
+ * are the same program doing the same thing
+ */
 static int64_t sys_write(uint64_t fd, uint64_t ptr, uint64_t len)
 {
+    struct file *p_file = process_fd_file(caller_pid(), (int)fd);
+    if (p_file == NULL) {
+        return -1;
+    }
+    if (!(p_file->u_mode & FILE_WRITE) || p_file->p_ops->write == NULL) {
+        file_put(p_file);
+        return -1;      /* opened to be read, or a thing that only reads */
+    }
+
     /*
      * clamp first, then copy what the kernel clamped to. a program asking
      * to write four exabytes gets a short write rather than a refusal,
@@ -260,15 +180,29 @@ static int64_t sys_write(uint64_t fd, uint64_t ptr, uint64_t len)
     if (len > WRITE_MAX) {
         len = WRITE_MAX;
     }
-    char *p_buf = kmalloc(WRITE_MAX);
-    if (p_buf == NULL) {
-        return -1;
+
+    /*
+     * the console belongs to whoever is at the front of the terminal,
+     * exactly the way the keyboard does. a job put in the background
+     * with `&` printing over the prompt is the noise that `&` was
+     * supposed to spare you, so it is dropped rather than refused: a
+     * write that quietly went nowhere is what a terminal nobody is
+     * watching actually is. descriptor 2 is the exception, so that a job
+     * that failed in the background still gets to say so
+     */
+    if (p_file->e_type == FILE_TYPE_TTY && fd != FD_STDERR
+        && process_pgid(caller_pid()) != tty_foreground()) {
+        file_put(p_file);
+        return (int64_t)len;
     }
+
+    char *p_buf = kmalloc(WRITE_MAX);
     int64_t n = -1;
-    if (copy_from_user(p_buf, ptr, len) == 0) {
-        n = write_kernel(fd, p_buf, len);
+    if (p_buf != NULL && copy_from_user(p_buf, ptr, len) == 0) {
+        n = p_file->p_ops->write(p_file, p_buf, len);
     }
     kfree(p_buf);
+    file_put(p_file);
 
     if (n == -EPIPE) {
         /*
@@ -283,133 +217,40 @@ static int64_t sys_write(uint64_t fd, uint64_t ptr, uint64_t len)
          */
         thread_exit(PROCESS_KILLED);
     }
-    return n;
+    return (n < 0) ? -1 : n;
 }
 
 /*
- * the terminal does the echoing and the line editing, because a program
- * in ring 3 cannot, the keys never pass through it
- */
-static int64_t read_kernel(uint64_t fd, void *p_buf, uint64_t len)
-{
-    struct fd f;
-    if (!process_fd_get(caller_pid(), (int)fd, &f)) {
-        return -1;
-    }
-
-    switch (f.kind) {
-    case FD_KEYBOARD:
-        /*
-         * the keyboard, unless somebody put something else there. a
-         * program reading stdin neither knows nor cares whether a
-         * person or a `cat` is on the other end
-         */
-        return tty_read_line(caller_pid(), p_buf, len);
-
-    case FD_PIPE:
-        if (f.writing) {
-            return -1;
-        }
-        return pipe_read(f.pipe, caller_pid(), p_buf, len);
-
-    case FD_DISK: {
-        /*
-         * the bytes are not in memory, so the descriptor's position and
-         * the file's first cluster are enough to go and get them
-         */
-        struct fd_disk d;
-        if (!process_fd_disk(caller_pid(), (int)fd, &d)) {
-            return -1;
-        }
-        if (d.remaining == 0) {
-            return 0;           /* the end, which is not an error */
-        }
-        if (len > d.remaining) {
-            len = d.remaining;
-        }
-        struct vfs_file vf;
-        memset(&vf, 0, sizeof vf);
-        vf.kind = VFS_DISK;
-        vf.mount = d.mount;
-        vf.cluster = d.cluster;
-        vf.size = d.size;
-
-        int64_t n = vfs_read(&vf, d.pos, p_buf, len);
-        if (n > 0) {
-            process_fd_advance(caller_pid(), (int)fd, (uint64_t)n);
-        }
-        return n;
-    }
-
-    case FD_MEMORY: {
-        /*
-         * the bytes are already in memory, the descriptor only says
-         * how far through them the kernel had got
-         */
-        const void *data = NULL;
-        uint64_t left = 0;
-        if (!process_fd_peek(caller_pid(), (int)fd, &data, &left)) {
-            return -1;
-        }
-        if (left < len) {
-            len = left;         /* a short read at the end, as usual */
-        }
-        memcpy(p_buf, data, len);
-        process_fd_advance(caller_pid(), (int)fd, len);
-        return (int64_t)len;
-    }
-
-    case FD_PROC: {
-        /*
-         * written afresh from where the last read stopped, so a reader
-         * taking it a piece at a time sees one file, as long as nothing
-         * in it changed in between
-         */
-        struct vfs_file vf;
-        memset(&vf, 0, sizeof vf);
-        vf.kind = VFS_PROC;
-        vf.sz_proc = f.sz_proc;
-
-        int64_t i_got = vfs_read(&vf, f.pos, p_buf, len);
-        if (i_got > 0) {
-            process_fd_advance(caller_pid(), (int)fd, (uint64_t)i_got);
-        }
-        return i_got;
-    }
-
-    default:
-        return -1;      /* the console. there is nothing to read from it */
-    }
-}
-
-/*
- * a read a piece at a time through the kernel's own buffer. a file is
- * read until the caller has what it asked for or the file ends, the way
- * a program expects a file to be read; a pipe or the keyboard answers
- * with what there is
+ * a read a piece at a time through the kernel's own buffer. a regular
+ * file is read until the caller has what it asked for or the file ends,
+ * the way a program expects a file to be read; a pipe or the keyboard
+ * answers with what there is. the terminal does the echoing and the
+ * line editing, because a program in ring 3 cannot, the keys never pass
+ * through it
  */
 static int64_t sys_read(uint64_t fd, uint64_t ptr, uint64_t len)
 {
-    struct fd f;
-    if (len == 0 || !access_ok(ptr, len)
-        || !process_fd_get(caller_pid(), (int)fd, &f)) {
+    if (len == 0 || !access_ok(ptr, len)) {
         return -1;
     }
-    bool b_file = f.kind == FD_DISK || f.kind == FD_MEMORY
-                  || f.kind == FD_PROC;
+    struct file *p_file = process_fd_file(caller_pid(), (int)fd);
+    if (p_file == NULL) {
+        return -1;
+    }
+    if (!(p_file->u_mode & FILE_READ) || p_file->p_ops->read == NULL) {
+        file_put(p_file);
+        return -1;
+    }
 
     char *p_buf = kmalloc(READ_CHUNK);
-    if (p_buf == NULL) {
-        return -1;
-    }
     uint64_t u_done = 0;
-    int64_t i_result = 0;
-    while (u_done < len) {
+    int64_t i_result = (p_buf != NULL) ? 0 : -1;
+    while (p_buf != NULL && u_done < len) {
         uint64_t u_want = len - u_done;
         if (u_want > READ_CHUNK) {
             u_want = READ_CHUNK;
         }
-        int64_t i_got = read_kernel(fd, p_buf, u_want);
+        int64_t i_got = p_file->p_ops->read(p_file, p_buf, u_want);
         if (i_got <= 0) {
             i_result = i_got;
             break;
@@ -419,40 +260,43 @@ static int64_t sys_read(uint64_t fd, uint64_t ptr, uint64_t len)
             break;
         }
         u_done += (uint64_t)i_got;
-        if (!b_file || (uint64_t)i_got < u_want) {
+        if (p_file->e_type != FILE_TYPE_REGULAR || (uint64_t)i_got < u_want) {
             break;
         }
     }
     kfree(p_buf);
-    return (u_done > 0) ? (int64_t)u_done : i_result;
+    file_put(p_file);
+    if (u_done > 0) {
+        return (int64_t)u_done;
+    }
+    return (i_result < 0) ? -1 : 0;
 }
 
 /*
- * closing a descriptor with a pipe in it lets go of one end, which
- * wakes whoever is waiting on the other, so the pipe comes back out
- * of the table first and is closed here, holding nothing
+ * the descriptor goes at once, and the file with the last descriptor on
+ * it, anywhere: a pipe's end closes when every copy of it a fork or a
+ * dup made has closed too
  */
-/* one end of a pipe the caller no longer has, let go of */
-static void let_go(const struct pipe_end *p_end)
-{
-    if (p_end->p == NULL) {
-        return;
-    }
-    if (p_end->writing) {
-        pipe_close_write(p_end->p);
-    } else {
-        pipe_close_read(p_end->p);
-    }
-}
-
 static int64_t sys_close(int fd)
 {
-    struct pipe_end e;
-    if (!process_fd_close(caller_pid(), fd, &e)) {
+    struct file *p_file = process_fd_take(caller_pid(), fd);
+    if (p_file == NULL) {
         return -1;
     }
-    let_go(&e);
+    file_put(p_file);
     return 0;
+}
+
+static int64_t sys_lseek(int fd, int64_t i_offset, int i_whence)
+{
+    struct file *p_file = process_fd_file(caller_pid(), fd);
+    if (p_file == NULL) {
+        return -1;
+    }
+    int64_t i_to = (p_file->p_ops->seek != NULL)
+                 ? p_file->p_ops->seek(p_file, i_offset, i_whence) : -1;
+    file_put(p_file);
+    return (i_to < 0) ? -1 : i_to;
 }
 
 /*
@@ -524,7 +368,7 @@ static int64_t sys_fork(struct pt_regs *regs)
         kfree(frame);
         addrspace_destroy(space);
         process_exited(pid, PROCESS_KILLED, pit_uptime_ms());
-        pipe_release_for(pid);
+        process_fds_release(pid);
         process_collect(pid, NULL);
         return -1;
     }
@@ -535,7 +379,7 @@ static int64_t sys_fork(struct pt_regs *regs)
         kfree(frame);
         addrspace_destroy(space);
         process_exited(pid, PROCESS_KILLED, pit_uptime_ms());
-        pipe_release_for(pid);
+        process_fds_release(pid);
         process_collect(pid, NULL);
         return -1;
     }
@@ -858,14 +702,11 @@ static int64_t sys_open(uint64_t ptr, uint64_t len)
         return -1;
     }
 
-    if (f.kind == VFS_DISK) {
-        return process_fd_open_disk(caller_pid(), f.cluster, f.size,
-                                    f.entry_sector, f.entry_offset, f.mount);
-    }
-    if (f.kind == VFS_PROC) {
-        return process_fd_open_proc(caller_pid(), f.sz_proc);
-    }
-    return process_fd_open(caller_pid(), f.data, f.size);
+    /*
+     * for reading, and only reading: the check above is the one that was
+     * made, so it is the one the descriptor carries
+     */
+    return install_file(vfs_open_file(&f, FILE_READ));
 }
 
 /*
@@ -889,8 +730,7 @@ static int64_t sys_create(uint64_t ptr, uint64_t len)
     if (!vfs_create(path, &f)) {
         return -1;
     }
-    return process_fd_open_disk(caller_pid(), f.cluster, f.size,
-                                f.entry_sector, f.entry_offset, f.mount);
+    return install_file(vfs_open_file(&f, FILE_READ | FILE_WRITE));
 }
 
 
@@ -1108,6 +948,7 @@ static int64_t sys_execve(struct pt_regs *regs, uint64_t u_ptr,
         return -1;
     }
     kfree(str_args);
+    process_fds_exec(caller_pid());
 
     /*
      * the frame the exit path restores is the new program's start: its
@@ -1139,27 +980,21 @@ static int64_t sys_pipe(uint64_t u_fds)
     if (!access_ok(u_fds, 2 * sizeof(int32_t))) {
         return -1;
     }
-    struct pipe *p_pipe = pipe_create();
-    if (p_pipe == NULL) {
+    struct file *p_read = NULL;
+    struct file *p_write = NULL;
+    if (!pipe_open(&p_read, &p_write)) {
         return -1;
     }
-
-    struct fd end;
-    memset(&end, 0, sizeof end);
-    end.kind = FD_PIPE;
-    end.pipe = p_pipe;
-    int i_read = process_fd_place(i_pid, &end);
-    end.writing = true;
-    int i_write = (i_read >= 0) ? process_fd_place(i_pid, &end) : -1;
-
+    int i_read = process_fd_add(i_pid, p_read, 0, false);
+    int i_write = (i_read >= 0) ? process_fd_add(i_pid, p_write, 0, false)
+                                : -1;
     if (i_write < 0) {
         /* no room for both, so neither end was ever the caller's */
-        struct pipe_end taken;
         if (i_read >= 0) {
-            process_fd_close(i_pid, i_read, &taken);
+            process_fd_take(i_pid, i_read);
         }
-        pipe_close_read(p_pipe);
-        pipe_close_write(p_pipe);
+        file_put(p_read);
+        file_put(p_write);
         return -1;
     }
     int32_t arr_fds[2] = { i_read, i_write };
@@ -1172,26 +1007,29 @@ static int64_t sys_pipe(uint64_t u_fds)
     return 0;
 }
 
+/*
+ * another descriptor on the same file, closing whatever `to` held: the
+ * two share a position from here on, as two descriptors on one open
+ * file always do
+ */
 static int64_t sys_dup2(uint64_t u_from, uint64_t u_to)
 {
     int i_pid = caller_pid();
-    struct fd src;
 
-    if (u_to >= MAX_FDS || !process_fd_get(i_pid, (int)u_from, &src)) {
+    if (u_to >= MAX_FDS) {
+        return -1;
+    }
+    struct file *p_file = process_fd_file(i_pid, (int)u_from);
+    if (p_file == NULL) {
         return -1;
     }
     if (u_from == u_to) {
+        file_put(p_file);
         return (int64_t)u_to;
     }
-
-    /* counted before it is installed, so no moment has it held and uncounted */
-    if (src.kind == FD_PIPE) {
-        pipe_share(src.pipe, src.writing);
-    }
-    struct pipe_end closing = { NULL, false };
-    process_fd_close(i_pid, (int)u_to, &closing);
-    let_go(&closing);
-    process_fd_install(i_pid, (int)u_to, &src);
+    struct file *p_old = NULL;
+    process_fd_replace(i_pid, (int)u_to, p_file, false, &p_old);
+    file_put(p_old);
     return (int64_t)u_to;
 }
 
@@ -2111,7 +1949,7 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
     case SYS_TCGETPGRP:
         return tty_foreground();
     case SYS_LSEEK:
-        return process_fd_seek(caller_pid(), (int)a0, (int64_t)a1, (int)a2);
+        return sys_lseek((int)a0, (int64_t)a1, (int)a2);
     case SYS_REBOOT:
         if (process_uid(caller_pid()) != 0
             || (a0 != REBOOT_RESTART && a0 != REBOOT_POWER_OFF)) {

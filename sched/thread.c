@@ -199,7 +199,7 @@ void thread_exit(int code)
         process_exited(me->pid, code, pit_uptime_ms());
 
         /* let go of both ends of whatever pipeline this was part of. */
-        pipe_release_for(me->pid);
+        process_fds_release(me->pid);
         net_socket_close_all(me->pid);
         net_tcp_close_all(me->pid);
     }

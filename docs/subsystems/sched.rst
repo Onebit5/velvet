@@ -350,29 +350,18 @@ the table means.
 ``#define PROC_ENV_MAX    1024``
     how much environment one process may carry.
 
-``#define MAX_FDS         12``
-    how many files one process may hold open.
+``#define MAX_FDS         64``
+    how many descriptors one process has.
 
 ``#define PROCESS_KILLED  (-1)``
     what the kernel records when a process was killed rather than choosing to go
 
-``enum fd_kind { FD_FREE = 0, FD_CONSOLE,     /* the screen. writes print; reads are meaningless */``
-    what a descriptor can be pointing at.
+``struct file *fds[MAX_FDS];``
+    what each descriptor is open on, NULL for one that is not. the file is
+    shared with whatever descriptors were duplicated or forked from this one.
 
-``const uint8_t  *data;       /* in memory */``
-    a file in the ramdisk is already in memory, so the descriptor is a bookmark.
-
-``uint32_t        cluster;``
-    on disk: where the file starts, and where the record describing it lives, so a write can correct the size afterwards
-
-``size_t          mount;``
-    which of the disks it is on.
-
-``bool            writing;``
-    which end of a pipe this is, and for a file whether it was opened to be written to.
-
-``struct fd_disk { size_t   mount;``
-    everything a disk-backed descriptor knows about its file
+``uint64_t u_cloexec;``
+    bit n: descriptor n closes when the process runs another program.
 
 ``int      pgid;``
     which job this belongs to.
@@ -479,35 +468,28 @@ the table means.
 ``bool process_take_interrupt(int pid);``
     take it, clearing the flag. true if there was one
 
-``/* take a descriptor onto a stretch of ramdisk. */ int  process_fd_open(int pid, const void *data, uint64_t size);``
-    the process owns these, so they close themselves when it ends.
+``int process_fd_add(int i_pid, struct file *p_file, int i_from, bool b_cloexec);``
+    a file at the lowest descriptor free from i_from up, keeping the
+    caller's reference: the descriptor, or -EMFILE.
 
-``int  process_fd_open(int pid, const void *data, uint64_t size);``
-    take a descriptor onto a stretch of ramdisk.
+``struct file *process_fd_file(int i_pid, int i_fd);``
+    the file a descriptor is open on, with a reference to put, or NULL.
 
-``int  process_fd_open_disk(int pid, uint32_t cluster, uint64_t size, uint64_t entry_sector, uint32_t entry_offset, size_t mount);``
-    the same, for a file whose bytes are still on the disk
+``bool process_fd_replace(int i_pid, int i_fd, struct file *p_file, bool b_cloexec, struct file **pp_old);``
+    a file at a given descriptor, whatever was there handed back to be put.
 
-``bool process_fd_disk(int pid, int fd, struct fd_disk *out);``
-    where a disk-backed descriptor has got to. false for a memory one
-
-``void process_fd_grew(int pid, int fd, uint32_t cluster, uint64_t size);``
-    a write may have grown the file, or given an empty one its first cluster.
-
-``bool process_fd_peek(int pid, int fd, const void **data, uint64_t *remaining);``
-    where the descriptor has got to, and how much is left.
-
-``void process_fd_advance(int pid, int fd, uint64_t n);``
-    note that n bytes were taken
-
-``bool process_fd_get(int pid, int fd, struct fd *out);``
-    a copy of what a descriptor points at.
-
-``bool process_fd_install(int pid, int fd, const struct fd *src);``
-    put something in a numbered slot.
+``struct file *process_fd_take(int i_pid, int i_fd);``
+    a descriptor closed: the file it was open on, to be put.
 
 ``bool process_fds_inherit(int pid, int from);``
-    take every one of `from`'s descriptors, pointing at the same things.
+    the child holds the parent's files, not copies of them.
+
+``void process_fds_release(int i_pid);``
+    every descriptor closed, as a process ends; every way a process ends
+    calls it, with no lock held, since a pipe's end closing wakes threads.
+
+``void process_fds_exec(int i_pid);``
+    the descriptors marked close-on-exec closed.
 
 ``size_t process_fd_count(int pid);``
     how many a process is holding, for `ps` and tests

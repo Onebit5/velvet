@@ -489,7 +489,7 @@ $(T)/tty:      tests/test_tty.c      sched/spinlock.c \
 # they should, and a stubbed pipe could only ever agree with itself
 $(T)/syscall:  tests/test_syscall.c  sched/spinlock.c \
                fs/path.c arch/x86_64/syscall.c arch/x86_64/fpu.c \
-               arch/x86_64/uaccess.c \
+               arch/x86_64/uaccess.c fs/file.c \
                sched/process.c sched/signal.c lib/string.c \
                lib/env.c \
                fs/vfs.c fs/proc.c \
@@ -509,7 +509,7 @@ $(T)/locks:    tests/test_locks.c    sched/spinlock.c \
 $(T)/locks:    LDLIBS = -pthread
 
 $(T)/path:     tests/test_path.c     fs/path.c
-$(T)/pipe:     tests/test_pipe.c     fs/pipe.c \
+$(T)/pipe:     tests/test_pipe.c     fs/pipe.c fs/file.c \
                sched/spinlock.c lib/string.c
 $(T)/bcache:   tests/test_bcache.c   fs/bcache.c \
                lib/string.c
@@ -631,7 +631,7 @@ $(T)/epoch:    tests/test_epoch.c    lib/epoch.c lib/clock.c
 # who gets refused when memory runs out. a policy rather than a data
 # structure, and its interesting cases are all at the edges
 $(T)/pressure: tests/test_pressure.c mm/pressure.c
-$(T)/vfs:      tests/test_vfs.c      fs/vfs.c \
+$(T)/vfs:      tests/test_vfs.c      fs/vfs.c fs/file.c \
                fs/ramdisk.c \
                lib/string.c
 # the protocol as the kernel declares it against the loader's own header,

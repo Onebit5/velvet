@@ -97,6 +97,15 @@ bool vfs_slurp(const char *path, const void **data, uint64_t *size,
                bool *owned);
 void vfs_release(const void *data, bool owned);
 
+struct file;
+
+/*
+ * a file on a filesystem, opened for u_mode (FILE_READ, FILE_WRITE),
+ * positioned at its start, with one reference. the caller has already
+ * decided the opener may
+ */
+struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode);
+
 struct vfs_mount {
     const char *at;
     const char *what;

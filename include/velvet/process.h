@@ -24,7 +24,7 @@ struct pipe;
 #define ENV_NAME_MAX    64
 #define ENV_VALUE_MAX   256
 
-#define MAX_FDS         12
+#define MAX_FDS         64
 #define FD_STDIN        0
 #define FD_STDOUT       1
 #define FD_STDERR       2
@@ -46,45 +46,7 @@ struct pipe;
  */
 #define INIT_PID        1
 
-enum fd_kind {
-    FD_FREE = 0,
-    FD_CONSOLE,     /* the screen. writes print; reads are meaningless */
-    FD_KEYBOARD,    /* the line discipline. reads a line; writes are not */
-    FD_MEMORY,      /* a file already in memory, which is the ramdisk */
-    FD_DISK,        /* a file out on the disk, fetched as it is asked for */
-    FD_PIPE,
-    FD_PROC,        /* a /proc file, written afresh on every read */
-};
-
-struct fd {
-    enum fd_kind    kind;
-
-    const uint8_t  *data;       /* in memory */
-
-    uint32_t        cluster;
-    uint64_t        entry_sector;
-    uint32_t        entry_offset;
-
-    size_t          mount;
-
-    uint64_t        size;
-    uint64_t        pos;
-
-    struct pipe    *pipe;
-    bool            writing;
-
-    size_t          sz_proc;    /* which /proc file, for FD_PROC */
-};
-
-struct fd_disk {
-    size_t   mount;
-    uint32_t cluster;
-    uint64_t size;
-    uint64_t pos;
-    uint64_t remaining;
-    uint64_t entry_sector;
-    uint32_t entry_offset;
-};
+struct file;
 
 struct process {
     int      pid;               /* 0 means the slot is free */
@@ -113,7 +75,13 @@ struct process {
     int      killed_by;
     uint64_t started_ms;
     uint64_t ended_ms;
-    struct fd fds[MAX_FDS];
+    /*
+     * what each descriptor is open on, NULL for one that is not. the
+     * file is shared, with whatever other descriptors were duplicated or
+     * forked from this one, and its position with it
+     */
+    struct file *fds[MAX_FDS];
+    uint64_t u_cloexec;         /* bit n: descriptor n closes on exec */
 
     /*
      * one block of "NAME=value" strings, each ended by a NUL, with an
@@ -251,60 +219,38 @@ bool process_interrupt_pending(int pid);
 
 bool process_take_interrupt(int pid);
 
-int  process_fd_open(int pid, const void *data, uint64_t size);
+/*
+ * p_file at the lowest descriptor free from i_from up, which keeps the
+ * caller's reference: the descriptor, or -EMFILE with the reference
+ * still the caller's to put
+ */
+int process_fd_add(int i_pid, struct file *p_file, int i_from,
+                   bool b_cloexec);
 
-int  process_fd_open_disk(int pid, uint32_t cluster, uint64_t size,
-                          uint64_t entry_sector, uint32_t entry_offset,
-                          size_t mount);
-
-bool process_fd_disk(int pid, int fd, struct fd_disk *out);
-
-/* a descriptor on a /proc file, read from the start each time it is opened. */
-int  process_fd_open_proc(int i_pid, size_t sz_proc);
-
-
-void process_fd_grew(int pid, int fd, uint32_t cluster, uint64_t size);
-
-bool process_fd_peek(int pid, int fd, const void **data, uint64_t *remaining);
-
-void process_fd_advance(int pid, int fd, uint64_t n);
-
-bool process_fd_get(int pid, int fd, struct fd *out);
-
-bool process_fd_install(int pid, int fd, const struct fd *src);
+/* the file a descriptor is open on, with a reference to put: or NULL */
+struct file *process_fd_file(int i_pid, int i_fd);
 
 /*
- * move a file's position to `i_offset` from its start, from where it
- * is, or from its end: where it lands, or -1 for a descriptor with no
- * position or a place outside the file
+ * p_file at i_fd, keeping the caller's reference, and whatever was open
+ * there handed back through pp_old to be put with no lock held. false
+ * for a descriptor out of range, with nothing changed
  */
-int64_t process_fd_seek(int i_pid, int i_fd, int64_t i_offset, int i_whence);
+bool process_fd_replace(int i_pid, int i_fd, struct file *p_file,
+                        bool b_cloexec, struct file **pp_old);
 
-/* into the lowest free slot past the standard three: which, or -1 */
-int process_fd_place(int i_pid, const struct fd *p_src);
+/* a descriptor closed: the file it was open on, to be put, or NULL */
+struct file *process_fd_take(int i_pid, int i_fd);
 
+/* the child holds what the parent holds: the same files, not copies */
 bool process_fds_inherit(int pid, int from);
 
-struct pipe_end {
-    struct pipe *p;
-    bool         writing;
-};
-
 /*
- * take every pipe this process holds off it and hand them back, so the
- * caller can close them without holding the process table's lock while
- * it does. that matters: closing a pipe wakes threads, and waking
- * threads means reaching the scheduler, which a holder of this lock may
- * not do. returns how many were taken
+ * every descriptor closed, as a process ends, or the ones marked to close
+ * on exec. the files are put here, so neither may be called with a lock
+ * held
  */
-size_t process_take_pipes(int pid, struct pipe_end *out, size_t max);
-
-/*
- * close one. a pipe in that slot is handed back through `closing`
- * rather than let go of here, for the same reason as everything else on
- * this page. `closing->p` comes back NULL when it was not a pipe
- */
-bool process_fd_close(int pid, int fd, struct pipe_end *closing);
+void process_fds_release(int i_pid);
+void process_fds_exec(int i_pid);
 
 size_t process_fd_count(int pid);
 

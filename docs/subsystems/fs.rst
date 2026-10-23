@@ -271,6 +271,38 @@ has to be got right, because a path that can climb above ``/`` can name
 anything at all. none of this touches a filesystem, which is what makes it
 entirely testable.
 
+open files
+----------
+
+a descriptor is a number for an open file, ``struct file`` in
+``include/velvet/file.h``, and the file is what is shared. ``open`` makes
+one, with a position and the mode it was opened for, which no later call
+can widen: a file opened to be read is not written through, whoever owns
+it. ``dup2`` and ``fork`` make another descriptor on the same file, so the
+two share its position, which is what lets a shell's child write after
+what its parent wrote. the file goes when the last descriptor on it, in
+any process, closes, and not before.
+
+what can be done to a file is in its ``struct file_operations``, filled in
+by whoever opened it: ``vfs_open_file`` for a file on the ramdisk, a disk
+or in /proc, ``pipe_open`` for a pipe's two ends, and the console's own in
+``tty.c``. each takes the kernel's memory, never ring 3's, and answers with
+a count or minus an errno.
+
+``struct file *file_alloc(const struct file_operations *p_ops, uint32_t u_mode, enum file_type e_type);``
+    a new file with one reference. NULL when there is no memory
+
+``void file_get(struct file *p_file);``
+    one more reference.
+
+``void file_put(struct file *p_file);``
+    one fewer, released with the last. never with a lock held: releasing a
+    pipe's end wakes whoever waits at the other one
+
+``struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode);``
+    a file on a filesystem, at its start. reads carry on from where the last
+    stopped and a regular file is read to its end; ``seek`` stays within it
+
 pipes and redirection
 ---------------------
 
@@ -297,14 +329,14 @@ would have been before the program starts is the whole mechanism. see
 `file descriptors <sched.rst>`_.
 
 a program builds the same thing with two calls. ``pipe`` hands it both ends
-of a new pipe, in the lowest free slots. ``dup2`` makes one slot another
-handle on what a second one holds, closing whatever the first held, so a
-shell forks, puts a pipe end on 0 or 1 in the child, and execs. a copied
-pipe end is one more holder, so the reader sees end of file only when
-every copy is closed or its holder has ended; a copied file keeps a
-position of its own, the same rule fork has always followed. ``lseek``
-moves a file's position, within the file and no further, and is how a
-shell puts ``>>`` on the end of what is there rather than over its start.
+of a new pipe, each an open file, in the lowest free slots. ``dup2`` makes
+one slot another descriptor on the file a second one holds, closing
+whatever the first held, so a shell forks, puts a pipe end on 0 or 1 in the
+child, and execs. a pipe counts the files open on each end, not the
+descriptors, so the reader sees end of file only when every descriptor on
+the writing end, in every process, has closed. ``lseek`` moves a file's
+position, within the file and no further, and is how a shell puts ``>>`` on
+the end of what is there rather than over its start.
 
 growing a filesystem
 --------------------
@@ -777,7 +809,7 @@ rather than filling a buffer that will never drain.
     a pipe: a buffer with a process at each end.
 
 ``int      readers;``
-    how many descriptors still hold each end.
+    how many files are open on each end.
 
 ``uint32_t pipe_put(struct pipe *p, const void *buf, uint32_t len);``
     move what fits / what is there.
@@ -791,17 +823,15 @@ rather than filling a buffer that will never drain.
 ``void pipe_close_read(struct pipe *p);``
     let go of one end. the pipe frees itself once nobody holds either, and whoever is left at the other end is woken to find out
 
-``void pipe_share(struct pipe *p, bool writing);``
-    one more holder of an end.
-
 ``int64_t pipe_read(struct pipe *p, int pid, void *buf, uint64_t len);``
-    read, blocking until there is something or every writer has gone.
+    read, blocking until there is something or every writer has gone: 0
+    then, or -EINTR for a signal while waiting.
 
 ``int64_t pipe_write(struct pipe *p, int pid, const void *buf, uint64_t len);``
-    write, blocking until it fits.
+    write, blocking until it fits: -EPIPE when no reader is left.
 
-``void pipe_release_for(int pid);``
-    let go of whichever ends a process was holding.
+``bool pipe_open(struct file **pp_read, struct file **pp_write);``
+    a new pipe, as two files: one to read it and one to write it.
 
 ``size_t pipe_count(void);``
     how many exist right now, for ``/proc/threads`` and for finding a leak
