@@ -1742,7 +1742,7 @@ int main(void)
      */
     {
         int i_rootly = with_console(process_create("rootly", 0, 0, false, 0));
-        int i_mine = with_console(process_create("mine", 0, 1000, false, 0));
+        int i_mine = with_console(process_create("owned", 0, 1000, false, 0));
         int i_guest = with_console(process_create("guest5", 0, 1000, false, 0));
         int i_was = me.pid;
 
