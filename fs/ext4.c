@@ -2014,6 +2014,262 @@ int64_t ext4_write(struct ext4 *fs, struct ext4_file *f, uint64_t offset,
 
 
 
+/*
+ * shrinking a file gives back every block past its new end, wherever the
+ * map keeps them. freeing a block reads the bitmap through the same two
+ * buffers a node or an indirect block sits in, so each step reads what
+ * it changes again rather than trusting a buffer across a free
+ */
+
+static void free_run(struct ext4 *fs, uint64_t u_start, uint32_t u_count)
+{
+    for (uint32_t u_at = 0; u_at < u_count; u_at++) {
+        free_block(fs, (uint32_t)(u_start + u_at));
+    }
+}
+
+/*
+ * in a node of runs, the first one reaching past logical block u_keep
+ * cut back to it, or dropped when it starts there or after: true with
+ * the physical blocks given up, false when no run reaches that far
+ */
+static bool cut_one_run(uint8_t *p_node, uint32_t u_keep, uint64_t *p_start,
+                        uint32_t *p_count)
+{
+    uint32_t u_entries = rd16(p_node + EH_ENTRIES);
+    for (uint32_t u_at = 0; u_at < u_entries; u_at++) {
+        uint8_t *p_run = p_node + EH_SIZE + u_at * EXTENT_SIZE;
+        uint32_t u_first = ee_block(p_run);
+        uint32_t u_len = ee_len(p_run);
+        if (u_first + u_len <= u_keep) {
+            continue;
+        }
+        if (u_first >= u_keep) {
+            *p_start = ee_start(p_run);
+            *p_count = u_len;
+            memmove(p_run, p_run + EXTENT_SIZE,
+                    (u_entries - u_at - 1) * EXTENT_SIZE);
+            wr16(p_node + EH_ENTRIES, (uint16_t)(u_entries - 1));
+        } else {
+            uint32_t u_stays = u_keep - u_first;
+            *p_start = ee_start(p_run) + u_stays;
+            *p_count = u_len - u_stays;
+            wr16(p_run + 4, (uint16_t)(ee_written(p_run) ? u_stays
+                                                         : u_stays + 32768));
+        }
+        return true;
+    }
+    return false;
+}
+
+/*
+ * an extent tree cut at u_keep. as far down as free_extents goes, and no
+ * further: a deeper tree is refused before anything changes
+ */
+static bool trim_extents(struct ext4 *fs, uint8_t *p_inode, uint32_t u_keep)
+{
+    uint8_t *p_root = inode_map(p_inode);
+    uint64_t u_start;
+    uint32_t u_count;
+
+    if (!node_ok(p_root, root_max()) || rd16(p_root + EH_DEPTH) > 1) {
+        return false;
+    }
+    if (rd16(p_root + EH_DEPTH) == 0) {
+        while (cut_one_run(p_root, u_keep, &u_start, &u_count)) {
+            free_run(fs, u_start, u_count);
+        }
+        return true;
+    }
+
+    /* the leaves from the last, until one starts before the new end */
+    for (uint32_t u_left = rd16(p_root + EH_ENTRIES); u_left > 0; u_left--) {
+        uint8_t *p_index = p_root + EH_SIZE + (u_left - 1) * EXTENT_SIZE;
+        uint32_t u_first = rd32(p_index);
+        uint32_t u_leaf = (uint32_t)ei_leaf(p_index);
+        uint32_t u_entries;
+
+        for (;;) {
+            if (!read_block(fs, u_leaf, fs->indirect)
+                || !node_ok(fs->indirect, leaf_max(fs))) {
+                return false;
+            }
+            u_entries = rd16(fs->indirect + EH_ENTRIES);
+            if (!cut_one_run(fs->indirect, u_keep, &u_start, &u_count)) {
+                break;
+            }
+            u_entries = rd16(fs->indirect + EH_ENTRIES);
+            if (!write_block(fs, u_leaf, fs->indirect)) {
+                return false;
+            }
+            free_run(fs, u_start, u_count);
+        }
+        if (u_entries == 0) {
+            uint32_t u_all = rd16(p_root + EH_ENTRIES);
+            memmove(p_index, p_index + EXTENT_SIZE,
+                    (u_all - u_left) * EXTENT_SIZE);
+            wr16(p_root + EH_ENTRIES, (uint16_t)(u_all - 1));
+            free_block(fs, u_leaf);
+        }
+        if (u_first < u_keep) {
+            break;
+        }
+    }
+    if (rd16(p_root + EH_ENTRIES) == 0) {
+        node_init(p_root, root_max(), 0);
+    }
+    return true;
+}
+
+/*
+ * the entries from u_from up of an indirect block cleared and their
+ * blocks freed: true when the whole block is now empty
+ */
+static bool cut_indirect(struct ext4 *fs, uint32_t u_block, uint32_t u_from)
+{
+    uint32_t u_per = per_block(fs);
+    for (uint32_t u_at = u_from; u_at < u_per; u_at++) {
+        if (!read_block(fs, u_block, fs->indirect)) {
+            return false;
+        }
+        uint32_t u_entry = rd32(fs->indirect + u_at * 4);
+        if (u_entry == 0) {
+            continue;
+        }
+        wr32(fs->indirect + u_at * 4, 0);
+        if (!write_block(fs, u_block, fs->indirect)) {
+            return false;
+        }
+        free_block(fs, u_entry);
+    }
+    return u_from == 0;
+}
+
+/* the old map cut at u_keep: twelve direct, one indirect, one double */
+static void trim_block_map(struct ext4 *fs, uint8_t *p_inode, uint32_t u_keep)
+{
+    uint32_t u_per = per_block(fs);
+
+    for (uint32_t u_at = u_keep; u_at < EXT4_DIRECT; u_at++) {
+        uint32_t u_block = rd32(p_inode + 40 + u_at * 4);
+        if (u_block != 0) {
+            free_block(fs, u_block);
+            wr32(p_inode + 40 + u_at * 4, 0);
+        }
+    }
+
+    uint32_t u_ind = rd32(p_inode + 40 + 12 * 4);
+    uint32_t u_past = EXT4_DIRECT;
+    if (u_ind != 0) {
+        uint32_t u_from = (u_keep > u_past) ? u_keep - u_past : 0;
+        if (u_from < u_per && cut_indirect(fs, u_ind, u_from)) {
+            free_block(fs, u_ind);
+            wr32(p_inode + 40 + 12 * 4, 0);
+        }
+    }
+
+    uint32_t u_dind = rd32(p_inode + 40 + 13 * 4);
+    u_past += u_per;
+    if (u_dind == 0) {
+        return;
+    }
+    uint32_t u_rel = (u_keep > u_past) ? u_keep - u_past : 0;
+    for (uint32_t u_outer = u_rel / u_per; u_outer < u_per; u_outer++) {
+        if (!read_block(fs, u_dind, fs->indirect)) {
+            return;
+        }
+        uint32_t u_inner = rd32(fs->indirect + u_outer * 4);
+        if (u_inner == 0) {
+            continue;
+        }
+        uint32_t u_from = (u_outer == u_rel / u_per) ? u_rel % u_per : 0;
+        if (cut_indirect(fs, u_inner, u_from)) {
+            if (!read_block(fs, u_dind, fs->indirect)) {
+                return;
+            }
+            wr32(fs->indirect + u_outer * 4, 0);
+            if (!write_block(fs, u_dind, fs->indirect)) {
+                return;
+            }
+            free_block(fs, u_inner);
+        }
+    }
+    if (u_rel == 0) {
+        free_block(fs, u_dind);
+        wr32(p_inode + 40 + 13 * 4, 0);
+    }
+}
+
+/*
+ * the bytes of the last block past the new end zeroed, so that the file
+ * grown again later reads zeroes there rather than what it used to hold
+ */
+static bool zero_tail(struct ext4 *fs, uint8_t *p_inode, uint64_t u_size)
+{
+    uint32_t u_within = (uint32_t)(u_size % fs->block_size);
+    bool b_changed = false;
+    if (u_within == 0) {
+        return true;
+    }
+    uint32_t u_block = map_block(fs, p_inode,
+                                 (uint32_t)(u_size / fs->block_size), false,
+                                 &b_changed);
+    if (u_block == 0) {
+        return true;
+    }
+    if (!read_block(fs, u_block, fs->scratch)) {
+        return false;
+    }
+    memset(fs->scratch + u_within, 0, fs->block_size - u_within);
+    return raw_write(fs, u_block, fs->scratch);
+}
+
+static bool ext4_truncate_locked(struct ext4 *fs, struct ext4_file *f,
+                                 uint64_t u_size)
+{
+    uint8_t arr_inode[256];
+    if (!fs->mounted || fs->write == NULL || u_size > UINT32_MAX
+        || !read_inode(fs, f->ino, arr_inode)
+        || (rd16(arr_inode) & EXT4_S_IFMT) != EXT4_S_IFREG) {
+        return false;
+    }
+
+    /*
+     * longer is only a bigger size: the blocks past the old end are not
+     * there, and a block that is not there reads as zeroes
+     */
+    if (u_size < rd32(arr_inode + 4)) {
+        uint32_t u_keep = (uint32_t)((u_size + fs->block_size - 1)
+                                     / fs->block_size);
+        if (has_extents(arr_inode)) {
+            if (!trim_extents(fs, arr_inode, u_keep)) {
+                return false;
+            }
+        } else {
+            trim_block_map(fs, arr_inode, u_keep);
+        }
+        if (!zero_tail(fs, arr_inode, u_size)) {
+            return false;
+        }
+    }
+    wr32(arr_inode + 4, (uint32_t)u_size);
+    stamp(fs, arr_inode, false);
+    if (!write_inode(fs, f->ino, arr_inode)) {
+        return false;
+    }
+    f->size = u_size;
+    return true;
+}
+
+/* one transaction, however many blocks the cut gives back */
+bool ext4_truncate(struct ext4 *fs, struct ext4_file *f, uint64_t u_size)
+{
+    jbd_begin(&fs->journal);
+    bool b_ok = ext4_truncate_locked(fs, f, u_size);
+    jbd_commit(&fs->journal);
+    return b_ok;
+}
+
 /* split a path into the directory holding it and the last name */
 static bool split_parent(struct ext4 *fs, const char *path, uint32_t *dir_ino,
                          uint8_t *dir_inode, char *leaf)

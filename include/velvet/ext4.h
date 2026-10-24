@@ -174,6 +174,14 @@ int64_t ext4_read(struct ext4 *fs, const struct ext4_file *f,
 int64_t ext4_write(struct ext4 *fs, struct ext4_file *f,
                    uint64_t offset, const void *buf, uint64_t len);
 
+/*
+ * a regular file made u_size long: past the old end it reads as zeroes,
+ * and short of it the blocks past the new end are given back. false for
+ * a file whose extent tree is deeper than a free can walk, with nothing
+ * changed
+ */
+bool ext4_truncate(struct ext4 *fs, struct ext4_file *f, uint64_t u_size);
+
 bool ext4_create(struct ext4 *fs, const char *path, uint32_t mode,
                  uint32_t uid, uint32_t gid, struct ext4_file *out);
 bool ext4_mkdir(struct ext4 *fs, const char *path, uint32_t mode,

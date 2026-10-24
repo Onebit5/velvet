@@ -658,6 +658,25 @@ int64_t vfs_write(struct vfs_file *f, uint64_t offset, const void *buf,
     return n;
 }
 
+bool vfs_truncate(struct vfs_file *p_node, uint64_t u_size)
+{
+    if (p_node->kind != VFS_DISK || p_node->is_dir) {
+        return false;
+    }
+    struct disk_entry entry;
+    memset(&entry, 0, sizeof entry);
+    entry.size = p_node->size;
+    entry.cluster = p_node->cluster;
+    entry.entry_sector = p_node->entry_sector;
+    entry.entry_offset = p_node->entry_offset;
+    if (!disk_truncate(p_node->mount, &entry, u_size)) {
+        return false;
+    }
+    p_node->size = entry.size;
+    p_node->cluster = entry.cluster;
+    return true;
+}
+
 bool vfs_may_read(const struct vfs_file *f, int uid)
 {
     if (uid == 0) {

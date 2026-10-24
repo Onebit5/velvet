@@ -104,6 +104,9 @@ int64_t fat32_write(struct fat32 *fs, struct fat32_file *f,
 
 bool fat32_create(struct fat32 *fs, const char *path, struct fat32_file *out);
 
+/* a file made u_size long: zeroes past the old end, clusters freed short */
+bool fat32_truncate(struct fat32 *fs, struct fat32_file *f, uint64_t u_size);
+
 bool fat32_mkdir(struct fat32 *fs, const char *path);
 
 bool fat32_rmdir(struct fat32 *fs, const char *path);

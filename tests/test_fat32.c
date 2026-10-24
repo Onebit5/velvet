@@ -281,6 +281,34 @@ int main(int argc, char **argv)
     CHECK(text && strcmp(text, message) == 0, "with what the test put in it");
     free(text);
 
+    /* cut short, grown with zeroes, and emptied of its clusters */
+    uint32_t u_used_full, u_used_cut, u_total;
+    CHECK(fat32_usage(&fs, &u_used_full, &u_total), "usage counts");
+    CHECK(fat32_truncate(&fs, &fresh, 5) && fresh.size == 5,
+          "a file is cut short");
+    CHECK(fat32_lookup(&fs, "notes.txt", &f) && f.size == 5,
+          "and its entry says so");
+    text = slurp(&fs, &f, &len);
+    CHECK(text && len == 5 && memcmp(text, "thou ", 5) == 0,
+          "holding the head it had");
+    free(text);
+    CHECK(fat32_truncate(&fs, &fresh, 12) && fresh.size == 12,
+          "made longer, it is longer");
+    CHECK(fat32_lookup(&fs, "notes.txt", &f), "and found");
+    text = slurp(&fs, &f, &len);
+    CHECK(text && len == 12 && memcmp(text, "thou \0\0\0\0\0\0\0", 12) == 0,
+          "with zeroes past the old end, not what the cluster held");
+    free(text);
+    CHECK(fat32_truncate(&fs, &fresh, 0) && fresh.size == 0
+          && fresh.first_cluster == 0,
+          "and emptied, it owns no clusters");
+    CHECK(fat32_usage(&fs, &u_used_cut, &u_total)
+          && u_used_cut < u_used_full,
+          "which have gone back to the free list");
+    CHECK(fat32_write(&fs, &fresh, 0, message, strlen(message))
+          == (int64_t)strlen(message),
+          "and it can be written again");
+
     /* in a subdirectory too */
     CHECK(fat32_create(&fs, "notes/made.txt", &fresh),
           "a file can be made inside a directory");

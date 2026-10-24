@@ -111,6 +111,10 @@ bool disk_create(size_t which, const char *path, struct disk_entry *out);
 int64_t disk_write_at(size_t which, struct disk_entry *e, uint64_t offset,
                       const void *buf, uint64_t len);
 
+/* the file made size long, its record updated to match */
+bool disk_truncate(size_t sz_which, struct disk_entry *p_entry,
+                   uint64_t u_size);
+
 bool disk_mkdir(size_t which, const char *path);
 bool disk_rmdir(size_t which, const char *path);
 

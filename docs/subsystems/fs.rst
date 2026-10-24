@@ -449,6 +449,12 @@ does not understand it refuses to write rather than guessing at.
 ``bool ext4_unlink(struct ext4 *fs, const char *path);``
     and unmake them
 
+``bool ext4_truncate(struct ext4 *fs, struct ext4_file *f, uint64_t u_size);``
+    a regular file made any length. longer reads as zeroes past the old
+    end, since a block that is not there does; shorter gives back every
+    block past the new end and zeroes the rest of the last one kept. an
+    extent tree deeper than unlink walks is refused with nothing changed
+
 ``bool ext4_chmod(struct ext4 *fs, const char *path, uint32_t mode);``
     the things fat had nowhere to write down
 
@@ -636,6 +642,9 @@ disk at all.
 ``bool fat32_unlink(struct fat32 *fs, const char *path);``
     remove a file. the clusters go back, the entry is struck out, and the long-name entries in front of it go too
 
+``bool fat32_truncate(struct fat32 *fs, struct fat32_file *f, uint64_t u_size);``
+    a file made any length: zeroes written past the old end, since fat has no holes and a free cluster still holds what it held, and the chain ended and the rest freed short of it
+
 ``bool fat32_usage(struct fat32 *fs, uint32_t *used, uint32_t *total);``
     how much of the disk is spoken for, in clusters
 
@@ -676,6 +685,9 @@ while a machine with no disk carries on with the one it booted with.
 
 ``bool vfs_unlink(const char *path);``
     remove a file. directories go through vfs_rmdir, which will not remove one that still has anything in it
+
+``bool vfs_truncate(struct vfs_file *f, uint64_t size);``
+    a file on a disk made any length. the ramdisk and /proc refuse, and so does a directory
 
 ``bool vfs_chmod(const char *path, uint32_t mode);``
     every one of these answers false on the ramdisk, and on a fat disk.

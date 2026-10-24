@@ -648,6 +648,43 @@ int64_t disk_write_at(size_t which, struct disk_entry *e, uint64_t offset,
     return n;
 }
 
+bool disk_truncate(size_t sz_which, struct disk_entry *p_entry,
+                   uint64_t u_size)
+{
+    struct mount *p_mount = at(sz_which);
+    if (!p_mount->ready || p_entry->is_dir) {
+        return false;
+    }
+    uint64_t u_flags = enter();
+    bool b_ok;
+    if (p_mount->kind == DISK_EXT4) {
+        struct ext4_file file;
+        memset(&file, 0, sizeof file);
+        file.ino = p_entry->cluster;
+        file.size = p_entry->size;
+        b_ok = ext4_truncate(&p_mount->ext, &file, u_size);
+        if (b_ok) {
+            p_entry->size = file.size;
+        }
+    } else {
+        struct fat32_file file;
+        memset(&file, 0, sizeof file);
+        file.first_cluster = p_entry->cluster;
+        file.size = (uint32_t)p_entry->size;
+        file.attr = FAT32_ATTR_ARCHIVE;
+        file.entry_sector = p_entry->entry_sector;
+        file.entry_offset = p_entry->entry_offset;
+        b_ok = p_entry->entry_sector != 0
+               && fat32_truncate(&p_mount->fat, &file, u_size);
+        if (b_ok) {
+            p_entry->size = file.size;
+            p_entry->cluster = file.first_cluster;
+        }
+    }
+    leave(u_flags);
+    return b_ok;
+}
+
 bool disk_mkdir(size_t which, const char *path)
 {
     struct mount *m = at(which);

@@ -253,6 +253,18 @@ int64_t disk_write_at(size_t which, struct disk_entry *e, uint64_t offset,
     e->size = offset + len;
     return (int64_t)len;
 }
+static uint64_t s_u_truncated_to = 1;
+bool disk_truncate(size_t sz_which, struct disk_entry *p_entry,
+                   uint64_t u_size)
+{
+    if (!disk_ready(sz_which)) {
+        return false;
+    }
+    last_mount = sz_which;
+    s_u_truncated_to = u_size;
+    p_entry->size = u_size;
+    return true;
+}
 const char *disk_model(void)
 {
     return "STUB DISK";
@@ -399,6 +411,16 @@ int main(void)
     CHECK(vfs_read(&f, 0, buf, f.size) == (int64_t)f.size, "and reads");
     buf[f.size] = '\0';
     CHECK(strcmp(buf, "the disk's copy\n") == 0, "with the disk's contents");
+
+    /* a file on the disk can be made any length, and nothing else can */
+    CHECK(vfs_open("/welcome.txt", &f) && vfs_truncate(&f, 3)
+          && f.size == 3 && s_u_truncated_to == 3,
+          "a file on the disk is cut to length");
+    CHECK(vfs_open("/boot/welcome.txt", &f) && !vfs_truncate(&f, 3),
+          "and one on the ramdisk is not");
+    CHECK(vfs_open("/proc/version", &f) && !vfs_truncate(&f, 0)
+          && vfs_open("/", &f) && !vfs_truncate(&f, 0),
+          "nor is /proc, nor a directory");
 
     CHECK(vfs_open("/boot/welcome.txt", &f) && f.kind == VFS_RAMDISK,
           "a name under /boot is the ramdisk's");

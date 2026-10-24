@@ -507,6 +507,13 @@ int64_t disk_write_at(size_t w, struct disk_entry *e, uint64_t offset,
     e->size = offset + len;
     return (int64_t)len;
 }
+bool disk_truncate(size_t sz_which, struct disk_entry *p_entry,
+                   uint64_t u_size)
+{
+    (void)sz_which;
+    p_entry->size = u_size;
+    return disk_is_ready;
+}
 
 /* the terminal, whose real version needs a scheduler to wake threads */
 #include <velvet/tty.h>

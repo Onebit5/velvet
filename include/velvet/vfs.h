@@ -85,6 +85,13 @@ int64_t vfs_read(const struct vfs_file *f, uint64_t offset, void *buf,
 int64_t vfs_write(struct vfs_file *f, uint64_t offset, const void *buf,
                   uint64_t len);
 
+/*
+ * a file on a disk made size long: zeroes past the old end, and the
+ * blocks past the new one given back. false on the ramdisk, in /proc, and
+ * for a directory
+ */
+bool vfs_truncate(struct vfs_file *p_node, uint64_t u_size);
+
 bool vfs_may_read(const struct vfs_file *f, int uid);
 
 bool vfs_writable(const struct vfs_file *f);

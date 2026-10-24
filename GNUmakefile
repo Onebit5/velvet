@@ -515,7 +515,7 @@ $(T)/pipe:     tests/test_pipe.c     fs/pipe.c fs/file.c \
 $(T)/bcache:   tests/test_bcache.c   fs/bcache.c \
                lib/string.c
 $(T)/ext4:     tests/test_ext4.c     fs/ext4.c fs/jbd2.c \
-               lib/string.c
+               tools/fsck.c lib/string.c
 # the formatter, checked against the *driver* rather than against itself.
 # a formatter and a reader by one author can agree on something wrong and
 # both be happy, which is exactly what happened to mkfat.py in 0.1.10

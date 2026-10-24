@@ -21,6 +21,7 @@ void panic(const char *fmt, ...)
     exit(1);
 }
 
+#include "tools/fsck.h"
 #include <velvet/ext4.h>
 
 /*
@@ -76,6 +77,36 @@ static char *slurp(struct ext4 *fs, struct ext4_file *f, uint64_t *out_len)
     buf[n] = '\0';
     if (out_len) *out_len = (uint64_t)n;
     return buf;
+}
+
+/*
+ * the checker's verdict on the image as it stands: whether it found
+ * nothing at all, which is the only answer a cut file may leave
+ */
+static bool fsck_clean(struct ext4 *fs, int *p_fd)
+{
+    uint32_t u_blocks, u_inodes;
+    struct fsck_report report;
+
+    ext4_flush(fs);
+    if (!fsck_measure(img_read, p_fd, &u_blocks, &u_inodes)) {
+        return false;
+    }
+    size_t sz_need = fsck_workspace_bytes(u_blocks, u_inodes);
+    void *p_work = malloc(sz_need);
+    bool b_clean = p_work != NULL
+                   && fsck_run(img_read, NULL, p_fd, p_work, sz_need, &report)
+                   && report.total_found == 0;
+    if (p_work != NULL && !b_clean) {
+        for (int i_at = 0; i_at < FSCK_PROBLEMS; i_at++) {
+            if (report.found[i_at] > 0) {
+                printf("  fsck: %u x %s\n", report.found[i_at],
+                       fsck_problem_name((enum fsck_problem)i_at));
+            }
+        }
+    }
+    free(p_work);
+    return b_clean;
 }
 
 int main(void)
@@ -342,6 +373,43 @@ int main(void)
               "and reads back byte for byte, which means the driver "
               "allocated the indirect block as well as read one");
         free(text);
+
+        /*
+         * cut short, the head stays and the blocks past it come back;
+         * grown again, what is past the old end reads as zeroes
+         */
+        uint64_t u_full_used, u_cut_used, u_total;
+        CHECK(ext4_usage(&fs, &u_full_used, &u_total), "usage counts");
+        CHECK(ext4_truncate(&fs, &big, 13000) && big.size == 13000,
+              "a file is cut short");
+        CHECK(ext4_usage(&fs, &u_cut_used, &u_total)
+              && u_cut_used < u_full_used,
+              "and the blocks past the new end are given back");
+        CHECK(ext4_lookup(&fs, "grown.bin", &f), "it is found");
+        text = slurp(&fs, &f, &len);
+        right = text != NULL && len == 13000 && memcmp(text, lump, 13000) == 0;
+        CHECK(right, "holding the head it had, and nothing more");
+        free(text);
+
+        CHECK(ext4_truncate(&fs, &big, 20000) && big.size == 20000,
+              "made longer, it is longer");
+        CHECK(ext4_lookup(&fs, "grown.bin", &f), "and found");
+        text = slurp(&fs, &f, &len);
+        right = text != NULL && len == 20000
+                && memcmp(text, lump, 13000) == 0;
+        for (uint64_t u_at = 13000; right && u_at < len; u_at++) {
+            right = text[u_at] == 0;
+        }
+        CHECK(right, "with zeroes past the old end, not what was there");
+        free(text);
+
+        CHECK(ext4_truncate(&fs, &big, 0) && big.size == 0
+              && ext4_lookup(&fs, "grown.bin", &f) && f.size == 0,
+              "and emptied, it is empty");
+        CHECK(ext4_write(&fs, &big, 0, lump, 100) == 100,
+              "and can be written again");
+        CHECK(fsck_clean(&fs, &fd),
+              "and the checker finds nothing wrong with any of it");
     }
 
     /*
@@ -400,6 +468,25 @@ int main(void)
               "and reads back byte for byte, through a tree that had to "
               "grow a level to describe it");
         free(text);
+
+        /* cut in the middle of a tree a level deep, it keeps its head */
+        CHECK(ext4_truncate(&fs, &a, 5 * sizeof chunk + 100)
+              && ext4_lookup(&fs, "torn-a.bin", &f)
+              && f.size == 5 * sizeof chunk + 100,
+              "a torn file is cut through its tree");
+        text = slurp(&fs, &f, &len);
+        right = text != NULL && len == 5 * sizeof chunk + 100;
+        for (uint64_t u_at = 0; right && u_at < len; u_at++) {
+            uint64_t u_round = u_at / sizeof chunk;
+            uint8_t u_want = (uint8_t)((u_round * 7
+                                        + (u_at % sizeof chunk) * 3 + 1)
+                                       & 0xff);
+            right = (uint8_t)text[u_at] == u_want;
+        }
+        CHECK(right, "and what stays reads back as it was");
+        free(text);
+        CHECK(fsck_clean(&fs, &fd),
+              "and the tree it leaves is one the checker accepts");
 
         /* and it can be given back. */
         uint64_t before_used, before_total;

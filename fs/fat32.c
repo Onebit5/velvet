@@ -1426,6 +1426,55 @@ static bool free_chain(struct fat32 *fs, uint32_t cluster)
 }
 
 /*
+ * a file made u_size long. longer is zeroes written out to the new end,
+ * since fat has no holes and a cluster taken from the free list still
+ * holds whatever it held. shorter keeps the clusters the new size needs,
+ * ends the chain at the last of them and frees the rest
+ */
+bool fat32_truncate(struct fat32 *fs, struct fat32_file *f, uint64_t u_size)
+{
+    static const uint8_t s_arr_zeroes[FAT32_SECTOR];
+
+    if (!fs->mounted || fs->write == NULL || f->is_dir
+        || u_size > UINT32_MAX) {
+        return false;
+    }
+    while (f->size < u_size) {
+        uint64_t u_take = u_size - f->size;
+        if (u_take > sizeof s_arr_zeroes) {
+            u_take = sizeof s_arr_zeroes;
+        }
+        if (fat32_write(fs, f, f->size, s_arr_zeroes, u_take) <= 0) {
+            return false;
+        }
+    }
+    if (u_size < f->size) {
+        uint32_t u_per = fat32_cluster_bytes(fs);
+        uint32_t u_keep = (uint32_t)((u_size + u_per - 1) / u_per);
+        if (u_keep == 0) {
+            if (f->first_cluster != 0 && !free_chain(fs, f->first_cluster)) {
+                return false;
+            }
+            f->first_cluster = 0;
+        } else {
+            uint32_t u_last;
+            uint32_t u_next;
+            if (!seek_cluster(fs, f->first_cluster,
+                              (uint64_t)(u_keep - 1) * u_per, &u_last)
+                || !fat_get(fs, u_last, &u_next)
+                || !fat_set(fs, u_last, EOC | 0x7)) {
+                return false;
+            }
+            if (u_next < EOC && !free_chain(fs, u_next)) {
+                return false;
+            }
+        }
+        f->size = (uint32_t)u_size;
+    }
+    return update_entry(fs, f);
+}
+
+/*
  * two sectors of the same cluster, which is what makes going from one
  * to the next a matter of adding one
  */
