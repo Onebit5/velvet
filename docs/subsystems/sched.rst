@@ -187,6 +187,11 @@ until 0.3.7 there was one flag called ``interrupted``, and it was as close
 to a signal as this kernel got. that is enough for ``cat`` and not enough
 for anything that runs for a minute.
 
+signals are numbered the way every x86_64 program numbers them: 1 to 31
+with their usual meanings, SIGINT 2, SIGTERM 15, SIGCHLD 17 and the rest,
+and 32 to 64 left for a program to give a meaning to. a set of them holds
+signal n at bit n - 1 of a 64 bit word, which is a sigset_t's layout.
+
 a signal in this kernel is **a bit in a word**, not a message: there is no
 queue and no payload, and raising one that is already raised changes
 nothing. two ctrl+c presses in the same instant are one interrupt, which is
@@ -197,7 +202,9 @@ wants something else.
 a process ignores a signal, takes the default action, or runs a handler.
 the default is nearly always "die", and the exceptions are the interesting
 ones. SIGCHLD arrives constantly and a default of death would mean every
-shell exiting the moment a command finished. SIGKILL and SIGSTOP may not be
+shell exiting the moment a command finished; SIGWINCH and SIGURG are news,
+and are ignored too. SIGTSTP, SIGTTIN and SIGTTOU stop, and SIGCONT
+continues. SIGKILL and SIGSTOP may not be
 caught, blocked or ignored, which is the entire reason the system can still
 be saved by somebody who can type.
 

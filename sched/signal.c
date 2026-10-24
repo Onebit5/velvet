@@ -9,7 +9,7 @@
 #include <velvet/string.h>
 
 /* the two that cannot be argued with. */
-#define UNBLOCKABLE ((1u << SIGKILL) | (1u << SIGSTOP))
+#define UNBLOCKABLE (SIGNAL_BIT(SIGKILL) | SIGNAL_BIT(SIGSTOP))
 
 static bool valid(int sig)
 {
@@ -54,13 +54,13 @@ bool signal_raise(struct signal_state *s, int sig)
      * which is why two ctrl+c presses in the same instant are one
      * interrupt
      */
-    s->pending |= (1u << sig);
+    s->pending |= SIGNAL_BIT(sig);
     return true;
 }
 
 int signal_next(const struct signal_state *s)
 {
-    uint32_t ready = s->pending & ~(s->blocked & ~UNBLOCKABLE);
+    uint64_t ready = s->pending & ~(s->blocked & ~UNBLOCKABLE);
 
     /*
      * lowest number first, so that SIGKILL at 9 is delivered before
@@ -69,7 +69,7 @@ int signal_next(const struct signal_state *s)
      * decides something
      */
     for (int sig = 1; sig < SIGNAL_MAX; sig++) {
-        if (ready & (1u << sig)) {
+        if (ready & SIGNAL_BIT(sig)) {
             return sig;
         }
     }
@@ -111,9 +111,14 @@ enum signal_action signal_action_for(const struct signal_state *s, int sig)
          * every shell in history exit the moment a command completed
          */
         return SIGNAL_ACTION_IGNORE;
+    case SIGURG:
+    case SIGWINCH:
+        return SIGNAL_ACTION_IGNORE;    /* news, not a reason to die */
     case SIGCONT:
         return SIGNAL_ACTION_CONTINUE;
     case SIGTSTP:
+    case SIGTTIN:
+    case SIGTTOU:
         return SIGNAL_ACTION_STOP;
     default:
         return SIGNAL_ACTION_TERMINATE;
@@ -123,10 +128,10 @@ enum signal_action signal_action_for(const struct signal_state *s, int sig)
 enum signal_action signal_take(struct signal_state *s, int sig,
                                uint64_t *handler_out)
 {
-    if (!valid(sig) || !(s->pending & (1u << sig))) {
+    if (!valid(sig) || !(s->pending & SIGNAL_BIT(sig))) {
         return SIGNAL_ACTION_NONE;
     }
-    s->pending &= ~(1u << sig);
+    s->pending &= ~SIGNAL_BIT(sig);
 
     enum signal_action a = signal_action_for(s, sig);
     if (a != SIGNAL_ACTION_HANDLER) {
@@ -139,7 +144,7 @@ enum signal_action signal_take(struct signal_state *s, int sig,
 
     /* the handler runs with its own signal blocked, and the mask is put back when it returns. */
     s->saved_mask = s->blocked;
-    s->blocked   |= (1u << sig);
+    s->blocked   |= SIGNAL_BIT(sig);
     s->running    = sig;
     return SIGNAL_ACTION_HANDLER;
 }
@@ -178,13 +183,13 @@ bool signal_set_handler(struct signal_state *s, int sig, uint64_t handler)
     return true;
 }
 
-void signal_set_mask(struct signal_state *s, uint32_t mask)
+void signal_set_mask(struct signal_state *s, uint64_t mask)
 {
     /* the two special ones stay unblocked however hard anybody tries. */
     s->blocked = mask & ~UNBLOCKABLE;
 }
 
-uint32_t signal_get_mask(const struct signal_state *s)
+uint64_t signal_get_mask(const struct signal_state *s)
 {
     return s->blocked;
 }
@@ -197,23 +202,37 @@ bool signal_deliverable(const struct signal_state *s)
 const char *signal_name(int sig)
 {
     switch (sig) {
-    case SIGHUP:  return "hangup";
-    case SIGINT:  return "interrupt";
-    case SIGQUIT: return "quit";
-    case SIGILL:  return "illegal instruction";
-    case SIGTRAP: return "trap";
-    case SIGABRT: return "abort";
-    case SIGBUS:  return "bus error";
-    case SIGFPE:  return "arithmetic fault";
-    case SIGKILL: return "killed";
-    case SIGSEGV: return "bad address";
-    case SIGPIPE: return "broken pipe";
-    case SIGALRM: return "alarm";
-    case SIGTERM: return "terminated";
-    case SIGCHLD: return "child finished";
-    case SIGCONT: return "continue";
-    case SIGSTOP: return "stop";
-    case SIGTSTP: return "stop from the keyboard";
-    default:      return "signal";
+    case SIGHUP:    return "hangup";
+    case SIGINT:    return "interrupt";
+    case SIGQUIT:   return "quit";
+    case SIGILL:    return "illegal instruction";
+    case SIGTRAP:   return "trap";
+    case SIGABRT:   return "abort";
+    case SIGBUS:    return "bus error";
+    case SIGFPE:    return "arithmetic fault";
+    case SIGKILL:   return "killed";
+    case SIGUSR1:   return "user signal 1";
+    case SIGSEGV:   return "bad address";
+    case SIGUSR2:   return "user signal 2";
+    case SIGPIPE:   return "broken pipe";
+    case SIGALRM:   return "alarm";
+    case SIGTERM:   return "terminated";
+    case SIGSTKFLT: return "stack fault";
+    case SIGCHLD:   return "child finished";
+    case SIGCONT:   return "continue";
+    case SIGSTOP:   return "stop";
+    case SIGTSTP:   return "stop from the keyboard";
+    case SIGTTIN:   return "stop for reading the terminal";
+    case SIGTTOU:   return "stop for writing the terminal";
+    case SIGURG:    return "urgent data";
+    case SIGXCPU:   return "out of cpu time";
+    case SIGXFSZ:   return "file too large";
+    case SIGVTALRM: return "virtual alarm";
+    case SIGPROF:   return "profiling alarm";
+    case SIGWINCH:  return "window changed";
+    case SIGIO:     return "i/o possible";
+    case SIGPWR:    return "power failure";
+    case SIGSYS:    return "bad system call";
+    default:        return "signal";
     }
 }

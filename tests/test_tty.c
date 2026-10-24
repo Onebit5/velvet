@@ -164,7 +164,7 @@ int main(void)
     killed_thread = -1;
     CHECK(tty_intercept(KEY_CTRL_C),
           "ctrl+c aimed at a program is taken");
-    CHECK(process_signal_state(pid)->pending & (1u << SIGINT),
+    CHECK(process_signal_state(pid)->pending & SIGNAL_BIT(SIGINT),
           "as a SIGINT to it");
     CHECK(process_interrupt_pending(pid),
           "which is what a call it is blocked in sees");
@@ -455,7 +455,7 @@ int main(void)
         stopped_count = 0;
         killed_thread = -1;
         CHECK(tty_intercept(KEY_CTRL_C)
-              && (process_signal_state(i_job)->pending & (1u << SIGINT)),
+              && (process_signal_state(i_job)->pending & SIGNAL_BIT(SIGINT)),
               "ctrl+c is SIGINT to the group in front");
         CHECK(tty_intercept(KEY_CTRL_C) && killed_thread == -1,
               "and a second is another SIGINT, not a kill");

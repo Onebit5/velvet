@@ -1799,10 +1799,10 @@ int main(void)
               "nor another user's");
 
         CHECK(call3(SYS_SIGSEND, (uint64_t)-i_left, SIGTERM, 0) == 0
-              && (process_signal_state(i_left)->pending & (1u << SIGTERM))
-              && (process_signal_state(i_right)->pending & (1u << SIGTERM))
+              && (process_signal_state(i_left)->pending & SIGNAL_BIT(SIGTERM))
+              && (process_signal_state(i_right)->pending & SIGNAL_BIT(SIGTERM))
               && !(process_signal_state(i_shell)->pending
-                   & (1u << SIGTERM)),
+                   & SIGNAL_BIT(SIGTERM)),
               "minus a pgid signals every member and nobody else");
         CHECK(call3(SYS_SIGSEND, (uint64_t)-i_rootly, SIGTERM, 0) == -1,
               "a group with no member the sender may signal is -1");

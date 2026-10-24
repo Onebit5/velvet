@@ -181,12 +181,12 @@ int main(void)
         signal_set_handler(p_sig, SIGSEGV, SIG_IGNORE);
         process_force_signal(i_busy, SIGSEGV);
         CHECK(signal_action_for(p_sig, SIGSEGV) == SIGNAL_ACTION_TERMINATE
-              && (p_sig->pending & (1u << SIGSEGV)),
+              && (p_sig->pending & SIGNAL_BIT(SIGSEGV)),
               "an ignored SIGSEGV is raised all the same, to end it");
         p_sig->pending = 0;
-        p_sig->blocked |= 1u << SIGILL;
+        p_sig->blocked |= SIGNAL_BIT(SIGILL);
         process_force_signal(i_busy, SIGILL);
-        CHECK(!(p_sig->blocked & (1u << SIGILL))
+        CHECK(!(p_sig->blocked & SIGNAL_BIT(SIGILL))
               && process_interrupt_pending(i_busy),
               "a blocked SIGILL is unblocked and delivered");
         p_sig->pending = 0;
@@ -213,7 +213,7 @@ int main(void)
         process_signal(i_job, SIGSTOP);
         CHECK(s_i_stopped_id == 77 && s_b_stopped,
               "SIGSTOP stops the thread when it is sent");
-        CHECK(!(process_signal_state(i_job)->pending & (1u << SIGSTOP)),
+        CHECK(!(process_signal_state(i_job)->pending & SIGNAL_BIT(SIGSTOP)),
               "and leaves nothing pending to act on again");
         CHECK(process_reportable(i_parent, -1, true, &i_status, &b_ended)
               == i_job && !b_ended && i_status == (WAIT_STOPPED | SIGSTOP),
@@ -232,10 +232,10 @@ int main(void)
         process_signal(i_job, SIGTSTP);
         CHECK(s_i_stopped_id == 0, "an ignored SIGTSTP stops nothing");
         signal_set_handler(process_signal_state(i_job), SIGTSTP, SIG_DEFAULT);
-        process_signal_state(i_job)->blocked |= 1u << SIGTSTP;
+        process_signal_state(i_job)->blocked |= SIGNAL_BIT(SIGTSTP);
         process_signal(i_job, SIGTSTP);
         CHECK(s_i_stopped_id == 0
-              && (process_signal_state(i_job)->pending & (1u << SIGTSTP)),
+              && (process_signal_state(i_job)->pending & SIGNAL_BIT(SIGTSTP)),
               "and a blocked one waits, pending, for delivery");
 
         CHECK(process_reportable(i_parent, 4040, true, &i_status, &b_ended)
@@ -266,7 +266,7 @@ int main(void)
         process_set_pgid(i_parent, 77);
         process_set_trampoline(i_parent, 0x401234);
         signal_set_handler(p_parent, SIGINT, SIG_IGNORE);
-        p_parent->blocked = 1u << SIGALRM;
+        p_parent->blocked = SIGNAL_BIT(SIGALRM);
         process_signal(i_parent, SIGTERM);
 
         process_inherit(i_child, i_parent);
@@ -278,7 +278,7 @@ int main(void)
               && process_pgid(i_child) == 77,
               "and where it stands, and the job it is part of");
         CHECK(p_child->handler[SIGINT] == SIG_IGNORE
-              && p_child->blocked == (1u << SIGALRM)
+              && p_child->blocked == SIGNAL_BIT(SIGALRM)
               && process_trampoline(i_child) == 0x401234,
               "and what it does with each signal");
         CHECK(p_child->pending == 0, "but nothing that was pending");

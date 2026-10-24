@@ -293,7 +293,7 @@ void process_interrupt(int pid)
  */
 static int settle_now(struct process *p, int i_sig)
 {
-    uint32_t u_bit = 1u << i_sig;
+    uint64_t u_bit = SIGNAL_BIT(i_sig);
     enum signal_action e_act = signal_action_for(&p->sig, i_sig);
     bool b_blocked = (p->sig.blocked & u_bit) != 0 && i_sig != SIGSTOP;
 
@@ -326,7 +326,7 @@ void process_force_signal(int i_pid, int i_sig)
     uint64_t u_flags = spin_lock_irq(&process_lock);
     struct process *p = slot_for(i_pid);
     if (p != NULL && !p->exited && i_sig > 0 && i_sig < SIGNAL_MAX) {
-        uint32_t u_bit = 1u << i_sig;
+        uint64_t u_bit = SIGNAL_BIT(i_sig);
         if (p->sig.handler[i_sig] == SIG_IGNORE
             || (p->sig.blocked & u_bit) != 0) {
             p->sig.handler[i_sig] = SIG_DEFAULT;

@@ -37,6 +37,9 @@
 
 #include <uapi/velvet/signal.h>
 
+/* a signal's bit in a set: signal n is bit n - 1, as a sigset_t has it */
+#define SIGNAL_BIT(sig) (1ull << ((sig) - 1))
+
 enum signal_action {
     SIGNAL_ACTION_NONE,     /* nothing to do */
     SIGNAL_ACTION_TERMINATE,
@@ -47,13 +50,13 @@ enum signal_action {
 };
 
 struct signal_state {
-    uint32_t pending;       /* one bit per signal. a set, not a queue */
-    uint32_t blocked;       /* deferred, not discarded */
+    uint64_t pending;       /* one bit per signal. a set, not a queue */
+    uint64_t blocked;       /* deferred, not discarded */
 
     uint64_t handler[SIGNAL_MAX];
 
     int      running;
-    uint32_t saved_mask;
+    uint64_t saved_mask;
 };
 
 void signal_reset(struct signal_state *s);
@@ -92,8 +95,8 @@ bool signal_set_handler(struct signal_state *s, int sig, uint64_t handler);
  * rule is not negotiable and refusing the whole call would break
  * programs that block everything as a matter of course
  */
-void signal_set_mask(struct signal_state *s, uint32_t mask);
-uint32_t signal_get_mask(const struct signal_state *s);
+void signal_set_mask(struct signal_state *s, uint64_t mask);
+uint64_t signal_get_mask(const struct signal_state *s);
 
 bool signal_deliverable(const struct signal_state *s);
 

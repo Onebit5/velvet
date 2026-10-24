@@ -68,14 +68,14 @@ int main(void)
      * yes and then killed anyway has been lied to
      */
     signal_reset(&s);
-    signal_set_mask(&s, 0xffffffff);
-    CHECK((signal_get_mask(&s) & (1u << SIGKILL)) == 0,
+    signal_set_mask(&s, ~0ull);
+    CHECK((signal_get_mask(&s) & SIGNAL_BIT(SIGKILL)) == 0,
           "blocking everything does not block SIGKILL");
-    CHECK((signal_get_mask(&s) & (1u << SIGSTOP)) == 0,
+    CHECK((signal_get_mask(&s) & SIGNAL_BIT(SIGSTOP)) == 0,
           "nor SIGSTOP, and this is silent rather than a refusal, "
           "because a great many programs block everything as a matter "
           "of course and failing them would buy nothing");
-    CHECK((signal_get_mask(&s) & (1u << SIGTERM)) != 0,
+    CHECK((signal_get_mask(&s) & SIGNAL_BIT(SIGTERM)) != 0,
           "everything else is blocked as asked");
 
     signal_raise(&s, SIGKILL);
@@ -85,10 +85,10 @@ int main(void)
           "can type");
 
     signal_reset(&s);
-    signal_set_mask(&s, 1u << SIGTERM);
+    signal_set_mask(&s, SIGNAL_BIT(SIGTERM));
     signal_raise(&s, SIGTERM);
     CHECK(signal_next(&s) == 0, "a blocked signal is not delivered");
-    CHECK((s.pending & (1u << SIGTERM)) != 0,
+    CHECK((s.pending & SIGNAL_BIT(SIGTERM)) != 0,
           "but it is still pending, blocking defers, it does not "
           "discard, and a signal thrown away by a mask is one the "
           "program never finds out about");
@@ -111,6 +111,22 @@ int main(void)
           "ctrl+z stops rather than kills");
     CHECK(signal_action_for(&s, SIGCONT) == SIGNAL_ACTION_CONTINUE,
           "and continue continues");
+    CHECK(signal_action_for(&s, SIGTTIN) == SIGNAL_ACTION_STOP
+          && signal_action_for(&s, SIGTTOU) == SIGNAL_ACTION_STOP,
+          "a background job touching its terminal stops too");
+    CHECK(signal_action_for(&s, SIGWINCH) == SIGNAL_ACTION_IGNORE
+          && signal_action_for(&s, SIGURG) == SIGNAL_ACTION_IGNORE,
+          "a terminal changing size, or urgent data, is news and no more");
+    CHECK(signal_action_for(&s, SIGUSR1) == SIGNAL_ACTION_TERMINATE
+          && signal_action_for(&s, SIGRTMAX) == SIGNAL_ACTION_TERMINATE,
+          "the ones that mean what a program says end it unhandled");
+    CHECK(signal_action_for(&s, SIGNAL_MAX) == SIGNAL_ACTION_NONE
+          && !signal_raise(&s, SIGNAL_MAX) && !signal_raise(&s, 0),
+          "and there is nothing past the last, or before the first");
+    CHECK(signal_raise(&s, SIGRTMAX) && s.pending == SIGNAL_BIT(SIGRTMAX)
+          && SIGNAL_BIT(SIGRTMAX) == 1ull << 63 && signal_next(&s) == SIGRTMAX,
+          "the last of them is the top bit of the set");
+    s.pending = 0;
 
     signal_set_handler(&s, SIGINT, SIG_IGNORE);
     CHECK(signal_action_for(&s, SIGINT) == SIGNAL_ACTION_IGNORE,
@@ -138,7 +154,7 @@ int main(void)
     CHECK(signal_take(&s, SIGINT, &handler) == SIGNAL_ACTION_HANDLER,
           "taking it says to run the handler");
     CHECK(handler == 0x402000, "and gives the address");
-    CHECK((signal_get_mask(&s) & (1u << SIGINT)) != 0,
+    CHECK((signal_get_mask(&s) & SIGNAL_BIT(SIGINT)) != 0,
           "with its own signal blocked for the duration, ctrl+c held "
           "down would otherwise re-enter the handler on top of itself "
           "until the stack met its guard page");
@@ -148,18 +164,18 @@ int main(void)
           "so another of the same waits rather than nesting");
 
     signal_handler_returned(&s);
-    CHECK((signal_get_mask(&s) & (1u << SIGINT)) == 0,
+    CHECK((signal_get_mask(&s) & SIGNAL_BIT(SIGINT)) == 0,
           "and the mask goes back when the handler returns");
     CHECK(signal_next(&s) == SIGINT, "letting the waiting one through");
 
     /* a mask set *before* the handler ran is restored, not cleared */
     signal_reset(&s);
     signal_set_handler(&s, SIGINT, 0x402000);
-    signal_set_mask(&s, 1u << SIGHUP);
+    signal_set_mask(&s, SIGNAL_BIT(SIGHUP));
     signal_raise(&s, SIGINT);
     signal_take(&s, SIGINT, &handler);
     signal_handler_returned(&s);
-    CHECK((signal_get_mask(&s) & (1u << SIGHUP)) != 0,
+    CHECK((signal_get_mask(&s) & SIGNAL_BIT(SIGHUP)) != 0,
           "a mask the program set itself survives a handler, restoring "
           "it to empty would quietly unblock things nobody unblocked");
 
@@ -172,14 +188,14 @@ int main(void)
 
     signal_reset(&s);
     signal_set_handler(&s, SIGINT, 0x403000);
-    signal_set_mask(&s, 1u << SIGTERM);
+    signal_set_mask(&s, SIGNAL_BIT(SIGTERM));
     signal_raise(&s, SIGHUP);
 
     struct signal_state child;
     signal_inherit(&child, &s);
 
     CHECK(child.handler[SIGINT] == 0x403000, "a child inherits the handlers");
-    CHECK((signal_get_mask(&child) & (1u << SIGTERM)) != 0,
+    CHECK((signal_get_mask(&child) & SIGNAL_BIT(SIGTERM)) != 0,
           "and the mask");
     CHECK(child.pending == 0,
           "and *not* the pending set, a child is not born owing its "
@@ -191,7 +207,7 @@ int main(void)
     signal_reset(&s);
     signal_set_handler(&s, SIGINT, 0x404000);
     signal_set_handler(&s, SIGHUP, SIG_IGNORE);
-    signal_set_mask(&s, 1u << SIGTERM);
+    signal_set_mask(&s, SIGNAL_BIT(SIGTERM));
     signal_raise(&s, SIGQUIT);
     signal_exec(&s);
 
@@ -203,7 +219,7 @@ int main(void)
           "but an *ignored* signal stays ignored, which every unix does: "
           "a shell starting a background job with SIGINT ignored expects "
           "the child to keep ignoring it");
-    CHECK((signal_get_mask(&s) & (1u << SIGTERM)) != 0,
+    CHECK((signal_get_mask(&s) & SIGNAL_BIT(SIGTERM)) != 0,
           "and the mask survives, which is what lets a program start a "
           "child with signals deliberately blocked");
     CHECK(s.pending == 0, "nothing is left pending across it");

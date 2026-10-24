@@ -1867,9 +1867,13 @@ static int64_t syscall_do(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
         if (st == NULL) {
             return -1;
         }
-        uint32_t was = signal_get_mask(st);
+        /*
+         * this call's mask has a bit per signal number, 1 to 31, where
+         * the kernel keeps signal n at bit n - 1
+         */
+        uint32_t was = (uint32_t)(signal_get_mask(st) << 1);
         if (a0 != 0) {          /* 0 asks without setting */
-            signal_set_mask(st, (uint32_t)a1);
+            signal_set_mask(st, (uint64_t)(uint32_t)a1 >> 1);
         }
         return (int64_t)was;
     }
