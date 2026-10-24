@@ -74,6 +74,25 @@ with every filesystem on it and what the block cache is holding;
 ``partitions``, what each drive's table says it has; and ``mounts``, which
 filesystem is where.
 
+/dev
+----
+
+``dev.c`` is a table of character devices, opened by name: ``null``, which
+reads as the end and swallows what is written; ``zero``, which reads as
+zeroes; ``full``, which reads as zeroes and has no room to write;
+``random`` and ``urandom``, the same generator; and ``tty`` and
+``console``, the terminal. each is a file with operations of its own, and
+like /proc nothing under /dev is stored anywhere.
+
+the generator is ``drivers/random.c``: a chacha20 keystream whose key
+changes after every request, to the first block the old one makes, which
+is never handed out, so bytes already given away cannot be worked back to
+from the key that follows them. it is seeded at boot from the core's own
+generator where it has one, the clock, and the cycle counter many times
+over, and every timer tick and anything written to ``random`` stirs in
+more. ``lib/chacha20.c`` is the block function, held to the published test
+vector by ``test_chacha20``.
+
 the ramdisk
 -----------
 

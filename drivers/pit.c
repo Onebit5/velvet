@@ -6,6 +6,7 @@
  */
 
 #include <velvet/pit.h>
+#include <velvet/random.h>
 #include <asm/smp.h>
 #include <asm/io.h>
 #include <asm/cpu.h>
@@ -43,6 +44,9 @@ void pit_tick(void)
     if (smp_this_cpu() == 0) {
         ticks++;
     }
+
+    /* the cycle count a tick lands on is a little disorder for the generator */
+    random_tick();
 
     /*
      * the scheduler, though, is every core's business: this is the

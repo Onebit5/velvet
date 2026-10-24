@@ -13,6 +13,7 @@
 #include <velvet/disk.h>
 #include <velvet/kmalloc.h>
 #include <velvet/proc.h>
+#include <velvet/dev.h>
 #include <velvet/string.h>
 
 /* what a file on the disk is allowed to be. */
@@ -60,6 +61,12 @@ static bool under_boot(const char *path, const char **rest)
 static bool under_proc(const char *path, const char **rest)
 {
     return under(path, PROC_AT, rest);
+}
+
+/* /dev, which is a table of devices rather than anything stored */
+static bool under_dev(const char *path, const char **rest)
+{
+    return under(path, DEV_AT, rest);
 }
 
 /*
@@ -200,6 +207,22 @@ bool vfs_open(const char *path, struct vfs_file *out)
     }
 
     const char *rest;
+    if (under_dev(path, &rest)) {
+        memset(out, 0, sizeof *out);
+        out->kind = VFS_DEV;
+        if (rest[0] == '\0') {
+            copy_name(out->name, DEV_AT + 1);
+            out->is_dir = true;
+            out->mode = 0555;
+            return true;
+        }
+        if (!dev_find(rest, &out->sz_dev)) {
+            return false;
+        }
+        copy_name(out->name, rest);
+        out->mode = dev_mode(out->sz_dev);
+        return true;
+    }
     if (under_proc(path, &rest)) {
         memset(out, 0, sizeof *out);
         out->kind = VFS_PROC;
@@ -344,7 +367,12 @@ static bool root_extra(size_t index, struct vfs_file *out)
         copy_name(out->name, PROC_AT + 1);
         return true;
     }
-    if (index == 2 && disk_ready(DISK_WORK)) {
+    if (index == 2) {
+        out->kind = VFS_DEV;
+        copy_name(out->name, DEV_AT + 1);
+        return true;
+    }
+    if (index == 3 && disk_ready(DISK_WORK)) {
         out->kind = VFS_DISK;
         out->mount = DISK_WORK;
         copy_name(out->name, DISK_WORK_AT + 1);
@@ -368,6 +396,18 @@ bool vfs_readdir(const char *path, size_t index, struct vfs_file *out)
     }
 
     const char *rest;
+    if (under_dev(path, &rest)) {
+        const char *str_name = dev_name(index);
+        if (rest[0] != '\0' || str_name == NULL) {
+            return false;
+        }
+        memset(out, 0, sizeof *out);
+        out->kind = VFS_DEV;
+        out->sz_dev = index;
+        out->mode = dev_mode(index);
+        copy_name(out->name, str_name);
+        return true;
+    }
     if (under_proc(path, &rest)) {
         const char *name = proc_name(index);
         if (rest[0] != '\0' || name == NULL) {
@@ -786,6 +826,9 @@ static const struct file_operations node_ops = {
 
 struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode)
 {
+    if (p_node->kind == VFS_DEV) {
+        return dev_open(p_node->sz_dev, u_mode);
+    }
     struct file *p_file = file_alloc(&node_ops, u_mode, FILE_TYPE_REGULAR);
     if (p_file != NULL) {
         p_file->node = *p_node;

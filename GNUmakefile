@@ -447,7 +447,8 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/tcp \
              $(T)/signal $(T)/ansi \
              $(T)/termios \
-             $(T)/epoch $(T)/pressure $(T)/hash \
+             $(T)/epoch $(T)/pressure $(T)/hash $(T)/chacha20 \
+             $(T)/random \
              $(T)/crash \
              $(T)/resize $(T)/switch \
              $(T)/proc
@@ -489,7 +490,7 @@ $(T)/tty:      tests/test_tty.c      sched/spinlock.c \
 # they should, and a stubbed pipe could only ever agree with itself
 $(T)/syscall:  tests/test_syscall.c  sched/spinlock.c \
                fs/path.c arch/x86_64/syscall.c arch/x86_64/fpu.c \
-               arch/x86_64/uaccess.c fs/file.c \
+               arch/x86_64/uaccess.c fs/file.c fs/dev.c \
                sched/process.c sched/signal.c lib/string.c \
                lib/env.c \
                fs/vfs.c fs/proc.c \
@@ -542,6 +543,9 @@ $(T)/part:     tests/test_part.c     drivers/part.c \
 # run with some, which is how tools/hashcheck.py drives it against zlib
 $(T)/hash:     tests/test_hash.c     lib/hash.c \
                lib/string.c
+$(T)/chacha20: tests/test_chacha20.c lib/chacha20.c
+$(T)/random:   tests/test_random.c   drivers/random.c lib/chacha20.c \
+               sched/spinlock.c lib/string.c
 # the six python build tools, rewritten in C. not suites: they are
 # programs, and nothing they produce can judge itself, so they build
 # outside TEST_BINS and tools/toolcheck.py is what runs them.
@@ -631,7 +635,7 @@ $(T)/epoch:    tests/test_epoch.c    lib/epoch.c lib/clock.c
 # who gets refused when memory runs out. a policy rather than a data
 # structure, and its interesting cases are all at the edges
 $(T)/pressure: tests/test_pressure.c mm/pressure.c
-$(T)/vfs:      tests/test_vfs.c      fs/vfs.c fs/file.c \
+$(T)/vfs:      tests/test_vfs.c      fs/vfs.c fs/file.c fs/dev.c \
                fs/ramdisk.c \
                lib/string.c
 # the protocol as the kernel declares it against the loader's own header,

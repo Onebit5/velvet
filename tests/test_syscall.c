@@ -592,6 +592,17 @@ void slab_free(void *object)
     free(object);
 }
 
+/* the generator and the console are other suites' to check */
+void random_bytes(void *p_buf, size_t sz_len)
+{
+    memset(p_buf, 0x5a, sz_len);
+}
+void random_mix(const void *p_buf, size_t sz_len)
+{
+    (void)p_buf;
+    (void)sz_len;
+}
+
 /* the console on 0, 1 and 2, which is what a program is started with */
 static int with_console(int i_pid)
 {

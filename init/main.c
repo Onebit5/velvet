@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <velvet/random.h>
 #include <velvet/proc.h>
 #include <velvet/meminfo.h>
 #include <velvet/pci.h>
@@ -236,6 +237,9 @@ void kmain(const struct boot_handoff *handoff)
         rtc_read(&boot_time);
         epoch_start(epoch_from_date(&boot_time));
     }
+
+    /* and a seed for the random generator, now there is a clock to add */
+    random_init();
 
     /* the console driver has to be able to ask who is writing before anything writes. */
     console_set_owner_hook(which_console);

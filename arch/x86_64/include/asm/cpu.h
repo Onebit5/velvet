@@ -9,6 +9,7 @@
 #define ARCH_X86_64_ASM_CPU_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #include <velvet/compiler.h>
 #include <asm/smp.h>
@@ -136,12 +137,34 @@ ARCH_INLINE uint64_t cpu_stack_pointer(void)
  */
 void cpu_stop(void) __attribute__((noreturn));
 
+/*
+ * the time stamp counter: cycles since the core came up, which nothing
+ * outside the core can predict to the cycle. a source of disorder for the
+ * random generator rather than a clock
+ */
+ARCH_INLINE uint64_t cpu_cycles(void)
+{
+    return __builtin_ia32_rdtsc();
+}
+
 #ifndef VELVET_HOSTED
 /*
  * the processors: what they are, which the firmware listed, which woke
  * and which are taking work. what `cpus` prints and /proc/cpuinfo is
  */
 void cpu_show(void);
+
+/*
+ * 64 bits from the core's own random number generator, rdrand: false
+ * when it has none, or had none to give after a few tries
+ */
+bool cpu_random(uint64_t *p_out);
+#else
+ARCH_INLINE bool cpu_random(uint64_t *p_out)
+{
+    (void)p_out;
+    return false;
+}
 #endif
 
 #endif

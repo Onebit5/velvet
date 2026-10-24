@@ -26,6 +26,7 @@ enum file_type {
     FILE_TYPE_REGULAR,
     FILE_TYPE_PIPE,
     FILE_TYPE_TTY,
+    FILE_TYPE_CHAR,             /* a device in /dev */
 };
 
 struct file;

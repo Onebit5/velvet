@@ -108,3 +108,34 @@ void cpu_show(void)
     kprintf("on none of them. there is one run queue and every core picks\n");
     kprintf("from it, so a new thread lands wherever there is room.\n");
 }
+
+/* cpuid leaf 1, ecx: rdrand is there */
+#define CPUID_RDRAND (1u << 30)
+
+bool cpu_random(uint64_t *p_out)
+{
+    static int s_i_has = -1;
+    if (s_i_has < 0) {
+        uint32_t u_eax, u_ebx, u_ecx, u_edx;
+        cpuid(1, &u_eax, &u_ebx, &u_ecx, &u_edx);
+        s_i_has = (u_ecx & CPUID_RDRAND) != 0;
+    }
+    if (!s_i_has) {
+        return false;
+    }
+    /*
+     * it may come back empty when asked too fast, and the manual's advice
+     * is a few more tries, not a loop
+     */
+    for (int i_try = 0; i_try < 10; i_try++) {
+        uint64_t u_value;
+        uint8_t u_ok;
+        __asm__ volatile ("rdrand %0; setc %1"
+                          : "=r"(u_value), "=qm"(u_ok) : : "cc");
+        if (u_ok) {
+            *p_out = u_value;
+            return true;
+        }
+    }
+    return false;
+}

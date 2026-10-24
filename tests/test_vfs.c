@@ -340,8 +340,24 @@ static size_t add_file(uint8_t *tar, size_t at, const char *name,
     return at;
 }
 
+/* the generator and the console are other suites' to check */
+void random_bytes(void *p_buf, size_t sz_len)
+{
+    memset(p_buf, 0x5a, sz_len);
+}
+void random_mix(const void *p_buf, size_t sz_len)
+{
+    (void)p_buf;
+    (void)sz_len;
+}
+struct file *tty_console_file(void)
+{
+    return NULL;
+}
+
 /* the slab a file comes from, as plain malloc */
 #include <velvet/file.h>
+#include <velvet/dev.h>
 #include <velvet/slab.h>
 #include <uapi/velvet/errno.h>
 #include <uapi/velvet/syscall.h>
@@ -463,8 +479,8 @@ int main(void)
     }
     CHECK(saw_welcome, "the root lists what is on the disk");
     CHECK(saw_boot, "and the mount standing on it, which is on no filesystem");
-    CHECK(count == (int)DISK_COUNT - 1 + 3,
-          "exactly the root filesystem plus the three mounts standing on it");
+    CHECK(count == (int)DISK_COUNT - 1 + 4,
+          "exactly the root filesystem plus the four mounts standing on it");
 
     int saw_hello = 0, saw_dirs = 0;
     count = 0;
@@ -500,7 +516,7 @@ int main(void)
 
     count = 0;
     for (size_t i = 0; vfs_readdir("//", i, &f); i++) count++;
-    CHECK(count == (int)DISK_COUNT - 1 + 3, "and a doubled slash is the root");
+    CHECK(count == (int)DISK_COUNT - 1 + 4, "and a doubled slash is the root");
 
     CHECK(!vfs_readdir("bootleg", 0, &f), "but bootleg is still not boot");
 
@@ -741,13 +757,16 @@ int main(void)
     count = 0;
     saw_boot = 0;
     int i_saw_proc = 0;
+    int i_saw_dev = 0;
     for (size_t i = 0; vfs_readdir("/", i, &f); i++) {
         if (strcmp(f.name, "boot") == 0) saw_boot = 1;
         if (strcmp(f.name, "proc") == 0) i_saw_proc = 1;
+        if (strcmp(f.name, "dev") == 0) i_saw_dev = 1;
         count++;
     }
-    CHECK(saw_boot && i_saw_proc && count == 2,
-          "the root holds nothing but /boot and /proc, which is honest");
+    CHECK(saw_boot && i_saw_proc && i_saw_dev && count == 3,
+          "the root holds nothing but /boot, /proc and /dev, which is "
+          "honest");
 
     count = 0;
     for (size_t i = 0; vfs_readdir("/boot", i, &f); i++) {
@@ -810,6 +829,54 @@ int main(void)
               && (p_file = vfs_open_file(&f, FILE_READ)) != NULL
               && p_file->p_ops->seek(p_file, 0, SEEK_SET) == -ESPIPE,
               "a /proc file, which has no size, has no position to move");
+        file_put(p_file);
+    }
+
+    /* /dev: a table of devices, opened by name */
+    {
+        struct file *p_file = NULL;
+        char arr_got[8];
+        size_t sz_count = 0;
+
+        CHECK(vfs_open("/dev", &f) && f.is_dir && f.kind == VFS_DEV,
+              "/dev is a directory");
+        for (size_t sz_at = 0; vfs_readdir("/dev", sz_at, &f); sz_at++) {
+            sz_count++;
+        }
+        CHECK(sz_count == dev_count(), "listing every device it has");
+        CHECK(vfs_open("/dev/null", &f) && !f.is_dir && f.kind == VFS_DEV
+              && f.mode == 0666 && vfs_may_read(&f, 1000),
+              "/dev/null is a device anybody may use");
+        CHECK(!vfs_open("/dev/nothing", &f), "and a name it lacks is not");
+
+        vfs_open("/dev/null", &f);
+        p_file = vfs_open_file(&f, FILE_READ | FILE_WRITE);
+        CHECK(p_file != NULL && p_file->e_type == FILE_TYPE_CHAR
+              && p_file->p_ops->read(p_file, arr_got, 8) == 0
+              && p_file->p_ops->write(p_file, "gone", 4) == 4,
+              "null reads as the end and swallows what is written");
+        file_put(p_file);
+
+        vfs_open("/dev/zero", &f);
+        p_file = vfs_open_file(&f, FILE_READ);
+        memset(arr_got, 7, sizeof arr_got);
+        CHECK(p_file != NULL && p_file->p_ops->read(p_file, arr_got, 8) == 8
+              && arr_got[0] == 0 && arr_got[7] == 0,
+              "zero reads as zeroes");
+        file_put(p_file);
+
+        vfs_open("/dev/full", &f);
+        p_file = vfs_open_file(&f, FILE_WRITE);
+        CHECK(p_file != NULL
+              && p_file->p_ops->write(p_file, "x", 1) == -ENOSPC,
+              "full has no room for anything");
+        file_put(p_file);
+
+        vfs_open("/dev/urandom", &f);
+        p_file = vfs_open_file(&f, FILE_READ);
+        CHECK(p_file != NULL && p_file->p_ops->read(p_file, arr_got, 8) == 8
+              && arr_got[0] == 0x5a,
+              "urandom reads from the generator");
         file_put(p_file);
     }
 

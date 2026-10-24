@@ -9,6 +9,7 @@
 #define ARCH_NONE_ASM_CPU_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <velvet/compiler.h>
 #include <velvet/kprintf.h>
 
@@ -54,6 +55,18 @@ ARCH_INLINE uint64_t cpu_stack_pointer(void)
 }
 
 void cpu_stop(void) __attribute__((noreturn));
+
+/* a machine with no architecture has neither a counter nor a generator */
+ARCH_INLINE uint64_t cpu_cycles(void)
+{
+    return 0;
+}
+
+ARCH_INLINE bool cpu_random(uint64_t *p_out)
+{
+    (void)p_out;
+    return false;
+}
 
 /* the processors, of which a machine with no architecture has no table. */
 ARCH_INLINE void cpu_show(void)

@@ -25,6 +25,7 @@ enum vfs_kind {
     VFS_RAMDISK,
     VFS_DISK,
     VFS_PROC,       /* written by the kernel when read, see fs/proc.c */
+    VFS_DEV,        /* a device, opened through fs/dev.c */
 };
 
 struct vfs_file {
@@ -49,6 +50,7 @@ struct vfs_file {
 
     /* which /proc file, for VFS_PROC */
     size_t sz_proc;
+    size_t sz_dev;          /* which device, for VFS_DEV */
 };
 
 bool vfs_open(const char *path, struct vfs_file *out);
