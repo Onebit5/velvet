@@ -143,10 +143,12 @@ struct addrspace *addrspace_fork(const struct addrspace *from,
         mine[i] = child | (parent[i] & ~PTE_ADDR_MASK);
     }
 
-    /* the records come too. */
+    /* the records come too, and where the break is */
     for (size_t i = 0; i < VMA_MAX; i++) {
         as->vmas[i] = from->vmas[i];
     }
+    as->u_brk_start = from->u_brk_start;
+    as->u_brk = from->u_brk;
 
     /*
      * and this core's own memory of the parent's entries, when the parent
@@ -652,7 +654,11 @@ uint64_t addrspace_brk(struct addrspace *p_as, uint64_t u_want,
     if (p_as == NULL) {
         return 0;
     }
-    if (u_want < p_as->u_brk_start) {
+    /*
+     * a space with no break has none to move, and growing one from 0
+     * would put memory where NULL points
+     */
+    if (p_as->u_brk_start < MAP_MIN || u_want < p_as->u_brk_start) {
         return p_as->u_brk;
     }
     uint64_t u_old_top = PAGE_UP(p_as->u_brk);

@@ -698,6 +698,20 @@ int main(void)
         CHECK(addrspace_brk(p_sp, 0x518000, u_rw) == 0x501000,
               "and does not grow over something else");
 
+        struct addrspace *p_kid = addrspace_fork(p_sp, kernel_space);
+        CHECK(p_kid != NULL && addrspace_brk(p_kid, 0, u_rw) == 0x501000
+              && addrspace_brk(p_kid, 0x502000, u_rw) == 0x502000,
+              "a forked child's break is where its parent's was, and "
+              "grows from there");
+        addrspace_destroy(p_kid);
+
+        struct addrspace *p_none = addrspace_create(kernel_space);
+        CHECK(addrspace_brk(p_none, 0x2000, u_rw) == 0
+              && regions(p_none) == 0,
+              "a space with no break has none to grow, least of all from "
+              "address 0");
+        addrspace_destroy(p_none);
+
         addrspace_destroy(p_sp);
         CHECK(outstanding == u_level, "with nothing leaked");
     }
