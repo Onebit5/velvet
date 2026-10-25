@@ -455,6 +455,7 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
 
 $(T)/kprintf:  tests/test_kprintf.c  lib/kprintf.c \
                sched/spinlock.c
+$(T)/kprintf:  LDLIBS = -pthread
 $(T)/proc:     tests/test_proc.c     fs/proc.c lib/kprintf.c \
                lib/string.c sched/spinlock.c
 $(T)/mm:       tests/test_mm.c       sched/spinlock.c \

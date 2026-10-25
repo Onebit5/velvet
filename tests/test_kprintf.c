@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <pthread.h>
+#include <sched.h>
 
 /* the lock complains through these when something is wrong with it */
 void panic(const char *fmt, ...)
@@ -162,9 +164,63 @@ static void klog_tests(void)
     kprintf_serial_filter(NULL);
 }
 
+/*
+ * two writers at once take turns by the line. the serial filter is asked
+ * once a character, so yielding there hands the other thread the chance
+ * to cut in that a second core has on a real machine
+ */
+#define LINE_LEN 48
+#define LINES    200
+
+static bool yield_no_serial(void)
+{
+    sched_yield();
+    return false;
+}
+
+static void *write_lines(void *p_letter)
+{
+    char arr_line[LINE_LEN];
+    memset(arr_line, *(const char *)p_letter, LINE_LEN - 1);
+    arr_line[LINE_LEN - 1] = '\n';
+    for (int i_n = 0; i_n < LINES; i_n++) {
+        kwrite(arr_line, LINE_LEN);
+    }
+    return NULL;
+}
+
+static void whole_lines_test(void)
+{
+    static const char arr_letters[2] = { 'a', 'b' };
+    pthread_t arr_threads[2];
+
+    kprintf_serial_filter(yield_no_serial);
+    for (int i_t = 0; i_t < 2; i_t++) {
+        pthread_create(&arr_threads[i_t], NULL, write_lines,
+                       (void *)&arr_letters[i_t]);
+    }
+    for (int i_t = 0; i_t < 2; i_t++) {
+        pthread_join(arr_threads[i_t], NULL);
+    }
+    kprintf_serial_filter(NULL);
+
+    size_t sz_want = 2 * LINES * LINE_LEN;
+    bool b_whole = klog_copy(s_arr_log, sz_want) == sz_want;
+    for (size_t sz_at = 0; b_whole && sz_at < sz_want; sz_at += LINE_LEN) {
+        for (size_t sz_c = 1; sz_c < LINE_LEN - 1; sz_c++) {
+            b_whole &= s_arr_log[sz_at + sz_c] == s_arr_log[sz_at];
+        }
+        b_whole &= s_arr_log[sz_at + LINE_LEN - 1] == '\n';
+    }
+    if (!b_whole) {
+        fail_klog("two writers at once each get their lines out whole");
+    }
+}
+
 int main(void)
 {
     klog_tests();
+    whole_lines_test();
 
     check("hello", "hello");
     check("42", "%d", 42);

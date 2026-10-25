@@ -86,10 +86,20 @@ static void putc_both(char c)
     }
 }
 
+/*
+ * a line at a time under the print lock, as kprintf prints. two cores
+ * writing at once otherwise take turns by the character, which leaves
+ * neither line readable and the console's cursor moved by both at once
+ */
 void kwrite(const char *s, size_t n)
 {
-    for (size_t i = 0; i < n; i++) {
-        putc_both(s[i]);
+    size_t i = 0;
+    while (i < n) {
+        uint64_t u_flags = spin_lock_irq(&print_lock);
+        do {
+            putc_both(s[i]);
+        } while (s[i++] != '\n' && i < n);
+        spin_unlock_irq(&print_lock, u_flags);
     }
 }
 

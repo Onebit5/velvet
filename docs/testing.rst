@@ -46,8 +46,9 @@ run as host programs. each prints ``ok`` or ``FAILED`` and a failure prints
 the failing case. all of them:
 
 ``kprintf``, ``string``, ``ansi``, ``termios``, ``path``
-   formatting; the copies, at every alignment; terminal escape sequences,
-   the terminal discipline's decisions, and path resolution.
+   formatting, and two writers taking turns by the line; the copies, at
+   every alignment; terminal escape sequences, the terminal discipline's
+   decisions, and path resolution.
 
 ``mm``, ``buddy``, ``slab``, ``vmm``, ``addrspace``, ``pressure``
    the allocators and the page tables, including draining ram dry, every
