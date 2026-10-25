@@ -446,7 +446,7 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/net \
              $(T)/tcp \
              $(T)/signal $(T)/ansi \
-             $(T)/termios \
+             $(T)/termios $(T)/string \
              $(T)/epoch $(T)/pressure $(T)/hash $(T)/chacha20 \
              $(T)/random \
              $(T)/crash \
@@ -629,6 +629,9 @@ $(T)/ansi:     tests/test_ansi.c     drivers/ansi.c
 # the deciding does not, and the deciding is where ctrl+c arrives as
 # a signal or as the byte 0x03
 $(T)/termios:  tests/test_termios.c  drivers/termios.c
+# the copies every subsystem makes, a word at a time where they can be,
+# held against a copy made a byte at a time at every alignment
+$(T)/string:   tests/test_string.c   lib/string.c
 # a date into a number. checked against the host's own timegm, which
 # is somebody else's implementation and the only opinion worth having
 $(T)/epoch:    tests/test_epoch.c    lib/epoch.c lib/clock.c

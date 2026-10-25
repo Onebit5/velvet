@@ -58,6 +58,13 @@ are all here, and they *have* to exist, because gcc can emit calls to
 ``memcpy``/``memset`` behind your back even in freestanding mode (struct
 copies, and so on).
 
+the three that move memory, ``memcpy``, ``memmove`` and ``memset``, go a
+word at a time once both ends are aligned alike, and a byte at a time
+for the rest. the rest of the file is written for clarity, but these are
+the ones the console scrolls a screen with, megabytes per line, and a
+byte at a time that took long enough under qemu for a selftest that
+printed a dozen lines to run out of time.
+
 checksums
 ---------
 

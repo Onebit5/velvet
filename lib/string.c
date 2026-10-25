@@ -2,15 +2,43 @@
 /*
  * lib/string.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * the string functions, written for size and clarity rather than speed.
+ * the string functions: the three that move memory a word at a time, the
+ * rest written for size and clarity rather than speed.
  */
 
 #include <velvet/string.h>
+
+#include <stdbool.h>
+#include <stdint.h>
+
+/*
+ * a word at a time wherever the two ends are aligned alike, which the
+ * big copies are: a screen moving up a line is megabytes, and a byte
+ * at a time that is eight times the loop. whatever is left over, and
+ * anything misaligned against the other end, goes a byte at a time
+ */
+typedef uint64_t __attribute__((__may_alias__)) word_t;
+#define WORD_MASK (sizeof(word_t) - 1)
+
+static bool in_step(const void *a, const void *b)
+{
+    return (((uintptr_t)a ^ (uintptr_t)b) & WORD_MASK) == 0;
+}
 
 void *memcpy(void *dst, const void *src, size_t n)
 {
     unsigned char *d = dst;
     const unsigned char *s = src;
+    if (in_step(d, s)) {
+        for (; n > 0 && ((uintptr_t)d & WORD_MASK) != 0; n--) {
+            *d++ = *s++;
+        }
+        for (; n >= sizeof(word_t); n -= sizeof(word_t)) {
+            *(word_t *)d = *(const word_t *)s;
+            d += sizeof(word_t);
+            s += sizeof(word_t);
+        }
+    }
     while (n-- > 0) { *d++ = *s++; }
     return dst;
 }
@@ -27,17 +55,34 @@ void *memmove(void *dst, const void *src, size_t n)
      * difference from memcpy and the reason both exist
      */
     if (d < s) {
-        while (n-- > 0) { *d++ = *s++; }
-    } else {
-        d += n; s += n;
-        while (n-- > 0) { *--d = *--s; }
+        return memcpy(dst, src, n);
     }
+    d += n; s += n;
+    if (in_step(d, s)) {
+        for (; n > 0 && ((uintptr_t)d & WORD_MASK) != 0; n--) {
+            *--d = *--s;
+        }
+        for (; n >= sizeof(word_t); n -= sizeof(word_t)) {
+            d -= sizeof(word_t);
+            s -= sizeof(word_t);
+            *(word_t *)d = *(const word_t *)s;
+        }
+    }
+    while (n-- > 0) { *--d = *--s; }
     return dst;
 }
 
 void *memset(void *dst, int c, size_t n)
 {
     unsigned char *d = dst;
+    word_t u_fill = (unsigned char)c * 0x0101010101010101ull;
+    for (; n > 0 && ((uintptr_t)d & WORD_MASK) != 0; n--) {
+        *d++ = (unsigned char)c;
+    }
+    for (; n >= sizeof(word_t); n -= sizeof(word_t)) {
+        *(word_t *)d = u_fill;
+        d += sizeof(word_t);
+    }
     while (n-- > 0) { *d++ = (unsigned char)c; }
     return dst;
 }
