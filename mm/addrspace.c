@@ -149,6 +149,18 @@ struct addrspace *addrspace_fork(const struct addrspace *from,
     }
 
     /*
+     * and this core's own memory of the parent's entries, when the parent
+     * is what it is running, which a fork's parent always is. the
+     * shootdown below reaches every other core and not this one, and a
+     * translation this core kept from before still says writable: the
+     * parent's next store would go straight into the page it now shares
+     * with the child. loading the same table again throws them away
+     */
+    if (live_pml4[cpu_id()] == from->pml4) {
+        mmu_load_table(from->pml4);
+    }
+
+    /*
      * the parent's own entries just changed under it, and every core
      * that has run it may be holding a translation that still says
      * writable
