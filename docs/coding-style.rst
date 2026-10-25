@@ -233,6 +233,11 @@ member         ``m_``    ``m_f_speed``
 so a static member that is a size_t is ``m_sz_len``; a global raw pointer is
 ``g_p_table``.
 
+the prefixes are for this tree's own variables. a name the abi fixes, a
+field of ``struct stat`` or ``struct timespec``, is spelled the way every
+program spells it, ``st_mode`` and ``tv_sec``: those live under a
+``uapi/`` directory, and nothing there takes a prefix.
+
 types, functions, constants
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

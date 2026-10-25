@@ -8,7 +8,11 @@ tabs, trailing whitespace, the `//` rule, and the include guard.
 
 naming prefixes are reported as warnings rather than errors, because the tree
 predates that rule and is being converted a file at a time. line length is a
-warning too: the guide allows a long string that cannot be split.
+warning too: the guide allows a long string that cannot be split. the
+prefixes are for the tree's own variables, so a header under a uapi/
+directory, whose names are the abi's and spelled the way every program
+spells them, is not held to them, and neither is a typedef, which names a
+type.
 
 usage:
     tools/lint.py [--strict] [file ...]
@@ -218,6 +222,7 @@ def check_file(path, strict):
     text = open(path, encoding='utf-8', errors='ignore').read()
     problems = []          # (line, message, kind)
     is_c = path.endswith(C_EXT)
+    abi = '/uapi/' in '/' + path.replace('\\', '/')
     tokens = scan(text)
 
     for i, line in enumerate(text.split('\n'), 1):
@@ -228,7 +233,7 @@ def check_file(path, strict):
             problems.append((i, 'trailing whitespace', 'error'))
         if len(line) > LINE_MAX:
             problems.append((i, 'line is %d columns' % len(line), 'warn'))
-        if is_c:
+        if is_c and not abi and not line.lstrip().startswith('typedef '):
             for m in DECL.finditer(mask(line, scan(line))):
                 t, name = m.group(1), m.group(2)
                 want = PREFIX[t]
