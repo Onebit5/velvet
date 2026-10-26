@@ -7,11 +7,11 @@ a tiny 64-bit kernel for x86_64, written in C, booted by a bootloader of its own
 built to make what happens between "power button" and "shell prompt" legible, rather
 than to be the next linux. small enough to fit in one head.
 
-it is heading towards linux's interface to programs, all the same: its system calls,
-its signals and the layouts it hands back, so that a program built for linux on x86_64
-starts here and runs unmodified. not linux's insides: no modules, no driver api.
-that plan is the 0.6.x series of [ROADMAP.md](ROADMAP.md), and the non-goals are at the
-top of it.
+it speaks linux's interface to programs, all the same: since 0.4.5 its system calls,
+its signals and the layouts it hands back are the ones a static program built for linux
+on x86_64 already expects. not linux's insides: no modules, no driver api. what is left,
+threads, ptys, a loader and somebody else's programs running unmodified, is the rest of
+the 0.4.x series of [ROADMAP.md](ROADMAP.md), and the non-goals are at the top of it.
 
 it is a kernel and nothing more: what runs in ring 0. the loader that runs before it is
 [philemon](https://github.com/Onebit5/philemon), a project of his own, and the programs, a

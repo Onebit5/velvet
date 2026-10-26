@@ -14,17 +14,17 @@ logins, shells, libraries and installers belong to the system built on top
 of it, even where they are why the kernel needs something; an entry here is
 the mechanism underneath, and says what a program can do with it.
 
-0.4.x is the kernel's half of a machine that rebuilds itself. 0.5.x is
-what the kernel owes a machine with more than one person on it, 0.6.x is
-velvet learning to answer the way linux does, 0.7.x is hardware nobody
-emulated, and 0.8.x is a kernel that can say what it is doing.
+0.4.x is the kernel's half of a machine that rebuilds itself, and on the
+way there velvet learns to answer the way linux does. 0.5.x is what the
+kernel owes a machine with more than one person on it, 0.6.x is hardware
+nobody emulated, and 0.7.x is a kernel that can say what it is doing.
 
 ## non-goals
 
 - **being useful in any practical sense.** this is a kernel built to be
   understood, small enough to fit in one head, and every decision below
   is made with that ahead of speed or reach.
-- **being linux.** the compatibility 0.6.x works towards is with linux's
+- **being linux.** the compatibility 0.4.x works towards is with linux's
   interface to programs: its system calls, its signals and the layout of
   what they hand back. linux's interfaces *inside* the kernel are not part
   of it (no modules, no driver api, nothing that would let linux's own
@@ -42,28 +42,98 @@ a program that can reach a drive at all. a boot that can choose between
 two kernels, and one that cannot be lost to a kernel that does not come
 up, are the loader's, and philemon's roadmap has them.
 
-**0.4.5 what a client, an installer and a checker need.** since 0.4.3
-the machine boots with no address, and since 0.4.4 nothing at all can
-give it one: the monitor's `ifconfig` went with the monitor. nothing in
-the kernel copies a system onto a disk, checks a filesystem or reads the
-source archive on its boot medium either. all of it is a program's work
-now, and none of those programs can be written yet. a dhcp client needs a
-call that sets the address, the netmask and the router, root's, and a
-datagram to 255.255.255.255 that leaves as an ethernet broadcast whether or
-not there is an address to send it from, since its first message goes out
-before there is one. the kernel's own client went round the stack to do
-that; this makes it what the stack does. an installer needs a drive with no
-filesystem on it yet: read and written by sector, root's, refused for the
-drive mounted at `/`, with the medium the machine booted from read the same
-way. a checker needs the partition under a mounted filesystem the same
-way, read, and written when it mends, with what the cache holds for it
-written out first. `disk.c` has done all of that since the monitor's
-installer and fsck, and what is new is a program asking. a resolver and an
-http client need nothing: udp and tcp are calls already. *ends when a dhcp
-client in ring 3 leases an address from qemu's server and pings the router
-with it, a program copies the medium onto a blank drive that then boots on
-its own, and another checks the filesystem at `/` and finds what the
-kernel's checker found.*
+the programs that do the building are not this machine's own. a
+compiler, a shell and an archiver are written against linux's interface
+to programs by people who have never heard of this kernel, and since
+0.4.5 that interface is this kernel's: the system calls every x86_64
+program and libc already makes, numbered and shaped the way they expect,
+the signals and the frame a handler is entered on, errno, the stack exec
+leaves, and floating point in ring 3. what is left of the series is the
+rest of what such a program takes for granted: a root it can mount
+things under, terminals, threads, a `/proc`, a loader, and at the end
+somebody else's programs run unmodified. the reason is the one every
+checker in this project rests on, an outside answer: the same static
+binary run on both machines says, call by call, where this kernel
+differs.
+
+**0.4.6 a root of its own, and what a client, an installer and a checker
+need.** the kernel mounts the disk at `/` itself and lays the ramdisk
+under `/boot`, and that is a system's decision. the archive the loader
+hands over becomes the root instead, a filesystem in memory a program may
+write, with `/dev` on it filled in by the kernel, and `/init` mounts the
+disk and moves into it with `pivot_root`. `mount`, `umount2`,
+`pivot_root`, `chroot`, `statfs` and `mknod` arrive with it, and the
+drives appear in `/dev` as block devices, the drive and each partition,
+read and written by sector, root's. that is also what an installer
+needs, a drive with no filesystem on it yet, and what a checker needs,
+the partition under a mounted filesystem, with what the cache holds for
+it written out first. since 0.4.3 the machine boots with no address, and
+nothing can give it one: a dhcp client needs the interface ioctls that
+set the address, the netmask and the route, root's, and a datagram to
+255.255.255.255 that leaves as an ethernet broadcast whether or not there
+is an address to send it from, since its first message goes out before
+there is one. *ends when an `/init` in ring 3 mounts the disk and pivots
+into it, a dhcp client leases an address from qemu's server and pings
+the router with it, a program copies the medium onto a blank drive that
+then boots on its own, and another checks the filesystem at `/` and
+finds what the host's checker finds.*
+
+**0.4.7 a terminal, the way linux asks for one.** 0.4.5's terminals
+answer termios through `ioctl`, with sessions, a controlling terminal
+and job control. what a program written elsewhere also takes for granted
+is the rest of termios: output processing, `TOSTOP`, a session leader
+that gets its terminal by opening it, and `SIGHUP` when the terminal
+goes away. and then the layer this machine has always been missing: a
+pty, a terminal with nothing behind it but another program. a pty is
+what `script` and a multiplexer are, and it is the thing standing
+between this machine and anything remote.
+
+**0.4.8 threads the way linux makes them.** `clone`, with the flags a
+pthread library passes (one address space, one descriptor table, one set
+of signal dispositions, a new stack), and `futex`, which is the whole of
+every lock a libc builds: a mutex is a word in memory and a call for when
+the word says wait. 0.4.5's `clone` makes processes and nothing else,
+which is enough for `fork` and `vfork` and not for `posix_spawn`, which
+musl builds on a child sharing its parent's memory until it execs. 0.2.x
+gave the kernel threads, and this hands them to ring 3; 0.2.1's locks are
+the warning about what sharing costs, and the locks suite is the way to
+find out. *ends when a program built against musl's pthreads on linux
+runs its threads here and agrees with itself on both machines.*
+
+**0.4.9 `/proc`, laid out the way linux lays it out.** 0.4.1's `/proc` is
+the kernel's own reports, in the words its shell printed them, which is
+enough for a `ps` written against them and for nothing written elsewhere.
+software written elsewhere reads a directory per process, `/proc/self`,
+and files such as `stat` and `meminfo` in formats a great deal of code
+parses, and reading them is also how this version finds out how much of
+the kernel's state is still only reachable from inside the kernel.
+
+**0.4.10 a program that names its loader.** a dynamically linked program
+does not start at its own entry point: it names a loader in `PT_INTERP`,
+and the kernel maps that too and starts there, with `AT_BASE`, `AT_PHDR`
+and `AT_ENTRY` in the auxiliary vector saying where everything went. a
+libc's dynamic linking needs exactly this from the kernel, and so does
+every program on a linux machine that was not built static. with it
+comes what a loader does to the files it maps: a program built position
+independent, loaded wherever the kernel puts it, and a file mapped
+shared, its writes carried back to the file. and a script names its
+interpreter on its first line, `#!`, which is the same idea one level
+up. *ends when a dynamically linked program and its loader, both copied
+off a linux machine, start here.*
+
+**0.4.11 somebody else's programs.** busybox, built static for linux and
+not touched: a shell, `ls`, `sed`, `awk` and a hundred more, each written
+against linux by people who have never heard of this machine. its own
+test suite is the check, run the same way here as on linux, and the
+difference between the two runs is the list of what is still not linux.
+*ends when busybox's shell runs busybox's tests here, and every failure is
+either fixed or written down as a decision.*
+
+**what this series deliberately does not reach.** no 32-bit programs: the
+ia32 interface is a second table and a second set of layouts, for programs
+nobody builds any more. no vdso, so `clock_gettime` is a real call here,
+which is slower and exactly as correct. and none of what the non-goals
+rule out: this is linux's interface to programs, and only that.
 
 ## 0.5.x: a machine for more than one person
 
@@ -220,145 +290,7 @@ would be the place, but a quota that is enforced in some paths and not
 others is worse than none, and finding every path is a version rather
 than a paragraph.
 
-## 0.6.x: speaking linux
-
-velvet is heading towards linux's interface rather than one of its own: a
-program built for linux on x86_64 should start here and run, unmodified.
-the reason is the one every checker in this project rests on, an outside
-answer. a system call interface invented here can only ever be checked
-against itself; linux's has been written against by everybody, and the
-same static binary run on both machines says, call by call, where this
-kernel differs. a program that includes `include/uapi/velvet/` rather
-than a copy of it comes along at no cost: when the numbers change,
-rebuilding against the new release is the whole migration.
-
-the target is what a static program built against musl actually calls,
-which is a short and checkable list, and posix where linux follows posix.
-the first entries are the ones every unix needs and this one does not have
-yet, and they come first because they are the same work whichever numbers
-the calls end up with.
-
-the sentence that stood in front of all of it, **a program on this
-machine cannot start another program**, went in 0.4.1: a program execs,
-builds its own pipelines, runs jobs and becomes a user, through calls
-numbered and shaped the way this kernel numbers and shapes them. what is
-left below is answering the way linux answers.
-
-**0.6.0 exec, the way a program built elsewhere expects it.** 0.4.1's
-`execve` carries argv and keeps the environment the kernel holds for the
-process. a program built elsewhere passes envp, and before it has made a
-single call it reads the stack the x86_64 psabi describes: argc, argv,
-envp and the auxiliary vector. this is that, and close-on-exec, without
-which a shell's child keeps the far end of its own pipe open and the
-pipeline never ends. *ends when a static program built on linux prints,
-here, the arguments and the environment it was started with.*
-
-**0.6.1 errno.** every syscall in this machine returns -1 and says nothing
-further. the kernel almost always knows more than that (the vfs knows the
-difference between a name that is not there, a name that is a directory
-and a name this uid may not have) and throws it away at the boundary.
-this is small in code, reaches every error path in the tree, and is
-checked the flattest way there is: `perror` here and `perror` on linux
-printing the same word for the same mistake. the numbers are linux's,
-`ENOENT` is 2 here because it is 2 there, returned negated in `rax` the
-way linux's calls return them, so there is one table of them and not a
-third.
-
-**0.6.2 reading and writing at a place.** 0.4.1's `lseek` moves a
-descriptor's position, which is what let a shell put `>>` on the end of a
-file. what it left is `pread` and `pwrite`, a read or a write at an offset
-that moves nothing, since a position two threads share is a race the
-moment either of them seeks, and 0.2.11 made sharing descriptors the
-normal case. an archive reader, a database and a linker reading back what
-it wrote all want the offset in the call rather than in the descriptor.
-
-**0.6.3 floating point in ring 3.** this kernel is built `-mno-80387
--mno-sse` because there is **no fpu state in the context switch**, and a
-program that uses an `xmm` register today is a program whose arithmetic
-another thread can quietly corrupt. a libc wants `strtod` and `%f`,
-which is how this was first noticed, but the x86_64 psabi is the
-reason it cannot wait: every float and double is passed in an `xmm`
-register, so no program built elsewhere gets far without one. `fxsave` and
-`fxrstor` around a switch, `xsave` where the cpu has it, and the kernel
-itself stays without, since a kernel that touches the fpu has to save the
-program's first. *ends when two programs doing floating point on two cores
-each get their own answers.*
-
-**0.6.4 linux's numbers.** the switch itself. `syscall`, with the number in
-`rax` and the arguments in `rdi`, `rsi`, `rdx`, `r10`, `r8` and `r9`, is
-already the convention here; what changes is what the numbers mean.
-linux's x86_64 table replaces velvet's own (`read` is 0, `write` is 1,
-`exit_group` is 231), and the structs the calls fill in take linux's
-layouts: `struct stat`, the `linux_dirent64` that `getdents64` hands back,
-`struct timespec`. `include/uapi/velvet/` follows, which is what it is
-for. the calls a static musl `hello` makes come first, and they are fewer
-than they look: `arch_prctl` to set the `fs` base, which the context
-switch then has to carry, since it is where a program keeps its
-thread-local storage; `set_tid_address`; `ioctl` for the window size;
-`writev`, which is how musl's stdio writes; and `exit_group`. *ends when a
-static binary built with musl on linux, not on this machine, prints its
-line here.*
-
-**0.6.5 threads the way linux makes them.** `clone`, with the flags a
-pthread library passes (one address space, one descriptor table, one set
-of signal dispositions, a new stack), and `futex`, which is the whole of
-every lock a libc builds: a mutex is a word in memory and a call for when
-the word says wait. 0.2.x gave the kernel threads, and this hands them to
-ring 3; 0.2.1's locks are the warning about what sharing costs, and the
-locks suite is the way to find out. *ends when a program built against
-musl's pthreads on linux runs its threads here and agrees with itself on
-both machines.*
-
-**0.6.6 signals the way linux delivers them.** 0.3.7's signals are a bit in
-a word and a handler to run. linux's are `rt_sigaction`, `rt_sigprocmask`,
-a `siginfo`, and a frame on the program's stack laid out exactly the way
-linux lays it out, read back by `rt_sigreturn` through the `sa_restorer`
-the libc passes in, which is how a handler finds its way home. the
-return trampoline a program brings along today is this kernel's own
-version of the same idea, and is not needed once this arrives. *ends when a handler in a
-binary built on linux runs here, interrupts a blocking read, and the read
-reports `EINTR`.*
-
-**0.6.7 a terminal, the way linux asks for one.** termios through `ioctl`
-(`TCGETS`, `TCSETS`, `TIOCGWINSZ`) in place of 0.3.9's calls of its own,
-and then the layer 0.5.x was always missing: a pty, a terminal with
-nothing behind it but another program. job control from ring 3 has been
-real since 0.4.1, on the consoles; a pty is what `script` and a
-multiplexer are, and it is the thing standing between this machine and
-anything remote.
-
-**0.6.8 `/proc`, laid out the way linux lays it out.** 0.4.1's `/proc` is
-the kernel's own reports, in the words its shell printed them, which is
-enough for a `ps` written against them and for nothing written elsewhere. software
-written elsewhere reads a directory per process, `/proc/self`, and files
-such as `stat` and `meminfo` in formats a great deal of code parses, and
-reading them is also how this version finds out how much of the kernel's
-state is still only reachable from inside the kernel.
-
-**0.6.9 a program that names its loader.** a dynamically linked program
-does not start at its own entry point: it names a loader in `PT_INTERP`,
-and the kernel maps that too and starts there, with `AT_BASE`, `AT_PHDR`
-and `AT_ENTRY` in the auxiliary vector saying where everything went.
-a libc's dynamic linking needs exactly this from the kernel, and so does
-every program on a linux machine that was not built
-static. *ends when a dynamically linked program and its loader, both
-copied off a linux machine, start here.*
-
-**0.6.10 somebody else's programs.** busybox, built static for linux and
-not touched: a shell, `ls`, `sed`, `awk` and a hundred more, each written
-against linux by people who have never heard of this machine. its own
-test suite is the check, run the same way here as on linux, and the
-difference between the two runs is the list of what is still not linux.
-*ends when busybox's shell runs busybox's tests here, and every failure is
-either fixed or written down as a decision.*
-
-**what this series deliberately does not reach.** no 32-bit programs: the
-ia32 interface is a second table and a second set of layouts, for programs
-nobody builds any more. no vdso, so `clock_gettime` is a real call here,
-which is slower and exactly as correct. and none of what the non-goals
-rule out: this is linux's interface to programs, and only that.
-
-## 0.7.x: the machine leaves the emulator
+## 0.6.x: the machine leaves the emulator
 
 everything above has been checked on one machine, and that machine is not
 a machine. qemu is a second implementation of the hardware and a
@@ -381,21 +313,21 @@ system's, and starting the kernel on firmware with no bios is the
 loader's: uefi is in philemon's roadmap, and what this series owes it is a
 kernel that boots from it unchanged.
 
-**0.7.0 usb.** xhci, and a **keyboard first**, because a machine you cannot
+**0.6.0 usb.** xhci, and a **keyboard first**, because a machine you cannot
 type on is one you cannot even read the panic off. ps/2 is present on
 almost nothing built in the last ten years and present in every emulator,
 which is the most dangerous combination a driver can have: it works
 everywhere it is tested and nowhere it is used. then mass storage, since
 a usb stick is how this actually reaches another machine.
 
-**0.7.1 nvme.** ahci was 0.1.10 and there has been exactly one disk driver
+**0.6.1 nvme.** ahci was 0.1.10 and there has been exactly one disk driver
 since. the seam it would slot into is already load-bearing (the block
 cache took its place in 0.2.13 by being handed the two function pointers
 fat32 was using), so this is a driver rather than a rewrite. and a second
 disk driver is the only way to find out which of the first one's habits
 were assumptions.
 
-**0.7.2 a framebuffer the size of a real screen.** vbe hands over something
+**0.6.2 a framebuffer the size of a real screen.** vbe hands over something
 modest; gop on a laptop, once philemon can boot one, hands over 1920x1080
 or worse, and at that size
 every scroll is a memmove of eight megabytes and every redraw is a repaint
@@ -405,13 +337,13 @@ wading), and it arrives again with a bigger number. the cell grid is
 256x128 and copes; the 8x16 font at 4k is not a font, it is a rumour, so
 a scale factor is part of the version.
 
-**0.7.3 virtio.** net and block. it is what the machine gets when it runs
+**0.6.3 virtio.** net and block. it is what the machine gets when it runs
 on somebody's hypervisor instead of somebody's desk, and it is the
 cheapest possible second implementation of two drivers that have never had
 one, which is what will find the e1000-shaped assumptions in `net/` and
 the ahci-shaped ones underneath the cache.
 
-**0.7.4 a clock that is right rather than merely increasing.** the tsc's
+**0.6.4 a clock that is right rather than merely increasing.** the tsc's
 frequency has to be measured rather than assumed, the lapic timer
 calibrated against something that is not itself, and the rtc read with its
 drift admitted. and the clock becomes something ring 3 can set and slew,
@@ -419,7 +351,7 @@ because a laptop whose coin cell died is a machine that rejects the entire
 internet until somebody tells it what year it is, and the somebody is an
 ntp client.
 
-**0.7.5 power.** `machine_poweroff` writes 0x2000 to port 0x604 and then to
+**0.6.5 power.** `machine_poweroff` writes 0x2000 to port 0x604 and then to
 0xb004, which is qemu and bochs, and on real hardware neither does
 anything at all, so the machine says goodbye and keeps running. doing it
 properly is the fadt, `PM1a_CNT`, and a sleep type that lives in the dsdt,
@@ -430,22 +362,22 @@ entire version making a crash cheap, and a machine that can only be
 turned off by holding the button in is a machine that crashes every time
 somebody leaves the room.
 
-**0.7.6 a machine that says what it found.** on a desk there is no serial
+**0.6.6 a machine that says what it found.** on a desk there is no serial
 console: the log has nowhere to go, so a machine that fails on somebody
 else's hardware fails silently. the boot log gets written to the medium
 it booted from before anything else can go wrong, and there is a report
 to go with it: what the firmware claimed, which drivers bound to what,
 what was refused and why. that is the difference between "it did not
-work" and a bug report, and it is the bridge into 0.8.x.
+work" and a bug report, and it is the bridge into 0.7.x.
 
-**0.7.7 the boot performed rather than described.** three machines that
+**0.6.7 the boot performed rather than described.** three machines that
 are not this one, three firmwares, and the log from each of them kept in
 the tree. no suite can run this and that is exactly the point: it is the
 one claim in this document that only somebody else's hardware can settle.
 the honest form of the entry is a list of what did not work, because the
 first three real machines will each say something nobody predicted.
 
-## 0.8.x: the machine explains itself
+## 0.7.x: the machine explains itself
 
 this kernel has been able to say *what* went wrong since 0.1.x: a panic
 with a symbolised backtrace, `bt`, `ps`, `top`, a memory column, a count
@@ -461,7 +393,7 @@ address in it means. every reader below has somebody else's answer to be
 held against, and one of them hands the whole kernel to somebody else's
 debugger.
 
-**0.8.0 dwarf, and a backtrace that names a line.** a backtrace today is a
+**0.7.0 dwarf, and a backtrace that names a line.** a backtrace today is a
 symbol and an offset, out of the table `gensyms` builds from the symbol
 table. the line number is already in the binary and has been since 0.1.0.
 reading it is a version of its own because dwarf's line table is not a
@@ -469,14 +401,14 @@ table: it is a bytecode for a little state machine that you run to
 produce one. checked against `addr2line` on the same kernel, address for
 address, which is the cheapest outside answer in this document.
 
-**0.8.1 core dumps.** a program that dies leaves nothing behind but a
+**0.7.1 core dumps.** a program that dies leaves nothing behind but a
 message. an ELF core (the registers, the mappings, the memory that
 mattered) written where the person can find it, in the format everybody
 else's tools already read. that last clause is the whole verification and
 it costs nothing extra: gdb on the development machine opening a core
 written by velvet is the test.
 
-**0.8.2 one process reaching into another.** what a debugger needs from a
+**0.7.2 one process reaching into another.** what a debugger needs from a
 kernel: stopping a process, reading and writing its registers and its
 memory, `int3` for breakpoints and the trap flag for stepping, each
 reported to whoever is watching. it is the one thing this kernel has
@@ -486,15 +418,15 @@ is why it is a version rather than a program, and why it wants 0.5.1's
 holds rather than a thing that is possible. the debugger that uses it is
 a program.
 
-**0.8.3 a gdb stub.** the remote serial protocol, over the wire or the
+**0.7.3 a gdb stub.** the remote serial protocol, over the wire or the
 serial line, so that *real gdb* attaches to this kernel. it is the
 strongest outside answer a debugger can have: a protocol we did not
 design, driven by a program we did not write, against a kernel that has to
 be right about every register it claims to report. and it is what makes
-debugging the kernel itself possible, which 0.8.2 deliberately does not
+debugging the kernel itself possible, which 0.7.2 deliberately does not
 attempt.
 
-**0.8.4 tracing.** 0.1.6 counted syscalls by kind; this makes them a
+**0.7.4 tracing.** 0.1.6 counted syscalls by kind; this makes them a
 stream: which call, from whom, its arguments as the registers held them,
 and what came back, with every string a call was handed copied out as the
 call read it, since by the time anybody reads the stream the program may
@@ -502,20 +434,20 @@ have written over it. that is the kernel's half, and it is all numbers.
 turning them into words, a path, a set of flag names, the file a
 descriptor is, is a program's work: a tracer's.
 
-**0.8.5 a profiler.** sampling on the lapic timer, which has been per-cpu
+**0.7.5 a profiler.** sampling on the lapic timer, which has been per-cpu
 since 0.2.2, and unwinding from wherever the interrupt happened to land,
 which works only because `-fno-omit-frame-pointer` has been in the build
 since the beginning for the backtrace's sake. this is the second thing
 that flag pays for. the question it exists to answer is where a build
 spends its minutes, measured rather than guessed.
 
-**0.8.6 the log, and a panic that outlives the machine.** with 0.5.6 the
+**0.7.6 the log, and a panic that outlives the machine.** with 0.5.6 the
 kernel's log can be read from ring 3; this is the part that matters on
 hardware that is not here. the panic is written to the medium before the
-machine gives up, so the evidence survives the reboot. 0.7.6 writes the
+machine gives up, so the evidence survives the reboot. 0.6.6 writes the
 first log of a boot for the same reason; this writes the last.
 
-**0.8.7 numbers that are kept.** a suite that measures instead of
+**0.7.7 numbers that are kept.** a suite that measures instead of
 checking: boot time, the cost of a syscall, a page fault, a context
 switch, a megabyte through the disk and a megabyte through the wire.
 recorded in the tree, per version, because the only outside answer
@@ -523,13 +455,13 @@ available for performance is *yesterday*, and a regression nobody wrote
 down is a regression nobody finds. this project has twice discovered a
 slowdown by feel (0.3.10 twice over), and feeling it is not a method.
 
-**0.8.8 breaking it on purpose.** 0.3.23 and 0.3.24 stop the machine at
+**0.7.8 breaking it on purpose.** 0.3.23 and 0.3.24 stop the machine at
 every write there is and demand the wreckage be mendable. this is the same
 idea pointed everywhere else: an allocation that fails, a read that
 returns short, a packet that never arrives, a disk that reports an error
 it has never reported. every error path in this kernel is written and
 most of them have never once run, which is also the honest test of how
-much of 0.6.1's errno was aspiration.
+much of 0.4.5's errno was aspiration.
 
 **what the machine still cannot say.** no reverse debugging and no record
 and replay, which is the thing that would make an intermittent bug

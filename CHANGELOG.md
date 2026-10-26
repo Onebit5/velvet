@@ -15,6 +15,51 @@ a kernel that booted.
 
 ---
 
+- **0.4.5**: the interface programs already speak. **every x86_64
+  program's system calls.** a program for this kernel had to be written
+  for it: its own call numbers, -1 for every error, an environment the
+  kernel kept for it, calls of its own for the terminal and a trampoline
+  of its own for its signals. the calls are now the ones every libc for
+  x86_64 makes, by the numbers it makes them with, answering with minus
+  an errno, and `docs/syscalls.rst` is the table. exec lays out argc,
+  argv, envp and the auxiliary vector, and the environment is the
+  program's, on its own stack. a handler is entered on the frame a libc
+  expects, through the restorer it installed, and a call a signal cut
+  short is made again or told `EINTR` as `SA_RESTART` says. the
+  selftests and the `/init` that runs them are built with musl, a libc
+  that has never heard of this kernel, so the build needs `musl-gcc`
+  now; 36 of them pass, on two cores and on four.
+
+  **what that stands on.** one frame for every way into the kernel,
+  left by `iretq`, and a fault in ring 3 a signal rather than a panic.
+  the fpu and the fs base each thread's own, the base set with
+  `arch_prctl`. one way into a program's memory, `copy_from_user` and
+  the rest, where a bad pointer is `-EFAULT` and not a panic. a
+  descriptor a number for an open file, shared by `dup` and `fork` and
+  opened for a mode, so a guest no longer writes root's file through a
+  descriptor it opened to read. memory as ranges, with holes,
+  protections and a break. all 64 signals. `/dev`, with a chacha20
+  generator behind `random` and `urandom`. truncate, on ext4 and on fat.
+  a terminal on each console with termios, sessions and job control,
+  sockets as files, and poll and select.
+
+  **what it found on the way.** every core but the first ran with its
+  caches off and without write protect, so the kernel wrote through a
+  child's shared page into its parent's, and entered C with its stack 8
+  bytes off. two calls wrote where they had only checked they could read,
+  and a guest panicked the machine with either. fork left the core doing
+  it remembering the parent's pages as writable, so the parent's next
+  store landed in its child's, and gave the child a break at 0, which grew
+  from where NULL points. and the console scrolled a byte at a time, from
+  two cores at once, which under qemu took long enough to run selftests
+  out of time.
+
+  **the roadmap** folds the series that was 0.6.x into this one. what
+  0.6.0 to 0.6.4 and 0.6.6 planned is this version; the root, the drives
+  and the address a client needs are 0.4.6; terminals, threads, `/proc`,
+  a loader and somebody else's programs are 0.4.7 to 0.4.11. 0.7.x and
+  0.8.x are 0.6.x and 0.7.x now.
+
 - **0.4.4**: just the kernel. **the loader is a project of his own.**
   philemon was this tree's `boot/`, and a kernel does not carry its
   loader; it says what it has to be handed. `include/velvet/boot.h`
