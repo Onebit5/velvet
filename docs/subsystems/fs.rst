@@ -366,14 +366,16 @@ that the descriptor table is reserved up front (``s_reserved_gdt_blocks``),
 so that growing the filesystem never has to move every bitmap and inode
 table on the disk. see `resize` in the testing page.
 
-a program asks for a resize with the ``resize`` call, root's alone, naming
-the filesystem by where it is mounted and the size in its own blocks, 0
-for as far as the partition and that reserved table both allow. how far
-the partition allows is ``disk_resize``'s to enforce rather than its
-caller's: the filesystem is handed a view that ends where its partition
-does and cannot see past it, and a filesystem longer than its partition
-writes over whatever is next. what happened comes back in a ``struct
-user_resize``, before and after, with what was in the way of a shrink.
+a program asks for a resize with ``ioctl(fd, EXT4_IOC_RESIZE_FS,
+&blocks)``, root's alone, on any file or directory of the mounted
+filesystem, with the size in its own blocks, 0 for as far as the
+partition and that reserved table both allow. how far the partition
+allows is ``disk_resize``'s to enforce rather than its caller's: the
+filesystem is handed a view that ends where its partition does and cannot
+see past it, and a filesystem longer than its partition writes over
+whatever is next. a resize that cannot be made is ``-EINVAL``, and why,
+what was in the way of a shrink or what the partition would not hold, is
+in the kernel's log.
 
 elf
 ---

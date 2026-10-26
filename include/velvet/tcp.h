@@ -85,9 +85,10 @@ struct tcp_conn {
     enum tcp_state state;
 
     /*
-     * the pid that opened it, so a program that dies does not leave a
-     * connection nobody can reach and nothing will close. -1 for one the
-     * kernel opened on its own account
+     * the socket file it belongs to, which closes it when the file goes,
+     * so a program that dies does not leave a connection nobody can reach
+     * and nothing will close. -1 for one the kernel opened on its own
+     * account
      */
     int owner;
 
@@ -123,6 +124,7 @@ struct tcp_conn {
 
     /* why it ended, for anything that has to explain itself. */
     const char *error;
+    int i_errno;                /* and the same as a program is told it */
 };
 
 void tcp_listen(struct tcp_conn *c, ipv4 local, uint16_t port, uint32_t iss);

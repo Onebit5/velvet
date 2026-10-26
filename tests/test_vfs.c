@@ -233,8 +233,10 @@ int64_t disk_read(size_t which, uint32_t cluster, uint64_t size,
 
 static int creates;
 static size_t last_mount = 99;      /* which one the last call went to */
-bool disk_create(size_t which, const char *path, struct disk_entry *out)
+bool disk_create(size_t which, const char *path, uint32_t u_mode,
+                 uint32_t u_uid, uint32_t u_gid, struct disk_entry *out)
 {
+    (void)u_mode; (void)u_uid; (void)u_gid;
     if (!disk_ready(which)) return false;
     creates++;
     last_mount = which;
@@ -270,8 +272,10 @@ const char *disk_model(void)
     return "STUB DISK";
 }
 static int mkdirs, rmdirs, unlinks, renames;
-bool disk_mkdir(size_t w, const char *path)
+bool disk_mkdir(size_t w, const char *path, uint32_t u_mode, uint32_t u_uid,
+                uint32_t u_gid)
 {
+    (void)u_mode; (void)u_uid; (void)u_gid;
     (void)path; last_mount = w; mkdirs++; return disk_ready(w);
 }
 bool disk_rmdir(size_t w, const char *path)
@@ -309,8 +313,10 @@ bool disk_chown(size_t w, const char *p, uint32_t u, uint32_t g)
 {
     (void)w; (void)p; (void)u; (void)g; return false;
 }
-bool disk_symlink(size_t w, const char *p, const char *t)
+bool disk_symlink(size_t w, const char *p, const char *t, uint32_t u_uid,
+                  uint32_t u_gid)
 {
+    (void)u_uid; (void)u_gid;
     (void)w; (void)p; (void)t; return false;
 }
 
@@ -362,8 +368,15 @@ void random_mix(const void *p_buf, size_t sz_len)
     (void)p_buf;
     (void)sz_len;
 }
-struct file *tty_console_file(void)
+struct file *tty_open(unsigned u_console, uint32_t u_mode)
 {
+    (void)u_console;
+    (void)u_mode;
+    return NULL;
+}
+struct file *tty_open_own(uint32_t u_mode)
+{
+    (void)u_mode;
     return NULL;
 }
 
@@ -372,7 +385,6 @@ struct file *tty_console_file(void)
 #include <velvet/dev.h>
 #include <velvet/slab.h>
 #include <uapi/velvet/errno.h>
-#include <uapi/velvet/syscall.h>
 void slab_cache_init(struct slab_cache *cache, const char *name,
                      size_t obj_size)
 {
@@ -599,14 +611,15 @@ int main(void)
     CHECK(vfs_open("/boot/welcome.txt", &f) && !vfs_writable(&f),
           "the ramdisk is not");
     CHECK(vfs_write(&f, 0, "x", 1) == -1, "and refuses one");
-    CHECK(!vfs_create("/boot/new.txt", &f),
+    CHECK(!vfs_create("/boot/new.txt", 0644, 0, 0, &f),
           "nothing can be made under /boot, it is read-only memory");
-    CHECK(!vfs_mkdir("/boot/somedir"), "nor a directory under it");
+    CHECK(!vfs_mkdir("/boot/somedir", 0755, 0, 0), "nor a directory under it");
     CHECK(!vfs_rmdir("/boot"), "and it is not removable either");
-    CHECK(vfs_mkdir("/somedir"), "but the disk takes one");
+    CHECK(vfs_mkdir("/somedir", 0755, 0, 0), "but the disk takes one");
     CHECK(vfs_rmdir("/somedir"), "and gives it back");
     CHECK(!vfs_unlink("/boot/welcome.txt"), "nor a file removed from it");
-    CHECK(vfs_create("/new.txt", &f), "but the disk will make a file");
+    CHECK(vfs_create("/new.txt", 0644, 0, 0, &f),
+          "but the disk will make a file");
 
 
 
@@ -711,14 +724,16 @@ int main(void)
          * router gets wrong silently
          */
         last_mount = 99;
-        CHECK(vfs_mkdir("/work/made"), "a directory can be made under it");
+        CHECK(vfs_mkdir("/work/made", 0755, 0, 0),
+              "a directory can be made under it");
         CHECK(last_mount == DISK_WORK, "on the second filesystem");
         last_mount = 99;
-        CHECK(vfs_mkdir("/made"), "and one on the root");
+        CHECK(vfs_mkdir("/made", 0755, 0, 0), "and one on the root");
         CHECK(last_mount == DISK_ROOT, "on the root filesystem");
 
         last_mount = 99;
-        CHECK(vfs_create("/work/new.txt", &w) && last_mount == DISK_WORK,
+        CHECK(vfs_create("/work/new.txt", 0644, 0, 0, &w)
+              && last_mount == DISK_WORK,
               "a file made under /work is made there");
         CHECK(w.mount == DISK_WORK, "and knows it");
         last_mount = 99;
@@ -771,7 +786,8 @@ int main(void)
           "an absolute name falls through to the ramdisk with no disk");
     CHECK(!vfs_open("/notes.txt", &f),
           "but a name on neither is still on neither");
-    CHECK(!vfs_create("/anything.txt", &f), "and nothing can be made");
+    CHECK(!vfs_create("/anything.txt", 0644, 0, 0, &f),
+          "and nothing can be made");
     CHECK(!vfs_unlink("/welcome.txt"),
           "nor unmade, the copy that is left lives in read-only memory");
     CHECK(!vfs_rename("/welcome.txt", "/other.txt"), "nor renamed");
@@ -836,15 +852,17 @@ int main(void)
               && p_file->p_ops->seek(p_file, 5, SEEK_CUR) == 15
               && p_file->p_ops->seek(p_file, -4, SEEK_END) == 15,
               "from the start, from where it is, and from the end");
-        CHECK(p_file->p_ops->seek(p_file, 1, SEEK_END) == -EINVAL
-              && p_file->p_ops->seek(p_file, -200, SEEK_CUR) == -EINVAL
+        CHECK(p_file->p_ops->seek(p_file, -200, SEEK_CUR) == -EINVAL
               && p_file->p_ops->seek(p_file, 0, 7) == -EINVAL
               && p_file->u_pos == 15,
-              "a place outside the file, or a whence it does not know, "
+              "a place before the start, or a whence it does not know, "
               "moves nothing");
         CHECK(p_file->p_ops->read(p_file, arr_got, sizeof arr_got) == 4
               && p_file->p_ops->read(p_file, arr_got, sizeof arr_got) == 0,
               "a read stops at the end, and the next one is the end");
+        CHECK(p_file->p_ops->seek(p_file, 1, SEEK_END) == 20
+              && p_file->p_ops->read(p_file, arr_got, sizeof arr_got) == 0,
+              "a place past the end is somewhere, with nothing to read");
         file_put(p_file);
 
         CHECK(vfs_open("/proc/version", &f)

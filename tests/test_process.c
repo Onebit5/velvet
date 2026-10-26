@@ -27,7 +27,15 @@ void panic(const char *fmt, ...)
 #include <stdbool.h>
 
 #include <velvet/process.h>
-#include <uapi/velvet/syscall.h>
+
+/* the host's stdlib.h has these too, the same numbers spelt otherwise */
+#undef WNOHANG
+#undef WUNTRACED
+#undef WSTOPPED
+#undef WEXITED
+#undef WCONTINUED
+#undef WNOWAIT
+#include <uapi/velvet/wait.h>
 #include <uapi/velvet/errno.h>
 
 /*
@@ -35,6 +43,13 @@ void panic(const char *fmt, ...)
  * takes and lets go of references, and these say how many it holds
  */
 #include <velvet/file.h>
+
+/* an action of just a handler, or SIG_DEFAULT or SIG_IGNORE */
+static void set_handler(struct signal_state *p_s, int i_sig, uint64_t u_at)
+{
+    struct sigaction act = { .sa_handler = u_at };
+    signal_set_action(p_s, i_sig, &act);
+}
 static int s_i_released;
 void file_get(struct file *p_file)
 {
@@ -58,6 +73,12 @@ static int failures;
  * about, so it is counted here rather than performed
  */
 static int wakes;
+/* no thread is running here: the table is asked about from outside */
+struct thread *sched_current(void)
+{
+    return NULL;
+}
+
 void sched_wake_thread(int id)
 {
     (void)id; wakes++;
@@ -178,20 +199,20 @@ int main(void)
         int i_busy = process_create("busy", 0, 0, false, 600);
         struct signal_state *p_sig = process_signal_state(i_busy);
 
-        signal_set_handler(p_sig, SIGSEGV, SIG_IGNORE);
-        process_force_signal(i_busy, SIGSEGV);
+        set_handler(p_sig, SIGSEGV, SIG_IGNORE);
+        process_force_signal(i_busy, SIGSEGV, NULL);
         CHECK(signal_action_for(p_sig, SIGSEGV) == SIGNAL_ACTION_TERMINATE
               && (p_sig->pending & SIGNAL_BIT(SIGSEGV)),
               "an ignored SIGSEGV is raised all the same, to end it");
         p_sig->pending = 0;
         p_sig->blocked |= SIGNAL_BIT(SIGILL);
-        process_force_signal(i_busy, SIGILL);
+        process_force_signal(i_busy, SIGILL, NULL);
         CHECK(!(p_sig->blocked & SIGNAL_BIT(SIGILL))
               && process_interrupt_pending(i_busy),
               "a blocked SIGILL is unblocked and delivered");
         p_sig->pending = 0;
-        signal_set_handler(p_sig, SIGFPE, 0x401000);
-        process_force_signal(i_busy, SIGFPE);
+        set_handler(p_sig, SIGFPE, 0x401000);
+        process_force_signal(i_busy, SIGFPE, NULL);
         CHECK(signal_action_for(p_sig, SIGFPE) == SIGNAL_ACTION_HANDLER,
               "and a handled one keeps its handler");
         process_exited(i_busy, 0, 610);
@@ -215,34 +236,43 @@ int main(void)
               "SIGSTOP stops the thread when it is sent");
         CHECK(!(process_signal_state(i_job)->pending & SIGNAL_BIT(SIGSTOP)),
               "and leaves nothing pending to act on again");
-        CHECK(process_reportable(i_parent, -1, true, &i_status, &b_ended)
-              == i_job && !b_ended && i_status == (WAIT_STOPPED | SIGSTOP),
-              "a wait that asks about stops is told");
-        CHECK(process_reportable(i_parent, i_job, true, &i_status, &b_ended)
-              == 0, "once");
-        CHECK(process_reportable(i_parent, i_job, false, &i_status, &b_ended)
+        CHECK(process_reportable(i_parent, -1, WUNTRACED | WNOWAIT, &i_status,
+                                 &b_ended) == i_job
+              && i_status == W_STOPCODE(SIGSTOP),
+              "a wait that asks about stops is told, WNOWAIT leaving it");
+        CHECK(process_reportable(i_parent, -1, WUNTRACED, &i_status,
+                                 &b_ended) == i_job && !b_ended,
+              "to be told again");
+        CHECK(process_reportable(i_parent, i_job, WUNTRACED, &i_status,
+                                 &b_ended) == 0, "once");
+        CHECK(process_reportable(i_parent, i_job, 0, &i_status, &b_ended)
               == 0, "and one that does not ask is not told at all");
 
         process_signal(i_job, SIGCONT);
         CHECK(s_i_stopped_id == 77 && !s_b_stopped,
               "SIGCONT lets it go when it is sent");
+        CHECK(process_reportable(i_parent, i_job, WCONTINUED, &i_status,
+                                 &b_ended) == i_job && i_status == W_CONTINUED,
+              "and a wait that asks is told it was continued");
 
         s_i_stopped_id = 0;
-        signal_set_handler(process_signal_state(i_job), SIGTSTP, SIG_IGNORE);
+        set_handler(process_signal_state(i_job), SIGTSTP, SIG_IGNORE);
         process_signal(i_job, SIGTSTP);
         CHECK(s_i_stopped_id == 0, "an ignored SIGTSTP stops nothing");
-        signal_set_handler(process_signal_state(i_job), SIGTSTP, SIG_DEFAULT);
+        set_handler(process_signal_state(i_job), SIGTSTP, SIG_DEFAULT);
         process_signal_state(i_job)->blocked |= SIGNAL_BIT(SIGTSTP);
         process_signal(i_job, SIGTSTP);
         CHECK(s_i_stopped_id == 0
               && (process_signal_state(i_job)->pending & SIGNAL_BIT(SIGTSTP)),
               "and a blocked one waits, pending, for delivery");
 
-        CHECK(process_reportable(i_parent, 4040, true, &i_status, &b_ended)
-              == -1, "a pid that is not a child is -1");
-        process_exited(i_job, 3, 510);
-        CHECK(process_reportable(i_parent, -1, true, &i_status, &b_ended)
-              == i_job && b_ended && i_status == 3,
+        CHECK(process_reportable(i_parent, 4040, WUNTRACED, &i_status,
+                                 &b_ended) == -ECHILD,
+              "a pid that is not a child is ECHILD");
+        process_exited(i_job, W_EXITCODE(3, 0), 510);
+        CHECK(process_reportable(i_parent, -1, WUNTRACED, &i_status,
+                                 &b_ended) == i_job
+              && b_ended && i_status == W_EXITCODE(3, 0),
               "and an ended child is told with its code");
         process_collect(i_job, NULL);
         process_exited(i_parent, 0, 510);
@@ -254,32 +284,39 @@ int main(void)
      * owes nothing its parent had pending
      */
     {
-        static const char s_arr_env[] = "PATH=/bin\0HOME=/\0";
-        char arr_got[64];
         int i_parent = process_create("sh", 0, 1000, false, 700);
         int i_child = process_create("sh", i_parent, 1000, false, 700);
         struct signal_state *p_parent = process_signal_state(i_parent);
         struct signal_state *p_child = process_signal_state(i_child);
+        uint64_t u_flags;
 
-        process_set_env(i_parent, s_arr_env, sizeof s_arr_env);
         process_set_cwd(i_parent, "/work");
         process_set_pgid(i_parent, 77);
-        process_set_trampoline(i_parent, 0x401234);
-        signal_set_handler(p_parent, SIGINT, SIG_IGNORE);
+        struct process *p_slot = process_lock_slot(i_parent, &u_flags);
+        p_slot->u_umask = 077;
+        p_slot->arr_limits[RLIMIT_NOFILE].rlim_cur = 20;
+        p_slot->arr_groups[0] = 50;
+        p_slot->i_groups = 1;
+        process_unlock_slot(u_flags);
+        set_handler(p_parent, SIGINT, SIG_IGNORE);
+        set_handler(p_parent, SIGUSR1, 0x401234);
         p_parent->blocked = SIGNAL_BIT(SIGALRM);
         process_signal(i_parent, SIGTERM);
 
         process_inherit(i_child, i_parent);
-        CHECK(process_get_env(i_child, arr_got, sizeof arr_got)
-              == sizeof s_arr_env
-              && memcmp(arr_got, s_arr_env, sizeof s_arr_env) == 0,
-              "the environment comes with it");
+        const struct process *p_kid = process_find(i_child);
         CHECK(strcmp(process_cwd(i_child), "/work") == 0
-              && process_pgid(i_child) == 77,
-              "and where it stands, and the job it is part of");
-        CHECK(p_child->handler[SIGINT] == SIG_IGNORE
-              && p_child->blocked == SIGNAL_BIT(SIGALRM)
-              && process_trampoline(i_child) == 0x401234,
+              && process_pgid(i_child) == 77
+              && p_kid->i_sid == process_find(i_parent)->i_sid,
+              "a child stands where its parent does, in its job and "
+              "session");
+        CHECK(p_kid->u_umask == 077
+              && p_kid->arr_limits[RLIMIT_NOFILE].rlim_cur == 20
+              && p_kid->i_groups == 1 && p_kid->arr_groups[0] == 50,
+              "with its umask, limits and groups");
+        CHECK(p_child->action[SIGINT].sa_handler == SIG_IGNORE
+              && p_child->action[SIGUSR1].sa_handler == 0x401234
+              && p_child->blocked == SIGNAL_BIT(SIGALRM),
               "and what it does with each signal");
         CHECK(p_child->pending == 0, "but nothing that was pending");
 
@@ -310,7 +347,7 @@ int main(void)
 
     process_exited(pid, 42, 1500);
     p = process_find(pid);
-    CHECK(p->exited && p->exit_code == 42, "the code is recorded");
+    CHECK(p->exited && p->i_wait_status == 42, "the code is recorded");
     CHECK(p->ended_ms == 1500, "and when");
     CHECK(p->thread_id == 0, "and the thread is forgotten, being gone");
     CHECK(process_count() == 1,
@@ -346,14 +383,15 @@ int main(void)
 
     int k = process_create("victim", 0, 0, false, 0);
     process_exited(k, PROCESS_KILLED, 5);
-    CHECK(process_find(k)->exit_code == PROCESS_KILLED, "a kill is recorded");
+    CHECK(process_find(k)->i_wait_status == PROCESS_KILLED,
+          "a kill is recorded");
 
     /*
      * a process already on its way out must keep its first answer,
      * otherwise a kill racing a clean exit rewrites history
      */
     process_exited(k, 0, 9);
-    CHECK(process_find(k)->exit_code == PROCESS_KILLED,
+    CHECK(process_find(k)->i_wait_status == PROCESS_KILLED,
           "the first ending is the true one");
     CHECK(process_find(k)->ended_ms == 5, "including when it happened");
     process_collect(k, NULL);
@@ -560,16 +598,20 @@ int main(void)
         int who = process_create("sleeper", 0, 0, false, 0);
         CHECK(who > 0, "a process to wake");
 
-        CHECK(process_set_alarm(who, 5, 1000) == 0,
-              "setting an alarm reports nothing left on the last one");
+        uint64_t u_left = 99;
+        uint64_t u_every = 99;
+        process_set_timer(who, 5000, 0, 1000, &u_left, &u_every);
+        CHECK(u_left == 0 && u_every == 0,
+              "setting a timer reports nothing left on the last one");
 
         process_check_alarms(3000);
         CHECK(!process_interrupt_pending(who), "and it does not fire early");
 
-        CHECK(process_set_alarm(who, 10, 3000) == 3,
-              "resetting it says how many seconds the old one had left, "
-              "which is what a program restoring an alarm it displaced "
-              "needs to know");
+        process_set_timer(who, 10000, 0, 3000, &u_left, NULL);
+        CHECK(u_left == 3000,
+              "resetting it says how long the old one had left, which is "
+              "what a program restoring an alarm it displaced needs to "
+              "know");
 
         process_check_alarms(12000);
         CHECK(!process_interrupt_pending(who),
@@ -580,13 +622,23 @@ int main(void)
               "and the new one fires when it is due");
 
         (void)process_take_interrupt(who);
+        process_signal_state(who)->pending = 0;
         process_check_alarms(20000);
         CHECK(!process_interrupt_pending(who),
-              "an alarm fires once and then is gone, a repeating one is "
-              "a different thing and nobody asked for it");
+              "one set once fires once and then is gone");
 
-        process_set_alarm(who, 5, 20000);
-        CHECK(process_set_alarm(who, 0, 21000) == 4, "zero cancels");
+        process_set_timer(who, 1000, 500, 20000, NULL, NULL);
+        process_check_alarms(21000);
+        (void)process_take_interrupt(who);
+        process_signal_state(who)->pending = 0;
+        process_check_alarms(21500);
+        CHECK(process_interrupt_pending(who),
+              "one with an interval goes on firing, as often as it says");
+        (void)process_take_interrupt(who);
+        process_signal_state(who)->pending = 0;
+
+        process_set_timer(who, 0, 0, 21600, &u_left, &u_every);
+        CHECK(u_left == 400 && u_every == 500, "zero cancels, saying what was");
         process_check_alarms(30000);
         CHECK(!process_interrupt_pending(who), "and nothing fires after");
     }

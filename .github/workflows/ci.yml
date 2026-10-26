@@ -29,12 +29,13 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            nasm qemu-system-x86
+            nasm musl-tools qemu-system-x86
 
       - name: versions, for when something inevitably breaks
         run: |
           gcc --version | head -1
           nasm -v
+          dpkg-query -W musl-tools
           qemu-system-x86_64 --version | head -1
 
       # the fast feedback first: these are ordinary linux programs and
@@ -51,9 +52,9 @@ jobs:
         run: make boottest
 
       # and ring 3, from where a program stands: the selftests, built
-      # against the uapi headers alone and run as guest. one that fails
-      # is a program broken somewhere, and the kernel does not break
-      # userspace
+      # with musl, a libc that has never heard of this kernel, and run as
+      # guest. one that fails is a program broken somewhere, and the
+      # kernel does not break userspace
       - name: selftests
         run: make kselftest
 

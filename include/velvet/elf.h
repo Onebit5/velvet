@@ -60,4 +60,15 @@ bool elf_describe(const void *image, uint64_t size,
                   struct elf_segment *out, size_t max, size_t *count,
                   uint64_t *entry, uint64_t *brk, const char **why);
 
+/*
+ * where the program headers are once the image is in memory, and how
+ * many, which a libc reads its thread-local template out of: the address
+ * is 0 when no segment holds them
+ */
+bool elf_headers_at(const void *p_image, uint64_t u_size, uint64_t *p_addr,
+                    uint64_t *p_count);
+
+/* how big one program header is */
+#define ELF_PHDR_SIZE 56
+
 #endif

@@ -21,6 +21,9 @@ size_t dev_count(void);
 const char *dev_name(size_t sz_index);
 uint32_t dev_mode(size_t sz_index);
 
+/* and its number, major << 8 | minor, as stat gives it */
+uint32_t dev_rdev(size_t sz_index);
+
 /* which one is called str_name: true and its index, or false */
 bool dev_find(const char *str_name, size_t *p_index);
 

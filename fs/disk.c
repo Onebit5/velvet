@@ -582,7 +582,8 @@ int64_t disk_read(size_t which, uint32_t cluster, uint64_t size,
     return n;
 }
 
-bool disk_create(size_t which, const char *path, struct disk_entry *out)
+bool disk_create(size_t which, const char *path, uint32_t u_mode,
+                 uint32_t u_uid, uint32_t u_gid, struct disk_entry *out)
 {
     struct mount *m = at(which);
     if (!m->ready) {
@@ -592,7 +593,7 @@ bool disk_create(size_t which, const char *path, struct disk_entry *out)
     bool ok;
     if (m->kind == DISK_EXT4) {
         struct ext4_file f;
-        ok = ext4_create(&m->ext, below(path), 0644, 0, 0, &f);
+        ok = ext4_create(&m->ext, below(path), u_mode, u_uid, u_gid, &f);
         if (ok) fill_ext4(out, &f);
     } else {
         struct fat32_file f;
@@ -685,15 +686,17 @@ bool disk_truncate(size_t sz_which, struct disk_entry *p_entry,
     return b_ok;
 }
 
-bool disk_mkdir(size_t which, const char *path)
+bool disk_mkdir(size_t which, const char *path, uint32_t u_mode,
+                uint32_t u_uid, uint32_t u_gid)
 {
     struct mount *m = at(which);
     if (!m->ready) {
         return false;
     }
     uint64_t flags = enter();
-    bool ok = (m->kind == DISK_EXT4) ? ext4_mkdir(&m->ext, below(path), 0755, 0, 0)
-                                  : fat32_mkdir(&m->fat, below(path));
+    bool ok = (m->kind == DISK_EXT4)
+              ? ext4_mkdir(&m->ext, below(path), u_mode, u_uid, u_gid)
+              : fat32_mkdir(&m->fat, below(path));
     leave(flags);
     return ok;
 }
@@ -763,14 +766,15 @@ bool disk_chown(size_t which, const char *path, uint32_t uid, uint32_t gid)
     return ok;
 }
 
-bool disk_symlink(size_t which, const char *path, const char *target)
+bool disk_symlink(size_t which, const char *path, const char *target,
+                  uint32_t u_uid, uint32_t u_gid)
 {
     struct mount *m = at(which);
     if (!m->ready || m->kind != DISK_EXT4) {
         return false;
     }
     uint64_t flags = enter();
-    bool ok = ext4_symlink(&m->ext, below(path), target, 0, 0);
+    bool ok = ext4_symlink(&m->ext, below(path), target, u_uid, u_gid);
     leave(flags);
     return ok;
 }

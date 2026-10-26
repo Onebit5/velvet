@@ -10,9 +10,6 @@
 
 #include <stdint.h>
 
-/* the numbers, and the structs ring 3 reads, are the abi */
-#include <uapi/velvet/syscall.h>
-
 #include <asm/ptrace.h>
 
 /*

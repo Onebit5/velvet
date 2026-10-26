@@ -52,6 +52,10 @@ struct addrspace {
     uint64_t u_brk_start;       /* where the program break began, at exec */
     uint64_t u_brk;             /* and where it is now */
 
+    /* where exec put the environment's strings, for whoever asks to see it */
+    uint64_t u_env_start;
+    uint64_t u_env_end;
+
     struct vma vmas[VMA_MAX];
 };
 
@@ -59,10 +63,6 @@ bool addrspace_add_region(struct addrspace *as, uint64_t start, uint64_t end,
                           uint64_t flags, enum vma_kind kind,
                           const uint8_t *image, uint64_t image_offset,
                           uint64_t file_end);
-
-bool addrspace_drop_region(struct addrspace *as, uint64_t start);
-
-uint64_t addrspace_reserve(struct addrspace *as, uint64_t len, uint64_t flags);
 
 /*
  * anonymous memory, u_len rounded up to pages, made as it is touched: at
@@ -88,6 +88,15 @@ bool addrspace_unmap(struct addrspace *p_as, uint64_t u_start, uint64_t u_len);
  */
 bool addrspace_protect(struct addrspace *p_as, uint64_t u_start,
                        uint64_t u_len, uint64_t u_flags);
+
+/*
+ * every page made in [u_start, u_start + u_len) given back, the regions
+ * kept: the next touch makes each again, as zeroes or from the image, the
+ * way it was made the first time. false when part of the range is in no
+ * region, with nothing changed
+ */
+bool addrspace_discard(struct addrspace *p_as, uint64_t u_start,
+                       uint64_t u_len);
 
 /*
  * the program break moved to u_want, the heap growing or shrinking with

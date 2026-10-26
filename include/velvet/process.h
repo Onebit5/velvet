@@ -14,15 +14,15 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <velvet/path.h>
+#include <uapi/velvet/resource.h>
 
 struct pipe;
 
 #define MAX_PROCESSES   32
 #define PROC_NAME_MAX   24
 
-#define PROC_ENV_MAX    1024
-#define ENV_NAME_MAX    64
-#define ENV_VALUE_MAX   256
+/* the supplementary groups one process may be in */
+#define NGROUPS_MAX     16
 
 #define MAX_FDS         64
 #define FD_STDIN        0
@@ -30,7 +30,8 @@ struct pipe;
 #define FD_STDERR       2
 #define FD_FIRST_FILE   3
 
-#define PROCESS_KILLED  (-1)
+/* the wait status of a process the kernel ended rather than a signal */
+#define PROCESS_KILLED  SIGKILL
 
 /*
  * init.
@@ -53,28 +54,44 @@ struct process {
     int      parent;            /* who started it, 0 for the kernel */
 
     int      pgid;
+    int      i_sid;             /* the session: its leader's pid */
     int      uid;               /* who it runs as. 0 is the master */
+    int      i_gid;
+    int      arr_groups[NGROUPS_MAX];
+    int      i_groups;
+    uint32_t u_umask;           /* the mode bits a new file does not get */
+    struct rlimit arr_limits[RLIM_NLIMITS];
 
     bool     announce;
     int      thread_id;         /* the thread running it, while it lives */
     char     name[PROC_NAME_MAX];
     bool     exited;
-    int      exit_code;
+    bool     b_detached;        /* its parent ignores SIGCHLD: nobody waits */
+    int      i_wait_status;     /* what wait4 reports: W_EXITCODE */
 
     bool     interrupted;
 
     int      i_stopped_by;      /* the signal that stopped it, 0 running */
     bool     b_stop_told;       /* and whether a wait has said so yet */
+    bool     b_continued;       /* continued and not yet told so */
 
     struct signal_state sig;
 
-    uint64_t sig_trampoline;
+    uint64_t alarm_at;          /* when ITIMER_REAL is due, ms since boot */
+    uint64_t u_alarm_every;     /* and how often after that, 0 for once */
+    uint64_t u_clear_tid;       /* where exit writes 0, set_tid_address's */
+    bool     b_vforked;         /* its parent waits until it execs or ends */
 
-    uint64_t alarm_at;
-
-    int      killed_by;
     uint64_t started_ms;
     uint64_t ended_ms;
+
+    /*
+     * the ticks it ran for, told when it ends, and those of the children
+     * it has collected: all of it user time, the two never being told
+     * apart
+     */
+    uint64_t u_ticks;
+    uint64_t u_child_ticks;
     /*
      * what each descriptor is open on, NULL for one that is not. the
      * file is shared, with whatever other descriptors were duplicated or
@@ -83,23 +100,11 @@ struct process {
     struct file *fds[MAX_FDS];
     uint64_t u_cloexec;         /* bit n: descriptor n closes on exec */
 
-    /*
-     * one block of "NAME=value" strings, each ended by a NUL, with an
-     * empty string for the end of the lot. that shape is not nostalgia:
-     * it is what makes the whole thing one memcpy to inherit, and
-     * inheriting is most of what an environment is *for*. a table of
-     * pointers would need every one of them rewritten on the way into a
-     * child.
-     *
-     * it belongs to the process rather than to the program, which is
-     * why `export` in every shell there has ever been is a builtin and
-     * not a command, a command could only ever change its own
-     */
-    char env[PROC_ENV_MAX];
-    size_t env_len;
-
     char cwd[PATH_MAX];
 };
+
+/* the process the running thread belongs to, 0 for a kernel thread */
+int current_pid(void);
 
 const char *process_cwd(int pid);
 void        process_set_cwd(int pid, const char *path);
@@ -114,10 +119,10 @@ int  process_uid(int pid);
 int  process_pgid(int pid);
 
 /*
- * a forked child made its parent's copy: the group, the working
- * directory, the environment, the signal dispositions and mask, and the
- * trampoline its handlers return through. not what is pending: a child
- * is not born owing its parent's interrupts
+ * a forked child made its parent's copy: the group and session, who it
+ * runs as, its umask and limits, the working directory, and the signal
+ * actions, mask and alternate stack. not what is pending: a child is not
+ * born owing its parent's interrupts
  */
 void process_inherit(int i_child, int i_parent);
 
@@ -147,6 +152,16 @@ void process_exited(int pid, int code, uint64_t now_ms);
 
 bool process_collect(int pid, int *code);
 
+/* the ticks a process's thread ran for, as it ends */
+void process_account(int i_pid, uint64_t u_ticks);
+
+/*
+ * an ended process nobody will wait for, its parent ignoring SIGCHLD,
+ * taken off the table once its thread is gone. any other is left for
+ * its parent
+ */
+void process_forget(int i_pid);
+
 size_t process_interrupt_all(void);
 
 /*
@@ -164,65 +179,107 @@ const char *process_name(int pid);
 /* what a process is called from now on, which exec changes */
 void process_set_name(int i_pid, const char *str_name);
 
-bool process_set_env(int pid, const char *block, size_t len);
-
-size_t process_get_env(int pid, char *out, size_t max);
-
-bool process_env_get(int pid, const char *name, char *out, size_t max);
-
-bool process_env_set(int pid, const char *name, const char *value);
-
-/* split out into lib/env.c, where it is pure arithmetic over a block */
-bool env_block_get(const char *block, size_t len, const char *name,
-                   char *out, size_t max);
-bool env_block_set(char *block, size_t *len, size_t max, const char *name,
-                   const char *value);
-
 void process_interrupt(int pid);
 
 bool process_signal(int pid, int sig);
 
-/* a fault's signal, which a handler may catch and nothing may refuse */
-void process_force_signal(int pid, int sig);
+/* one from somebody: a kill, or a child telling its parent it changed */
+bool process_send_signal(int pid, int sig,
+                         const struct signal_origin *origin);
+
+/*
+ * a fault's signal, which a handler may catch and nothing may refuse,
+ * with where and why the fault was
+ */
+void process_force_signal(int pid, int sig,
+                          const struct signal_origin *origin);
+
+/*
+ * a vfork's child has let its parent go, by running another program or
+ * by ending, and whether it still has not
+ */
+void process_vfork_done(int i_pid);
+bool process_vforking(int i_pid);
 bool process_signal_group(int pgid, int sig);
 
 /* stopped by `i_sig` on its way back to ring 3, rather than when sent */
 void process_stopped(int i_pid, int i_sig);
 
 /*
- * a child of `i_parent` with something to say, `i_pid` itself or any
- * when it is -1: its pid, with `*p_ended` true and the exit status, or
- * false and WAIT_STOPPED with the signal for a stop not yet told, when
- * `b_untraced` asks about stops. 0 when none has anything yet, and -1
- * when there is no such child at all
+ * a child of i_parent's that the selector picks, the way wait4 picks
+ * one: a pid, -1 for any, 0 for any in the caller's group, minus a group
+ * for any in that one. with something to say: its pid and its wait
+ * status, *p_ended true when it has ended and is the caller's to
+ * collect. a stop is told with WUNTRACED and a continue with
+ * WCONTINUED, each once, and WNOWAIT leaves either to be told again.
+ * 0 when there are such children and none has anything yet, -ECHILD
+ * when there are none
  */
-int process_reportable(int i_parent, int i_pid, bool b_untraced,
+int process_reportable(int i_parent, int i_selector, int i_options,
                        int *p_status, bool *p_ended);
 
 struct signal_state *process_signal_state(int pid);
 
+/*
+ * i_pid's signal mask set to u_mask: the one it replaced. b_suspend also
+ * keeps that one for whichever handler ends the wait to go back to, as
+ * sigsuspend, ppoll and pselect6 wait. what the new mask lets through
+ * that was already pending interrupts the wait at once
+ */
+uint64_t process_set_mask(int i_pid, uint64_t u_mask, bool b_suspend);
+
+/*
+ * the lowest pending signal that is in u_set taken off without being
+ * delivered, as sigtimedwait takes one, with who sent it: which, or 0
+ * when none of them is pending
+ */
+int process_take_from(int i_pid, uint64_t u_set,
+                      struct signal_origin *p_origin);
+
+/* the next deliverable signal taken off, as signal_take takes it */
 enum signal_action process_take_signal(int pid, int *sig_out,
-                                       uint64_t *handler_out);
+                                       struct sigaction *act_out,
+                                       uint64_t *old_mask_out,
+                                       struct signal_origin *origin_out);
 
-void process_set_trampoline(int pid, uint64_t at);
-uint64_t process_trampoline(int pid);
-
-uint64_t process_set_alarm(int pid, uint64_t seconds, uint64_t now_ms);
+/*
+ * ITIMER_REAL: SIGALRM u_value_ms from now and every u_every_ms after,
+ * 0 for never, with what was set before in the two outs, which may be
+ * NULL
+ */
+void process_set_timer(int i_pid, uint64_t u_value_ms, uint64_t u_every_ms,
+                       uint64_t u_now_ms, uint64_t *p_old_value,
+                       uint64_t *p_old_every);
 
 void process_check_alarms(uint64_t now_ms);
 
-void process_died_by_signal(int pid, int sig);
-
-int  process_killed_by(int pid);
 
 bool process_interrupt_pending(int pid);
 
 bool process_take_interrupt(int pid);
 
 /*
- * p_file at the lowest descriptor free from i_from up, which keeps the
- * caller's reference: the descriptor, or -EMFILE with the reference
- * still the caller's to put
+ * a process's slot with the table locked, to read or change what has no
+ * call of its own, and the lock let go of after. the slot is NULL for a
+ * pid that is not there, with the lock taken all the same. nothing that
+ * sleeps, or wakes anybody, may be done in between
+ */
+struct process *process_lock_slot(int i_pid, uint64_t *p_flags);
+void process_unlock_slot(uint64_t u_flags);
+
+/*
+ * a descriptor's close-on-exec bit: what it was, 0 or 1, set to i_set
+ * unless that is -1. -EBADF for a descriptor not open
+ */
+int process_fd_cloexec(int i_pid, int i_fd, int i_set);
+
+/* how many descriptors i_pid may have open, its RLIMIT_NOFILE */
+int process_fd_limit(int i_pid);
+
+/*
+ * p_file at the lowest descriptor free from i_from up and below the
+ * limit, which keeps the caller's reference: the descriptor, or -EMFILE
+ * with the reference still the caller's to put
  */
 int process_fd_add(int i_pid, struct file *p_file, int i_from,
                    bool b_cloexec);

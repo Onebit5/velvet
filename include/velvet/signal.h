@@ -49,46 +49,80 @@ enum signal_action {
     SIGNAL_ACTION_HANDLER   /* run the program's own, in ring 3 */
 };
 
+/*
+ * who raised a signal and why, kept for each pending one and handed to
+ * a handler as its siginfo. a set holds one of each signal, so a second
+ * raise before the first is taken replaces the first's origin
+ */
+struct signal_origin {
+    int32_t  i_code;            /* SI_USER, SI_KERNEL, CLD_EXITED, ... */
+    int32_t  i_pid;             /* the sender, or the child */
+    uint32_t u_uid;
+    int32_t  i_status;          /* a child's exit code, or its signal */
+    uint64_t u_addr;            /* where a fault was */
+};
+
 struct signal_state {
-    uint64_t pending;       /* one bit per signal. a set, not a queue */
-    uint64_t blocked;       /* deferred, not discarded */
+    uint64_t pending;           /* one bit per signal. a set, not a queue */
+    uint64_t blocked;           /* deferred, not discarded */
 
-    uint64_t handler[SIGNAL_MAX];
+    struct sigaction action[SIGNAL_MAX];
+    struct signal_origin origin[SIGNAL_MAX];
 
-    int      running;
-    uint64_t saved_mask;
+    stack_t altstack;           /* where an SA_ONSTACK handler runs */
+
+    /*
+     * rt_sigsuspend waits under a mask of the caller's choosing, and the
+     * mask it replaced is the one the handler that ends the wait returns
+     * to, so it is kept here until that handler's frame is made
+     */
+    uint64_t u_suspend_mask;
+    bool     b_suspended;
 };
 
 void signal_reset(struct signal_state *s);
 
 /*
- * what a process inherits across fork: the handlers and the mask, but
- * *not* the pending set. a child is not born owing its parent's
- * interrupts
+ * what a process inherits across fork: the actions, the mask and the
+ * alternate stack, but *not* the pending set. a child is not born owing
+ * its parent's interrupts
  */
 void signal_inherit(struct signal_state *child,
                     const struct signal_state *parent);
 
-/* and across exec: handlers go back to default, because the code they pointed at is gone. */
+/*
+ * and across exec: handlers go back to default, because the code they
+ * pointed at is gone, and so does the alternate stack. an ignored signal
+ * stays ignored, which is how nohup works
+ */
 void signal_exec(struct signal_state *s);
 
-/* raise one. false if it is not a signal number */
-bool signal_raise(struct signal_state *s, int sig);
+/* raise one, from origin, or from the kernel when it is NULL */
+bool signal_raise(struct signal_state *s, int sig,
+                  const struct signal_origin *origin);
 
 int signal_next(const struct signal_state *s);
 
 enum signal_action signal_action_for(const struct signal_state *s, int sig);
 
+/*
+ * take a pending signal off the set. for a handler: its action, the mask
+ * the handler interrupts, which its frame keeps for sigreturn, and the
+ * handler's own mask put in place, its signal in it unless SA_NODEFER,
+ * and the action back to default when SA_RESETHAND said so
+ */
 enum signal_action signal_take(struct signal_state *s, int sig,
-                               uint64_t *handler_out);
-
-void signal_handler_returned(struct signal_state *s);
+                               struct sigaction *act_out,
+                               uint64_t *old_mask_out,
+                               struct signal_origin *origin_out);
 
 /*
- * install one. false when the signal may not be caught, which is a
- * refusal the program should see rather than a lie it should believe
+ * set an action. false when it may not be: SIGKILL and SIGSTOP take no
+ * handler and cannot be ignored, a refusal the program should see
+ * rather than a lie it should believe
  */
-bool signal_set_handler(struct signal_state *s, int sig, uint64_t handler);
+bool signal_set_action(struct signal_state *s, int sig,
+                       const struct sigaction *act);
 
 /*
  * block or unblock. SIGKILL and SIGSTOP silently stay unblocked, the
@@ -98,6 +132,14 @@ bool signal_set_handler(struct signal_state *s, int sig, uint64_t handler);
 void signal_set_mask(struct signal_state *s, uint64_t mask);
 uint64_t signal_get_mask(const struct signal_state *s);
 
+/*
+ * what a handler with SA_SIGINFO, or sigtimedwait, is told about a
+ * signal: who sent it and why, a child's news, or where a fault was
+ */
+void signal_info(int i_sig, const struct signal_origin *p_origin,
+                 struct siginfo *p_info);
+
+/* is there anything deliverable at all? */
 bool signal_deliverable(const struct signal_state *s);
 
 const char *signal_name(int sig);

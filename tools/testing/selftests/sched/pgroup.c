@@ -7,44 +7,44 @@
 
 #include "../kselftest.h"
 
-static int sleeper(void)
+static pid_t sleeper(void)
 {
-    int i_pid = fork();
+    pid_t i_pid = fork();
 
     if (i_pid == 0) {
         for (;;) {
-            sleep_ms(100);
+            ksft_sleep_ms(100);
         }
     }
     return i_pid;
 }
 
-int main(int i_argc, char **pp_argv)
+int main(void)
 {
     int i_one;
     int i_two;
 
-    (void)i_argc;
-    (void)pp_argv;
     ksft_print_header();
     ksft_set_plan(4);
 
-    int i_left = sleeper();
-    int i_right = sleeper();
+    pid_t i_left = sleeper();
+    pid_t i_right = sleeper();
     ksft_test_result(setpgid(i_left, 0) == 0
-                     && setpgid(i_right, i_left) == 0,
+                     && setpgid(i_right, i_left) == 0
+                     && getpgid(i_right) == i_left,
                      "two children are put in one group\n");
 
-    ksft_test_result(sigsend(-i_left, SIGTERM) == 0
-                     && wait(i_left, &i_one) == i_left
-                     && wait(i_right, &i_two) == i_right
-                     && i_one == 128 + SIGTERM && i_two == 128 + SIGTERM,
+    ksft_test_result(kill(-i_left, SIGTERM) == 0
+                     && waitpid(i_left, &i_one, 0) == i_left
+                     && waitpid(i_right, &i_two, 0) == i_right
+                     && ksft_killed_by(i_one, SIGTERM)
+                     && ksft_killed_by(i_two, SIGTERM),
                      "and one signal to the group ends both, and only "
                      "them\n");
 
-    ksft_test_result(setpgid(1, 0) == -1,
+    ksft_test_result(setpgid(1, 0) == -1 && errno == ESRCH,
                      "a process that is not the caller's child is left be\n");
-    ksft_test_result(sigsend(-30000, SIGTERM) == -1,
-                     "and a group with nobody in it is -1\n");
+    ksft_test_result(kill(-30000, SIGTERM) == -1 && errno == ESRCH,
+                     "and a group with nobody in it is ESRCH\n");
     ksft_finished();
 }

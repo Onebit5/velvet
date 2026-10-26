@@ -12,7 +12,10 @@
 #include <uapi/velvet/errno.h>
 #include <velvet/string.h>
 #include <velvet/sched.h>
-#include <uapi/velvet/syscall.h>
+#include <uapi/velvet/fcntl.h>
+#include <velvet/thread.h>
+#include <velvet/usermode.h>
+#include <uapi/velvet/wait.h>
 
 /* a fixed table rather than a linked list of allocations. */
 /* the process table and every descriptor in it. */
@@ -32,6 +35,12 @@ static struct process *slot_for(int pid)
         }
     }
     return NULL;
+}
+
+int current_pid(void)
+{
+    struct thread *p_me = sched_current();
+    return (p_me != NULL) ? p_me->pid : 0;
 }
 
 const char *process_cwd(int pid)
@@ -91,7 +100,19 @@ int process_create(const char *name, int parent, int uid, bool announce,
          * command typed on its own is: a job of one
          */
         p->pgid       = p->pid;
+        p->i_sid        = (p_parent != NULL) ? p_parent->i_sid : p->pid;
         p->uid        = uid;
+        p->i_gid        = uid;
+        p->u_umask    = 022;
+        for (size_t sz_at = 0; sz_at < RLIM_NLIMITS; sz_at++) {
+            p->arr_limits[sz_at].rlim_cur = RLIM_INFINITY;
+            p->arr_limits[sz_at].rlim_max = RLIM_INFINITY;
+        }
+        p->arr_limits[RLIMIT_NOFILE].rlim_cur = MAX_FDS;
+        p->arr_limits[RLIMIT_NOFILE].rlim_max = MAX_FDS;
+        p->arr_limits[RLIMIT_STACK].rlim_cur = USER_STACK_PAGES * 4096ull;
+        p->arr_limits[RLIMIT_NPROC].rlim_cur = MAX_PROCESSES;
+        p->arr_limits[RLIMIT_NPROC].rlim_max = MAX_PROCESSES;
         p->announce   = announce;
         signal_reset(&p->sig);
         p->started_ms = now_ms;
@@ -106,9 +127,6 @@ int process_create(const char *name, int parent, int uid, bool announce,
         }
         p->u_cloexec = 0;
 
-        /* an empty environment rather than no environment. */
-        p->env[0] = '\0';
-        p->env_len = 1;
 
         /* wherever the parent was standing. */
         const char *from = process_cwd(parent);
@@ -134,6 +152,59 @@ int process_create(const char *name, int parent, int uid, bool announce,
     return pid;
 }
 
+/*
+ * what a child's parent is to be told, gathered under the lock and sent
+ * after it, since sending reaches the scheduler
+ */
+struct child_news {
+    int i_parent;
+    struct signal_origin origin;
+};
+
+/*
+ * SIGCHLD for the parent of p, with i_code saying what happened and
+ * i_status what it came to: nothing for a stop the parent asked not to
+ * hear of, and nothing at all for the kernel's own
+ */
+static void child_news(const struct process *p, int i_code, int i_status,
+                       struct child_news *p_out)
+{
+    p_out->i_parent = 0;
+    const struct process *p_parent = slot_for(p->parent);
+    if (p_parent == NULL || p_parent->exited) {
+        return;
+    }
+    if (i_code == CLD_STOPPED
+        && (p_parent->sig.action[SIGCHLD].sa_flags & SA_NOCLDSTOP)) {
+        return;
+    }
+    p_out->i_parent = p_parent->pid;
+    memset(&p_out->origin, 0, sizeof p_out->origin);
+    p_out->origin.i_code = i_code;
+    p_out->origin.i_pid = p->pid;
+    p_out->origin.u_uid = (uint32_t)p->uid;
+    p_out->origin.i_status = i_status;
+}
+
+static void tell_parent(const struct child_news *p_news)
+{
+    if (p_news->i_parent != 0) {
+        process_send_signal(p_news->i_parent, SIGCHLD, &p_news->origin);
+    }
+}
+
+/* a parent that has said it will never wait for its children */
+static bool parent_detaches(const struct process *p)
+{
+    const struct process *p_parent = slot_for(p->parent);
+    if (p_parent == NULL) {
+        return false;
+    }
+    const struct sigaction *p_act = &p_parent->sig.action[SIGCHLD];
+    return p_act->sa_handler == SIG_IGNORE
+           || (p_act->sa_flags & SA_NOCLDWAIT) != 0;
+}
+
 void process_set_thread(int pid, int thread_id)
 {
     uint64_t flags = spin_lock_irq(&process_lock);
@@ -146,6 +217,8 @@ void process_set_thread(int pid, int thread_id)
 
 void process_exited(int pid, int code, uint64_t now_ms)
 {
+    struct child_news news = { 0 };
+    bool b_first = false;
     uint64_t flags = spin_lock_irq(&process_lock);
     struct process *p = slot_for(pid);
     /*
@@ -154,7 +227,8 @@ void process_exited(int pid, int code, uint64_t now_ms)
      */
     if (p != NULL && !p->exited) {
         p->exited    = true;
-        p->exit_code = code;
+        p->i_wait_status = code;
+        b_first = true;
         p->ended_ms  = now_ms;
         p->thread_id = 0;
         /*
@@ -172,7 +246,29 @@ void process_exited(int pid, int code, uint64_t now_ms)
             }
         }
     }
+    if (b_first) {
+        /*
+         * the parent hears of it, and a parent that ignores SIGCHLD
+         * will never wait, so the child is nobody's to collect but the
+         * reaper's
+         */
+        p->b_detached = parent_detaches(p);
+        child_news(p, (code & 0x7f) != 0 ? CLD_KILLED : CLD_EXITED,
+                   (code & 0x7f) != 0 ? (code & 0x7f) : (code >> 8) & 0xff,
+                   &news);
+    }
     spin_unlock_irq(&process_lock, flags);
+    tell_parent(&news);
+}
+
+void process_account(int i_pid, uint64_t u_ticks)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    if (p != NULL) {
+        p->u_ticks = u_ticks;
+    }
+    spin_unlock_irq(&process_lock, u_flags);
 }
 
 bool process_collect(int pid, int *code)
@@ -183,7 +279,12 @@ bool process_collect(int pid, int *code)
     struct process *p = slot_for(pid);
     if (p != NULL && p->exited) {
         if (code != NULL) {
-            *code = p->exit_code;
+            *code = p->i_wait_status;
+        }
+        /* what it and its own children ran for, the parent's children's now */
+        struct process *p_parent = slot_for(p->parent);
+        if (p_parent != NULL) {
+            p_parent->u_child_ticks += p->u_ticks + p->u_child_ticks;
         }
         p->pid = 0;         /* the slot is free again */
         collected = true;
@@ -195,6 +296,16 @@ bool process_collect(int pid, int *code)
 
 
 
+void process_forget(int i_pid)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    if (p != NULL && p->exited && p->b_detached) {
+        p->pid = 0;
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+}
+
 size_t process_interrupt_all(void)
 {
     uint64_t flags = spin_lock_irq(&process_lock);
@@ -205,7 +316,7 @@ size_t process_interrupt_all(void)
             || table[i].pid == INIT_PID) {
             continue;
         }
-        signal_raise(&table[i].sig, SIGINT);
+        signal_raise(&table[i].sig, SIGINT, NULL);
         table[i].interrupted = true;
         n++;
     }
@@ -309,6 +420,9 @@ static int settle_now(struct process *p, int i_sig)
         if (e_act == SIGNAL_ACTION_CONTINUE) {
             p->sig.pending &= ~u_bit;   /* continuing was all it meant */
         }
+        if (p->i_stopped_by != 0 && i_sig == SIGCONT) {
+            p->b_continued = true;
+        }
         p->i_stopped_by = 0;
         return -1;
     }
@@ -321,49 +435,80 @@ static int settle_now(struct process *p, int i_sig)
  * then dereferences null would otherwise return to the same instruction
  * forever, faulting each time
  */
-void process_force_signal(int i_pid, int i_sig)
+void process_vfork_done(int i_pid)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    if (p != NULL) {
+        p->b_vforked = false;
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+}
+
+bool process_vforking(int i_pid)
+{
+    const struct process *p = slot_for(i_pid);
+    return p != NULL && p->b_vforked && !p->exited;
+}
+
+void process_force_signal(int i_pid, int i_sig,
+                          const struct signal_origin *origin)
 {
     uint64_t u_flags = spin_lock_irq(&process_lock);
     struct process *p = slot_for(i_pid);
     if (p != NULL && !p->exited && i_sig > 0 && i_sig < SIGNAL_MAX) {
         uint64_t u_bit = SIGNAL_BIT(i_sig);
-        if (p->sig.handler[i_sig] == SIG_IGNORE
+        if (p->sig.action[i_sig].sa_handler == SIG_IGNORE
             || (p->sig.blocked & u_bit) != 0) {
-            p->sig.handler[i_sig] = SIG_DEFAULT;
+            p->sig.action[i_sig].sa_handler = SIG_DEFAULT;
             p->sig.blocked &= ~u_bit;
         }
-        signal_raise(&p->sig, i_sig);
+        signal_raise(&p->sig, i_sig, origin);
         p->interrupted = true;
     }
     spin_unlock_irq(&process_lock, u_flags);
 }
 
-bool process_signal(int pid, int sig)
+bool process_send_signal(int pid, int sig,
+                         const struct signal_origin *origin)
 {
+    struct child_news news = { 0 };
     uint64_t flags = spin_lock_irq(&process_lock);
     struct process *p = slot_for(pid);
     bool ok = false;
     int i_become = 0;
-    if (p != NULL && !p->exited) {
-        ok = signal_raise(&p->sig, sig);
+    /*
+     * init takes only what it has a handler for: one it left to the
+     * default would end, or stop, the process the machine needs. sent
+     * all the same, as far as the sender can tell
+     */
+    bool b_init_ignores = p != NULL && p->pid == INIT_PID && sig > 0
+                          && sig < SIGNAL_MAX
+                          && p->sig.action[sig].sa_handler == SIG_DEFAULT;
+    if (b_init_ignores) {
+        ok = true;
+    } else if (p != NULL && !p->exited) {
+        ok = signal_raise(&p->sig, sig, origin);
         if (ok) {
             i_become = settle_now(p, sig);
+            if (i_become > 0) {
+                child_news(p, CLD_STOPPED, sig, &news);
+            } else if (i_become < 0 && sig == SIGCONT) {
+                child_news(p, CLD_CONTINUED, SIGCONT, &news);
+            }
         }
 
-        /* `interrupted` is now derived. */
         /*
-         * deliberately whether anything is *pending and unblocked*,
-         * rather than whether it will be acted on. an ignored signal
-         * still cuts a blocking call short here, which unix does not
-         * do, and it is kept because `interrupted` predates signals
-         * in this kernel and answers a different question: "stop
-         * waiting", not "what should become of this process"
+         * whether anything is pending and unblocked: what a blocking
+         * call stops waiting for. an ignored one was dropped as it was
+         * raised, so it is not among them
          */
         p->interrupted = signal_deliverable(&p->sig);
     }
     int i_thread = (p != NULL) ? p->thread_id : 0;
     bool b_wake = ok && p != NULL && p->interrupted;
     spin_unlock_irq(&process_lock, flags);
+    tell_parent(&news);
 
     if (i_become != 0 && i_thread > 0) {
         sched_set_stopped(i_thread, i_become > 0);
@@ -382,39 +527,72 @@ bool process_signal(int pid, int sig)
     return ok;
 }
 
+bool process_signal(int pid, int sig)
+{
+    return process_send_signal(pid, sig, NULL);
+}
+
 void process_stopped(int i_pid, int i_sig)
 {
+    struct child_news news = { 0 };
     uint64_t u_flags = spin_lock_irq(&process_lock);
     struct process *p = slot_for(i_pid);
     if (p != NULL) {
         p->i_stopped_by = i_sig;
         p->b_stop_told = false;
+        child_news(p, CLD_STOPPED, i_sig, &news);
     }
     spin_unlock_irq(&process_lock, u_flags);
+    tell_parent(&news);
+}
+/* whether a selector, as wait4 takes one, picks this child */
+static bool picks(int i_selector, int i_caller_pgid, const struct process *p)
+{
+    if (i_selector > 0) {
+        return p->pid == i_selector;
+    }
+    if (i_selector == -1) {
+        return true;
+    }
+    if (i_selector == 0) {
+        return p->pgid == i_caller_pgid;
+    }
+    return p->pgid == -i_selector;
 }
 
-int process_reportable(int i_parent, int i_pid, bool b_untraced,
+int process_reportable(int i_parent, int i_selector, int i_options,
                        int *p_status, bool *p_ended)
 {
     uint64_t u_flags = spin_lock_irq(&process_lock);
-    int i_found = -1;
+    const struct process *p_me = slot_for(i_parent);
+    int i_pgid = (p_me != NULL) ? p_me->pgid : 0;
+    bool b_keep = (i_options & WNOWAIT) != 0;
+    int i_found = -ECHILD;
 
     for (size_t sz_at = 0; sz_at < MAX_PROCESSES; sz_at++) {
         struct process *p = &table[sz_at];
-        if (p->pid == 0 || p->parent != i_parent
-            || (i_pid != -1 && p->pid != i_pid)) {
+        if (p->pid == 0 || p->parent != i_parent || p->b_detached
+            || !picks(i_selector, i_pgid, p)) {
             continue;
         }
         i_found = 0;
         if (p->exited) {
-            *p_status = p->exit_code;
-            *p_ended = true;
+            *p_status = p->i_wait_status;
+            *p_ended = !b_keep;
             i_found = p->pid;
             break;
         }
-        if (b_untraced && p->i_stopped_by != 0 && !p->b_stop_told) {
-            p->b_stop_told = true;
-            *p_status = WAIT_STOPPED | p->i_stopped_by;
+        if ((i_options & WUNTRACED) && p->i_stopped_by != 0
+            && !p->b_stop_told) {
+            p->b_stop_told = !b_keep;
+            *p_status = W_STOPCODE(p->i_stopped_by);
+            *p_ended = false;
+            i_found = p->pid;
+            break;
+        }
+        if ((i_options & WCONTINUED) && p->b_continued) {
+            p->b_continued = b_keep;
+            *p_status = W_CONTINUED;
             *p_ended = false;
             i_found = p->pid;
             break;
@@ -457,7 +635,9 @@ struct signal_state *process_signal_state(int pid)
 }
 
 enum signal_action process_take_signal(int pid, int *sig_out,
-                                       uint64_t *handler_out)
+                                       struct sigaction *act_out,
+                                       uint64_t *old_mask_out,
+                                       struct signal_origin *origin_out)
 {
     uint64_t flags = spin_lock_irq(&process_lock);
     struct process *p = slot_for(pid);
@@ -466,7 +646,7 @@ enum signal_action process_take_signal(int pid, int *sig_out,
     if (p != NULL) {
         int sig = signal_next(&p->sig);
         if (sig != 0) {
-            a = signal_take(&p->sig, sig, handler_out);
+            a = signal_take(&p->sig, sig, act_out, old_mask_out, origin_out);
             if (sig_out != NULL) {
                 *sig_out = sig;
             }
@@ -476,6 +656,46 @@ enum signal_action process_take_signal(int pid, int *sig_out,
     spin_unlock_irq(&process_lock, flags);
     return a;
 }
+uint64_t process_set_mask(int i_pid, uint64_t u_mask, bool b_suspend)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    uint64_t u_was = 0;
+    if (p != NULL) {
+        u_was = signal_get_mask(&p->sig);
+        if (b_suspend) {
+            p->sig.u_suspend_mask = u_was;
+            p->sig.b_suspended = true;
+        }
+        signal_set_mask(&p->sig, u_mask);
+        p->interrupted = signal_deliverable(&p->sig);
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    return u_was;
+}
+
+int process_take_from(int i_pid, uint64_t u_set,
+                      struct signal_origin *p_origin)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    int i_sig = 0;
+    if (p != NULL) {
+        uint64_t u_ready = p->sig.pending & u_set;
+        for (int i_at = 1; i_at < SIGNAL_MAX && i_sig == 0; i_at++) {
+            if (u_ready & SIGNAL_BIT(i_at)) {
+                i_sig = i_at;
+            }
+        }
+        if (i_sig != 0) {
+            p->sig.pending &= ~SIGNAL_BIT(i_sig);
+            *p_origin = p->sig.origin[i_sig];
+        }
+        p->interrupted = signal_deliverable(&p->sig);
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    return i_sig;
+}
 
 int process_thread(int pid)
 {
@@ -483,38 +703,33 @@ int process_thread(int pid)
     return p == NULL ? 0 : p->thread_id;
 }
 
-void process_set_trampoline(int pid, uint64_t at)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-    struct process *p = slot_for(pid);
-    if (p != NULL) {
-        p->sig_trampoline = at;
-    }
-    spin_unlock_irq(&process_lock, flags);
-}
 
-uint64_t process_trampoline(int pid)
-{
-    const struct process *p = slot_for(pid);
-    return p == NULL ? 0 : p->sig_trampoline;
-}
 
-uint64_t process_set_alarm(int pid, uint64_t seconds, uint64_t now_ms)
+void process_set_timer(int i_pid, uint64_t u_value_ms, uint64_t u_every_ms,
+                       uint64_t u_now_ms, uint64_t *p_old_value,
+                       uint64_t *p_old_every)
 {
-    uint64_t flags = spin_lock_irq(&process_lock);
-    struct process *p = slot_for(pid);
-    uint64_t left = 0;
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    uint64_t u_left = 0;
+    uint64_t u_every = 0;
 
     if (p != NULL) {
-        if (p->alarm_at > now_ms) {
-            left = (p->alarm_at - now_ms + 999) / 1000;
+        if (p->alarm_at > u_now_ms) {
+            u_left = p->alarm_at - u_now_ms;
         }
-        p->alarm_at = (seconds == 0) ? 0 : now_ms + seconds * 1000;
+        u_every = p->u_alarm_every;
+        p->alarm_at = (u_value_ms == 0) ? 0 : u_now_ms + u_value_ms;
+        p->u_alarm_every = (u_value_ms == 0) ? 0 : u_every_ms;
     }
-    spin_unlock_irq(&process_lock, flags);
-    return left;
+    spin_unlock_irq(&process_lock, u_flags);
+    if (p_old_value != NULL) {
+        *p_old_value = u_left;
+    }
+    if (p_old_every != NULL) {
+        *p_old_every = u_every;
+    }
 }
-
 void process_check_alarms(uint64_t now_ms)
 {
     /*
@@ -530,7 +745,8 @@ void process_check_alarms(uint64_t now_ms)
         struct process *p = &table[i];
         if (p->pid != 0 && !p->exited && p->alarm_at != 0
             && now_ms >= p->alarm_at) {
-            p->alarm_at = 0;    /* an alarm fires once */
+            p->alarm_at = (p->u_alarm_every != 0)
+                          ? now_ms + p->u_alarm_every : 0;
             due[n++] = p->pid;
         }
     }
@@ -541,21 +757,7 @@ void process_check_alarms(uint64_t now_ms)
     }
 }
 
-void process_died_by_signal(int pid, int sig)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-    struct process *p = slot_for(pid);
-    if (p != NULL) {
-        p->killed_by = sig;
-    }
-    spin_unlock_irq(&process_lock, flags);
-}
 
-int process_killed_by(int pid)
-{
-    const struct process *p = slot_for(pid);
-    return p == NULL ? 0 : p->killed_by;
-}
 
 bool process_interrupt_pending(int pid)
 {
@@ -601,11 +803,17 @@ void process_inherit(int i_child, int i_parent)
 
     if (p_child != NULL && p_parent != NULL) {
         p_child->pgid = p_parent->pgid;
+        p_child->i_sid = p_parent->i_sid;
+        p_child->uid = p_parent->uid;
+        p_child->i_gid = p_parent->i_gid;
+        memcpy(p_child->arr_groups, p_parent->arr_groups,
+               sizeof p_child->arr_groups);
+        p_child->i_groups = p_parent->i_groups;
+        p_child->u_umask = p_parent->u_umask;
+        memcpy(p_child->arr_limits, p_parent->arr_limits,
+               sizeof p_child->arr_limits);
         memcpy(p_child->cwd, p_parent->cwd, sizeof p_child->cwd);
-        memcpy(p_child->env, p_parent->env, sizeof p_child->env);
-        p_child->env_len = p_parent->env_len;
         signal_inherit(&p_child->sig, &p_parent->sig);
-        p_child->sig_trampoline = p_parent->sig_trampoline;
     }
     spin_unlock_irq(&process_lock, u_flags);
 }
@@ -655,73 +863,6 @@ size_t process_group_pids(int i_pgid, int *p_pids, size_t sz_max)
     return sz_n;
 }
 
-/*
- * the block itself is pure arithmetic over a run of strings and lives
- * in lib/env.c, where a suite can hold it to what "already set" means
- * without a process table to stand it in
- */
-
-bool process_set_env(int pid, const char *block, size_t len)
-{
-    if (len > PROC_ENV_MAX) {
-        return false;
-    }
-    uint64_t flags = spin_lock_irq(&process_lock);
-    struct process *p = slot_for(pid);
-    if (p != NULL) {
-        memcpy(p->env, block, len);
-        p->env_len = len;
-    }
-    spin_unlock_irq(&process_lock, flags);
-    return p != NULL;
-}
-
-size_t process_get_env(int pid, char *out, size_t max)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-    struct process *p = slot_for(pid);
-    size_t n = 0;
-    if (p != NULL && p->env_len <= max) {
-        memcpy(out, p->env, p->env_len);
-        n = p->env_len;
-    }
-    spin_unlock_irq(&process_lock, flags);
-
-    if (n == 0 && max > 0) {
-        out[0] = '\0';     /* an empty environment is still an environment */
-        n = 1;
-    }
-    return n;
-}
-
-bool process_env_get(int pid, const char *name, char *out, size_t max)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-    struct process *p = slot_for(pid);
-    bool ok = false;
-    if (p != NULL) {
-        ok = env_block_get(p->env, p->env_len, name, out, max);
-    }
-    spin_unlock_irq(&process_lock, flags);
-    return ok;
-}
-
-bool process_env_set(int pid, const char *name, const char *value)
-{
-    uint64_t flags = spin_lock_irq(&process_lock);
-    struct process *p = slot_for(pid);
-    bool ok = false;
-    if (p != NULL) {
-        if (p->env_len == 0) {
-            p->env[0] = '\0';
-            p->env_len = 1;
-        }
-        ok = env_block_set(p->env, &p->env_len, PROC_ENV_MAX, name, value);
-    }
-    spin_unlock_irq(&process_lock, flags);
-    return ok;
-}
-
 const char *process_name(int pid)
 {
     const struct process *p = slot_for(pid);
@@ -754,6 +895,49 @@ static void mark_cloexec(struct process *p, int i_fd, bool b_cloexec)
     }
 }
 
+struct process *process_lock_slot(int i_pid, uint64_t *p_flags)
+{
+    *p_flags = spin_lock_irq(&process_lock);
+    return slot_for(i_pid);
+}
+
+void process_unlock_slot(uint64_t u_flags)
+{
+    spin_unlock_irq(&process_lock, u_flags);
+}
+
+int process_fd_cloexec(int i_pid, int i_fd, int i_set)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    int i_was = -EBADF;
+
+    if (p != NULL && i_fd >= 0 && i_fd < MAX_FDS && p->fds[i_fd] != NULL) {
+        i_was = (p->u_cloexec >> i_fd) & 1;
+        if (i_set >= 0) {
+            mark_cloexec(p, i_fd, i_set != 0);
+        }
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    return i_was;
+}
+
+/* how many descriptors p may have: its limit, never past the table */
+static int fd_limit(const struct process *p)
+{
+    uint64_t u_limit = p->arr_limits[RLIMIT_NOFILE].rlim_cur;
+    return (u_limit < MAX_FDS) ? (int)u_limit : MAX_FDS;
+}
+
+int process_fd_limit(int i_pid)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    int i_limit = (p != NULL) ? fd_limit(p) : 0;
+    spin_unlock_irq(&process_lock, u_flags);
+    return i_limit;
+}
+
 int process_fd_add(int i_pid, struct file *p_file, int i_from,
                    bool b_cloexec)
 {
@@ -762,7 +946,7 @@ int process_fd_add(int i_pid, struct file *p_file, int i_from,
     int i_fd = -EMFILE;
 
     if (p != NULL && i_from >= 0) {
-        for (int i_at = i_from; i_at < MAX_FDS; i_at++) {
+        for (int i_at = i_from; i_at < fd_limit(p); i_at++) {
             if (p->fds[i_at] == NULL) {
                 p->fds[i_at] = p_file;
                 mark_cloexec(p, i_at, b_cloexec);

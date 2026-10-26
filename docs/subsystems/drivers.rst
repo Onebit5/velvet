@@ -61,19 +61,26 @@ discipline that decides what a key means is ``termios.c``.
 where typing meets
 ------------------
 
-``input.c`` is one ring buffer, one wait queue, and one reader at a time,
-the program in front. the ps/2 keyboard pushes here, and so does the
-serial port, so the reader neither knows nor cares whether you are
-sitting at the machine or on the other end of a wire.
+``input.c`` is a ring of bytes per console, and a wait queue on each. the
+ps/2 keyboard pushes here, and so does the serial port, so the reader
+neither knows nor cares whether you are sitting at the machine or on the
+other end of a wire. a key lands in the ring of the console being looked
+at.
 
-keys that are not characters get values above 0xff so they cannot be
-confused with one. ctrl+letter comes through as the usual control codes
-(ctrl+c is 3, same as every terminal since 1963). ``input_getchar_blocking()``
-sleeps on the wait queue, which is how a shell sits at a prompt all day
-burning zero cycles. it wakes for an interrupt too: a reader whose
-process is interrupted with no key waiting gets -1 and takes nothing, so
-the next key typed is still there for whoever reads it, and a key that
-is there is handed over, interrupt or not.
+a character is its byte, and ctrl+letter the usual control code (ctrl+c
+is 3, same as every terminal since 1963). the keys that are not
+characters are pushed as the escape sequences a console terminal sends
+for them: the arrows ``ESC [ A`` to ``ESC [ D``, home ``ESC [ 1 ~``,
+delete ``ESC [ 3 ~``, end ``ESC [ 4 ~`` and the page keys ``ESC [ 5 ~`` and
+``ESC [ 6 ~``, so a program reads them as bytes like everything else.
+the terminal gets first refusal at every key, for the ones that switch
+or scroll consoles.
+
+``input_wait()`` sleeps on a console's queue, which is how a shell sits
+at a prompt all day burning zero cycles. it wakes for an interrupt too:
+a reader whose process is interrupted with nothing waiting is told so
+and takes nothing, so the next key typed is still there for whoever
+reads it.
 
 the keyboard and the mouse
 --------------------------
@@ -101,59 +108,59 @@ tested against sequences written by hand.
 the terminal discipline
 -----------------------
 
-``tty.c`` answers who the keyboard belongs to. up to 0.1.2 nobody owned it:
-the shell peeked at keys while a program ran, watching for ctrl+c on the
-program's behalf, which meant a program could never really read the
-keyboard. now there is a foreground process, and ctrl+c is delivered *to* it
-rather than acted on for it.
+``tty.c`` is the terminals: one on each console, ``/dev/tty1`` to
+``/dev/tty5``, with ``/dev/console`` the first of them and ``/dev/tty``
+whichever is the caller's own. a terminal holds what a program sets with
+``tcsetattr``, a ``struct termios``, the line being typed, the group in
+front and the session it belongs to.
+
+a terminal belongs to a **session**. a session leader with none takes
+one with ``TIOCSCTTY``, and has it until it lets go with ``TIOCNOTTY`` or
+ends; root may take one from another session. every process of the
+session reaches it as ``/dev/tty``, and a process whose session has none
+is told ``-ENXIO`` there. the kernel starts ``/init`` on the first
+console, and an ``/init`` that wants it for its terminal takes it.
 
 the front of the terminal is a **group**, not a process. ``cat x | wc`` is
-three processes and one thing the person typing is thinking about, and every
-question the terminal asks has to be asked of the whole job.
-``TTY_NOBODY`` (0) means no program is in front, which is a console no
-program has been put in front of. there is nobody to signal: ctrl+c is a
-key like any other, and ctrl+z means nothing.
+two processes and one thing the person typing is thinking about, and every
+question the terminal asks has to be asked of the whole job. a group of
+the terminal's session is put in front with ``tcsetpgrp``, which is
+``TIOCSPGRP``.
 
-each of the consoles has its own answer to all of this, and which
-console a caller means is not passed in: it is whichever the calling thread
-belongs to, because that is always the right answer and passing it would
-only be an opportunity to pass the wrong one.
+a group behind the one in front is stopped when it reads from the
+terminal, with ``SIGTTIN``, and when it changes it, ``tcsetattr`` or
+``tcsetpgrp``, with ``SIGTTOU``; the call is made again once the group is
+continued. a group that ignores or blocks the signal is told ``-EIO`` for
+a read and is let make the change, which is how a shell, that ignores
+``SIGTTOU``, hands the terminal from job to job. a group behind may write
+to it.
 
-the group in front of a console may read the keyboard whether or not that
-console is on the screen. a key lands in the ring of the console being
-looked at, and a reader only takes from its own, so a read on a hidden
-console waits until somebody switches to it, and can never take what was
-typed at another.
+with ``ISIG``, the ``VINTR``, ``VQUIT`` and ``VSUSP`` characters, ctrl+c,
+ctrl+\\ and ctrl+z unless a program changed them, are ``SIGINT``,
+``SIGQUIT`` and ``SIGTSTP`` to the group in front, and that is all: no
+second ctrl+c turns into a kill, and no terminal is handed back on a
+stop. what becomes of a job is the business of whoever started it, and a
+shell learns of the stop from ``wait`` and takes the terminal back
+itself.
 
-with a program in front, ctrl+c and ctrl+z are SIGINT and SIGTSTP to
-its group, and that is all: no second ctrl+c turns into a kill, and no
-terminal is handed back on a stop. what becomes of a job is the business
-of whoever started it, and a shell learns of the stop from ``wait`` and
-takes the terminal back itself.
+with ``ICANON`` a read takes one whole line, edited as it is typed with
+``VERASE``, ``VWERASE`` and ``VKILL``, and ``VEOF`` at the start of a line
+is the end of input. without it a read is what ``VMIN`` and ``VTIME`` say.
+the keys that are not characters, the arrows, home, end, delete and the
+page keys, arrive as the escape sequences a console terminal sends for
+them.
 
-a console can also belong to a program. ``ttyattach``, which only root
-may call, moves the caller onto a console and makes it the program that
-console belongs to, with its group in front; its children are born on the
-same console. from then on the jobs are the program's to run: it puts a
-group in front with ``tcsetpgrp``. the console's program may always put a
-group in front; otherwise only a member of the group already there may,
-which is how a job gives the terminal back.
+a key lands in the terminal of the console being looked at, and a reader
+only takes from its own, so a read on a hidden console waits until
+somebody switches to it, and can never take what was typed at another.
 
 ``termios.c`` is how a terminal treats what is typed at it, and it is only
-the *policy*: given a mode and a key, what does the terminal do. the reading,
-echoing and waking need a machine and live in ``tty.c``; this half does not,
-so it can be checked without one, and it is the half where a wrong answer
-means ctrl+c reaching a program as the byte 0x03 instead of as a signal.
-
-the mode matters because a shell wants *cooked* mode (a whole line, echoed,
-handed over on enter) and an editor cannot use it (it needs each key as it
-arrives, the screen left alone, and to decide for itself what ctrl+c means).
-the roadmap asked for this as a **mode** rather than as two different
-syscalls, and that is the part worth getting right: two calls would mean
-every program choosing at every read, and a program that got it wrong once
-would hang. a mode is set once, asked about, and *restored*, which an
-editor must do before it exits, or it leaves the terminal unusable for
-whatever runs next. see ``TERM_COOKED`` and ``TERM_RAW``.
+the *policy*: given a ``struct termios`` and a byte, what does the
+terminal do with it, a character for the line, an erase, a signal, the
+end of input. the reading, echoing and waking need a machine and live in
+``tty.c``; this half does not, so it can be checked without one, and it
+is the half where a wrong answer means ctrl+c reaching a program as the
+byte 0x03 instead of as a signal.
 
 the timers
 ----------

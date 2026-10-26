@@ -8,40 +8,58 @@
 
 #include "../kselftest.h"
 
-/* a child that interrupts its parent once the parent has had time to wait */
-static int interrupter(int i_parent)
+#include <termios.h>
+
+static void caught(int i_sig)
 {
-    int i_pid = fork();
+    (void)i_sig;
+}
+
+/* a child that interrupts its parent once the parent has had time to wait */
+static pid_t interrupter(pid_t i_parent)
+{
+    pid_t i_pid = fork();
 
     if (i_pid == 0) {
-        sleep_ms(300);
-        sigsend(i_parent, SIGINT);
-        exit(0);
+        ksft_sleep_ms(300);
+        kill(i_parent, SIGINT);
+        _exit(0);
     }
     return i_pid;
 }
 
-int main(int i_argc, char **pp_argv)
+int main(void)
 {
     char arr_line[16];
     int i_status;
+    struct termios was;
+    struct termios raw;
 
-    (void)i_argc;
-    (void)pp_argv;
     ksft_print_header();
-    ksft_set_plan(2);
+    ksft_set_plan(3);
 
-    /* ignored, so it cuts the wait short and leaves the test alive */
-    ksft_syscall(SYS_SIGNAL, SIGINT, SIG_IGNORE, 0);
+    /*
+     * caught without SA_RESTART, so the wait ends rather than starting
+     * again, and the test is left alive
+     */
+    struct sigaction act = { .sa_handler = caught };
+    sigaction(SIGINT, &act, NULL);
 
-    int i_pid = interrupter(getpid());
-    ksft_test_result(read(0, arr_line, sizeof arr_line) == -1,
-                     "an interrupt ends a read of the keyboard\n");
-    wait(i_pid, &i_status);
+    pid_t i_pid = interrupter(getpid());
+    ksft_test_result(read(0, arr_line, sizeof arr_line) == -1
+                     && errno == EINTR,
+                     "a signal ends a read of a line from the keyboard\n");
+    waitpid(i_pid, &i_status, 0);
 
+    tcgetattr(0, &was);
+    raw = was;
+    cfmakeraw(&raw);
+    ksft_test_result(tcsetattr(0, TCSANOW, &raw) == 0,
+                     "the terminal can be made raw\n");
     i_pid = interrupter(getpid());
-    ksft_test_result(ksft_syscall(SYS_GETKEY, 0, 0, 0) == -1,
-                     "and a wait for one key\n");
-    wait(i_pid, &i_status);
+    ksft_test_result(read(0, arr_line, 1) == -1 && errno == EINTR,
+                     "and a wait for one key ends the same way\n");
+    waitpid(i_pid, &i_status, 0);
+    tcsetattr(0, TCSANOW, &was);
     ksft_finished();
 }

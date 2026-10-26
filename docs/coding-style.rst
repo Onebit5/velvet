@@ -93,7 +93,7 @@ includes
      on the include path, so the same line means x86_64 or ``none``.
    - what ring 3 sees, the syscall numbers and the structs and flags the
      calls take: ``include/uapi/velvet/``, included as
-     ``<uapi/velvet/syscall.h>``. a uapi header includes nothing of the
+     ``<uapi/velvet/unistd.h>``. a uapi header includes nothing of the
      kernel's, since a program compiles against it too.
    - read only by its own subsystem: beside the code, included as
      ``"ustar.h"``.

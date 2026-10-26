@@ -8,7 +8,8 @@
 #include <velvet/vfs.h>
 #include <velvet/file.h>
 #include <uapi/velvet/errno.h>
-#include <uapi/velvet/syscall.h>
+#include <uapi/velvet/fcntl.h>
+
 #include <velvet/ramdisk.h>
 #include <velvet/disk.h>
 #include <velvet/kmalloc.h>
@@ -155,6 +156,7 @@ static void from_disk(struct vfs_file *out, const struct disk_entry *e,
     out->uid = e->uid;
     out->gid = e->gid;
     out->is_symlink = e->is_symlink;
+    out->u_ino = e->ino;
 }
 
 /* one filesystem's copy of a name, if it is mounted and has one */
@@ -171,13 +173,55 @@ static bool try_disk(size_t which, const char *path, struct vfs_file *out)
     return true;
 }
 
+/* whether some name in the archive is under `str_dir`/ */
+static bool ramdisk_has_under(const char *str_dir, size_t sz_len)
+{
+    struct ramdisk_file f;
+    for (size_t sz_at = 0; ramdisk_stat(sz_at, &f); sz_at++) {
+        const char *str_have = f.name;
+        if (str_have[0] == '.' && str_have[1] == '/') {
+            str_have += 2;
+        }
+        if (strncmp(str_have, str_dir, sz_len) == 0
+            && str_have[sz_len] == '/') {
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ * a name in the archive: a file, or a directory, which tar names with a
+ * slash on the end when it records one at all, and which is there just
+ * the same when it does not, for being where files are
+ */
 static bool try_ramdisk(const char *path, struct vfs_file *out)
 {
     struct ramdisk_file f;
-    if (!ramdisk_open(path, &f)) {
+    if (ramdisk_open(path, &f)) {
+        from_ramdisk(out, &f);
+        return true;
+    }
+    char arr_dir[VFS_NAME_MAX + 2];
+    size_t sz_len = strlen(path);
+    if (sz_len == 0 || sz_len + 2 > sizeof arr_dir) {
         return false;
     }
-    from_ramdisk(out, &f);
+    memcpy(arr_dir, path, sz_len);
+    arr_dir[sz_len] = '/';
+    arr_dir[sz_len + 1] = '\0';
+    if (ramdisk_open(arr_dir, &f)) {
+        from_ramdisk(out, &f);
+        return true;
+    }
+    if (!ramdisk_has_under(path, sz_len)) {
+        return false;
+    }
+    memset(out, 0, sizeof *out);
+    out->kind = VFS_RAMDISK;
+    copy_name(out->name, arr_dir);
+    out->is_dir = true;
+    out->mode = 0555;
     return true;
 }
 
@@ -481,7 +525,8 @@ bool vfs_readdir(const char *path, size_t index, struct vfs_file *out)
 
 
 
-bool vfs_create(const char *path, struct vfs_file *out)
+bool vfs_create(const char *path, uint32_t u_mode, uint32_t u_uid,
+                uint32_t u_gid, struct vfs_file *out)
 {
     if (path == NULL || path[0] == '\0') {
         return false;
@@ -501,7 +546,7 @@ bool vfs_create(const char *path, struct vfs_file *out)
     }
 
     struct disk_entry e;
-    if (!disk_create(which, rest, &e)) {
+    if (!disk_create(which, rest, u_mode, u_uid, u_gid, &e)) {
         return false;
     }
     from_disk(out, &e, which);
@@ -517,12 +562,14 @@ bool vfs_create(const char *path, struct vfs_file *out)
     ((path) != NULL && (path)[0] != '\0' \
      && disk_route((path), &(which), &(rest)) && disk_ready(which))
 
-bool vfs_mkdir(const char *path)
+bool vfs_mkdir(const char *path, uint32_t u_mode, uint32_t u_uid,
+               uint32_t u_gid)
 {
     size_t which;
     const char *rest;
     /* read-only memory has no room for a new name */
-    return ROUTED(path, which, rest) && disk_mkdir(which, rest);
+    return ROUTED(path, which, rest)
+           && disk_mkdir(which, rest, u_mode, u_uid, u_gid);
 }
 
 bool vfs_rmdir(const char *path)
@@ -547,12 +594,13 @@ bool vfs_chown(const char *path, uint32_t uid, uint32_t gid)
     return ROUTED(path, which, rest) && disk_chown(which, rest, uid, gid);
 }
 
-bool vfs_symlink(const char *path, const char *target)
+bool vfs_symlink(const char *path, const char *target, uint32_t u_uid,
+                 uint32_t u_gid)
 {
     size_t which;
     const char *rest;
     return target != NULL && ROUTED(path, which, rest)
-        && disk_symlink(which, rest, target);
+        && disk_symlink(which, rest, target, u_uid, u_gid);
 }
 
 bool vfs_readlink(const char *path, char *out, size_t size)
@@ -805,6 +853,20 @@ static int64_t node_read(struct file *p_file, void *p_buf, size_t sz_len)
 static int64_t node_write(struct file *p_file, const void *p_buf,
                           size_t sz_len)
 {
+    if (p_file->node.kind != VFS_DISK) {
+        return -EROFS;
+    }
+    if (p_file->u_flags & O_APPEND) {
+        p_file->u_pos = p_file->node.size;
+    }
+    /*
+     * past the end, the gap is made first and made of zeroes: fat has no
+     * holes, and a cluster off the free list holds what it last held
+     */
+    if (p_file->u_pos > p_file->node.size
+        && !vfs_truncate(&p_file->node, p_file->u_pos)) {
+        return -ENOSPC;
+    }
     int64_t i_put = vfs_write(&p_file->node, p_file->u_pos, p_buf, sz_len);
     if (i_put > 0) {
         p_file->u_pos += (uint64_t)i_put;
@@ -813,9 +875,10 @@ static int64_t node_write(struct file *p_file, const void *p_buf,
 }
 
 /*
- * anywhere from the start to the end, inclusive. /proc's files are
- * written afresh on every read and have no size to measure the end by,
- * so they are read from the start or not at all
+ * anywhere from the start on, the end and past it included: a write out
+ * there makes the gap. /proc's files are written afresh on every read
+ * and have no size to measure the end by, so they are read from the
+ * start or not at all
  */
 static int64_t node_seek(struct file *p_file, int64_t i_offset, int i_whence)
 {
@@ -830,7 +893,7 @@ static int64_t node_seek(struct file *p_file, int64_t i_offset, int i_whence)
         return -EINVAL;
     }
     int64_t i_to = i_from + i_offset;
-    if (i_to < 0 || (uint64_t)i_to > p_file->node.size) {
+    if (i_to < 0) {
         return -EINVAL;
     }
     p_file->u_pos = (uint64_t)i_to;
@@ -843,10 +906,45 @@ static const struct file_operations node_ops = {
     .seek = node_seek,
 };
 
+/*
+ * a directory is read with getdents64, which counts entries in the
+ * position, so the only seek it has is back to the start, which is what
+ * rewinddir asks for
+ */
+static int64_t dir_read(struct file *p_file, void *p_buf, size_t sz_len)
+{
+    (void)p_file;
+    (void)p_buf;
+    (void)sz_len;
+    return -EISDIR;
+}
+
+static int64_t dir_seek(struct file *p_file, int64_t i_offset, int i_whence)
+{
+    if (i_whence != SEEK_SET || i_offset < 0) {
+        return -EINVAL;
+    }
+    p_file->u_pos = (uint64_t)i_offset;
+    return i_offset;
+}
+
+static const struct file_operations dir_ops = {
+    .read = dir_read,
+    .seek = dir_seek,
+};
+
 struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode)
 {
-    if (p_node->kind == VFS_DEV) {
+    if (p_node->kind == VFS_DEV && !p_node->is_dir) {
         return dev_open(p_node->sz_dev, u_mode);
+    }
+    if (p_node->is_dir) {
+        struct file *p_dir = file_alloc(&dir_ops, u_mode & FILE_READ,
+                                        FILE_TYPE_DIR);
+        if (p_dir != NULL) {
+            p_dir->node = *p_node;
+        }
+        return p_dir;
     }
     struct file *p_file = file_alloc(&node_ops, u_mode, FILE_TYPE_REGULAR);
     if (p_file != NULL) {

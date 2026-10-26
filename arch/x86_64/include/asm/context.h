@@ -29,8 +29,7 @@ extern void switch_context(uint64_t *save_sp, uint64_t *load_sp);
 
 /* usermode.asm. never returns */
 void enter_usermode(uint64_t entry, uint64_t stack_top,
-                    uint64_t cs, uint64_t ss,
-                    uint64_t argc, uint64_t argv);
+                    uint64_t cs, uint64_t ss);
 
 /*
  * a stack that looks like a thread already parked inside
@@ -104,11 +103,9 @@ ARCH_INLINE void context_set_kernel_stack(uint64_t top)
  * code was speaking it
  */
 __attribute__((noreturn))
-ARCH_INLINE void context_enter_user(uint64_t entry, uint64_t stack_top,
-                                    uint64_t argc, uint64_t argv)
+ARCH_INLINE void context_enter_user(uint64_t entry, uint64_t stack_top)
 {
-    enter_usermode(entry, stack_top, GDT_USER_CODE3, GDT_USER_DATA3,
-                   argc, argv);
+    enter_usermode(entry, stack_top, GDT_USER_CODE3, GDT_USER_DATA3);
     __builtin_unreachable();
 }
 

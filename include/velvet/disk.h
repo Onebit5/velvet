@@ -106,7 +106,8 @@ int64_t disk_read(size_t which, uint32_t cluster, uint64_t size,
                   uint64_t offset, void *buf, uint64_t len);
 
 /* make a file if it is not there, and hand back where it lives. */
-bool disk_create(size_t which, const char *path, struct disk_entry *out);
+bool disk_create(size_t which, const char *path, uint32_t u_mode,
+                 uint32_t u_uid, uint32_t u_gid, struct disk_entry *out);
 
 int64_t disk_write_at(size_t which, struct disk_entry *e, uint64_t offset,
                       const void *buf, uint64_t len);
@@ -115,7 +116,8 @@ int64_t disk_write_at(size_t which, struct disk_entry *e, uint64_t offset,
 bool disk_truncate(size_t sz_which, struct disk_entry *p_entry,
                    uint64_t u_size);
 
-bool disk_mkdir(size_t which, const char *path);
+bool disk_mkdir(size_t which, const char *path, uint32_t u_mode,
+                uint32_t u_uid, uint32_t u_gid);
 bool disk_rmdir(size_t which, const char *path);
 
 bool disk_unlink(size_t which, const char *path);
@@ -124,7 +126,8 @@ bool disk_rename(size_t which, const char *from, const char *to);
 
 bool disk_chmod(size_t which, const char *path, uint32_t mode);
 bool disk_chown(size_t which, const char *path, uint32_t uid, uint32_t gid);
-bool disk_symlink(size_t which, const char *path, const char *target);
+bool disk_symlink(size_t which, const char *path, const char *target,
+                  uint32_t u_uid, uint32_t u_gid);
 
 bool disk_readlink(size_t which, const char *path, char *out, size_t size);
 bool disk_lookup_nofollow(size_t which, const char *path,

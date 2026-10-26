@@ -8,6 +8,7 @@
 #include <velvet/tcp.h>
 #include <velvet/ip.h>
 #include <velvet/string.h>
+#include <uapi/velvet/errno.h>
 
 /* the same pseudo-header udp uses, with tcp's protocol number and the whole segment's length. */
 static void sum_pseudo(struct net_sum *s, ipv4 from, ipv4 to, uint16_t len)
@@ -226,6 +227,7 @@ void tcp_reset(struct tcp_conn *c, uint64_t now_ms)
     c->state     = TCP_CLOSED;
     c->closed_ms = now_ms;
     c->error     = "the connection was reset";
+    c->i_errno   = ECONNRESET;
 }
 
 /* how much this end will accept, which is whatever is free in the receive buffer. */
@@ -337,6 +339,8 @@ void tcp_input(struct tcp_conn *c, const struct tcp_segment *seg,
             c->error = (c->state == TCP_SYN_SENT)
                      ? "nothing is listening on that port"
                      : "the other end reset the connection";
+            c->i_errno = (c->state == TCP_SYN_SENT) ? ECONNREFUSED
+                                                    : ECONNRESET;
             c->state     = TCP_CLOSED;
             c->closed_ms = now_ms;
         }
@@ -553,6 +557,7 @@ size_t tcp_tick(struct tcp_conn *c, uint64_t now_ms, uint8_t *out,
         c->state     = TCP_CLOSED;
         c->closed_ms = now_ms;
         c->error     = "closed with data still unread";
+        c->i_errno   = ECONNRESET;
         return tcp_build(out, c->local, c->remote, c->local_port,
                          c->remote_port, c->snd_nxt, c->rcv_nxt,
                          TCP_RST | TCP_ACK, 0, NULL, 0);
@@ -568,6 +573,7 @@ size_t tcp_tick(struct tcp_conn *c, uint64_t now_ms, uint8_t *out,
             c->state     = TCP_CLOSED;
             c->closed_ms = now_ms;
             c->error     = "nobody answered";
+            c->i_errno   = ETIMEDOUT;
             return 0;
         }
         c->timer_ms      = now_ms;
@@ -588,6 +594,7 @@ size_t tcp_tick(struct tcp_conn *c, uint64_t now_ms, uint8_t *out,
             c->state     = TCP_CLOSED;
             c->closed_ms = now_ms;
             c->error     = "the other end stopped acknowledging";
+            c->i_errno   = ETIMEDOUT;
             return 0;
         }
         c->retries++;

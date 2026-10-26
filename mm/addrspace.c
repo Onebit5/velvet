@@ -143,12 +143,14 @@ struct addrspace *addrspace_fork(const struct addrspace *from,
         mine[i] = child | (parent[i] & ~PTE_ADDR_MASK);
     }
 
-    /* the records come too, and where the break is */
+    /* the records come too, and where the break and the environment are */
     for (size_t i = 0; i < VMA_MAX; i++) {
         as->vmas[i] = from->vmas[i];
     }
     as->u_brk_start = from->u_brk_start;
     as->u_brk = from->u_brk;
+    as->u_env_start = from->u_env_start;
+    as->u_env_end = from->u_env_end;
 
     /*
      * and this core's own memory of the parent's entries, when the parent
@@ -263,72 +265,6 @@ bool addrspace_add_region(struct addrspace *as, uint64_t start, uint64_t end,
     slot->image_offset = image_offset;
     slot->file_end = file_end;
     return true;
-}
-
-bool addrspace_drop_region(struct addrspace *as, uint64_t start)
-{
-    if (as == NULL) {
-        return false;
-    }
-    for (size_t i = 0; i < VMA_MAX; i++) {
-        struct vma *v = &as->vmas[i];
-        if (v->kind == VMA_NONE || v->start != start) {
-            continue;
-        }
-
-        /* whatever of it was ever touched has real pages behind it */
-        for (uint64_t a = v->start; a < v->end; a += PAGE_SIZE) {
-            uint64_t *pte = leaf_for(as->pml4, a);
-            if (pte == NULL || !(*pte & PTE_PRESENT)) {
-                continue;
-            }
-            uint64_t phys = *pte & PTE_ADDR_MASK;
-            *pte = 0;
-            pmm_unref(phys);
-            vmm_flush_page(a);
-        }
-
-        v->kind = VMA_NONE;
-        return true;
-    }
-    return false;
-}
-
-uint64_t addrspace_reserve(struct addrspace *as, uint64_t len, uint64_t flags)
-{
-    if (as == NULL || len == 0) {
-        return 0;
-    }
-    len = (len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
-
-    /*
-     * above everything a program links to and below where its stack
-     * lives, walking up past whatever is already out. a first fit over
-     * sixteen records rather than a free list: with this many regions
-     * the list would be the bigger half of the code
-     */
-    uint64_t at = MMAP_BASE;
-    for (bool moved = true; moved; ) {
-        moved = false;
-        for (size_t i = 0; i < VMA_MAX; i++) {
-            const struct vma *v = &as->vmas[i];
-            if (v->kind == VMA_NONE) {
-                continue;
-            }
-            if (at < v->end && at + len > v->start) {
-                at = v->end;
-                moved = true;
-            }
-        }
-        if (at + len > MMAP_LIMIT) {
-            return 0;
-        }
-    }
-
-    if (!addrspace_add_region(as, at, at + len, flags, VMA_ANON, NULL, 0, 0)) {
-        return 0;
-    }
-    return at;
 }
 
 /*
@@ -555,6 +491,22 @@ bool addrspace_protect(struct addrspace *p_as, uint64_t u_start,
             }
         }
     }
+    smp_tlb_shootdown();
+    return true;
+}
+
+bool addrspace_discard(struct addrspace *p_as, uint64_t u_start,
+                       uint64_t u_len)
+{
+    if (p_as == NULL || u_len == 0 || (u_start & (PAGE_SIZE - 1)) != 0
+        || u_start + PAGE_UP(u_len) < u_start) {
+        return false;
+    }
+    uint64_t u_end = u_start + PAGE_UP(u_len);
+    if (!range_covered(p_as, u_start, u_end)) {
+        return false;
+    }
+    drop_pages(p_as, u_start, u_end);
     smp_tlb_shootdown();
     return true;
 }

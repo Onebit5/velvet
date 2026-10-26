@@ -196,12 +196,11 @@ void thread_exit(int code)
     bool narrate = true;
     if (me->pid != 0) {
         narrate = process_announces(me->pid);
+        process_account(me->pid, me->cpu_ticks);
         process_exited(me->pid, code, pit_uptime_ms());
 
         /* let go of both ends of whatever pipeline this was part of. */
         process_fds_release(me->pid);
-        net_socket_close_all(me->pid);
-        net_tcp_close_all(me->pid);
     }
 
     /* a kernel thread always says so, so the log shows it went. */

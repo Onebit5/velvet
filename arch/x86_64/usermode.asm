@@ -10,8 +10,8 @@ section .text
 
 global enter_usermode
 
-; enter_usermode(entry, user_stack_top, user_cs, user_ss, argc, argv)
-;                rdi    rsi              rdx      rcx      r8    r9
+; enter_usermode(entry, user_stack_top, user_cs, user_ss)
+;                rdi    rsi              rdx      rcx
 enter_usermode:
     ; the segment registers are not covered by iretq and would otherwise
     ; still hold kernel selectors in ring 3.
@@ -38,14 +38,12 @@ enter_usermode:
     push rdx                ; cs
     push rdi                ; rip
 
-    ; the arguments, in the registers _start expects to find them. this
-    ; is the one thing ring 3 is told deliberately, so it goes in after
-    ; the frame is built and before everything else is wiped
-    mov rdi, r8             ; argc
-    mov rsi, r9             ; argv
-
-    ; nothing else is inherited. whatever I happened to be holding is
-    ; the kernel's business, not the program's
+    ; nothing is inherited: the arguments are on the stack, below rsp,
+    ; and rdx is zero, which _start takes as no function for atexit.
+    ; whatever else I happened to be holding is the kernel's business,
+    ; not the program's
+    xor rdi, rdi
+    xor rsi, rsi
     xor rax, rax
     xor rbx, rbx
     xor rcx, rcx

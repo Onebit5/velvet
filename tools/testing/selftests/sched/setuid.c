@@ -7,19 +7,16 @@
 
 #include "../kselftest.h"
 
-int main(int i_argc, char **pp_argv)
+int main(void)
 {
-    int i_uid = (int)ksft_syscall(SYS_GETUID, 0, 0, 0);
+    uid_t u_uid = getuid();
 
-    (void)i_argc;
-    (void)pp_argv;
     ksft_print_header();
     ksft_set_plan(2);
 
-    ksft_test_result(ksft_syscall(SYS_SETUID, 0, 0, 0) == -1
-                     && ksft_syscall(SYS_GETUID, 0, 0, 0) == i_uid,
+    ksft_test_result(setuid(0) == -1 && errno == EPERM && getuid() == u_uid,
                      "a guest may not become root\n");
-    ksft_test_result(ksft_syscall(SYS_SETUID, i_uid, 0, 0) == 0,
+    ksft_test_result(setuid(u_uid) == 0,
                      "but may stay who it is\n");
     ksft_finished();
 }

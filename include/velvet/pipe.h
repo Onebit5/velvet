@@ -55,16 +55,20 @@ void pipe_close_write(struct pipe *p);
 
 /*
  * up to len bytes, waiting for some: how many, 0 once every writer is
- * gone, or -EINTR for a signal while waiting
+ * gone, -EINTR for a signal while waiting, or -EAGAIN for nothing yet
+ * when b_nonblock says not to wait
  */
-int64_t pipe_read(struct pipe *p, int pid, void *buf, uint64_t len);
+int64_t pipe_read(struct pipe *p, int pid, void *buf, uint64_t len,
+                  bool b_nonblock);
 
 /*
  * all of len, waiting for room: how many went, which is fewer only for a
  * signal or a reader leaving part way, -EPIPE when no reader is left
- * before any did, or -EINTR
+ * before any did, -EINTR, or with b_nonblock what fitted, -EAGAIN for
+ * none
  */
-int64_t pipe_write(struct pipe *p, int pid, const void *buf, uint64_t len);
+int64_t pipe_write(struct pipe *p, int pid, const void *buf, uint64_t len,
+                   bool b_nonblock);
 
 struct file;
 

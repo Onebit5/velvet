@@ -144,8 +144,12 @@ int main(void)
         if (fp == NULL) {
             printf("  (skipping the real archive: run `make bin/ramdisk.tar`)\n");
         } else {
-            static uint8_t real[1024 * 1024];
-            size_t n = fread(real, 1, sizeof real, fp);
+            /* all of it, however big the programs on it have grown */
+            fseek(fp, 0, SEEK_END);
+            long i_size = ftell(fp);
+            fseek(fp, 0, SEEK_SET);
+            uint8_t *real = malloc(i_size > 0 ? (size_t)i_size : 1);
+            size_t n = (real != NULL) ? fread(real, 1, (size_t)i_size, fp) : 0;
             fclose(fp);
             ramdisk_mount(real, n);
 
@@ -168,6 +172,7 @@ int main(void)
                   "but not by the bare name, there is no path search");
             CHECK(!ramdisk_open("selftests/sched", &f),
                   "and a directory is not a file");
+            free(real);
         }
     }
 

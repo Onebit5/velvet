@@ -122,9 +122,6 @@ bool net_arp_request(ipv4 who)
 static struct tcp_conn conns[TCP_CONN_MAX];
 static uint16_t next_port = 40000;
 
-/* one waitq for all connection activity rather than one per connection. */
-static struct waitq tcp_activity;
-
 /* one buffer for building segments, on the poll thread */
 static uint8_t tcp_out[TCP_HEADER_MIN + TCP_MSS];
 
@@ -191,33 +188,13 @@ static void got_tcp(ipv4 from, ipv4 to, const uint8_t *p, size_t len)
          */
         c->remote = from;
     }
-    enum tcp_state before = c->state;
-    size_t had = c->recv_len;
-
     tcp_input(c, &seg, p + seg.payload_at, pit_uptime_ms());
-
-    /*
-     * anything a blocked reader could care about: bytes arrived, or the
-     * connection changed state. the second matters as much as the first
-     *, a read waiting on a stream that just ended must return zero
-     * rather than sleep forever waiting for bytes that are not coming
-     */
-    if (c->recv_len != had || c->state != before) {
-        waitq_wake_all(&tcp_activity);
-    }
 }
 
 /* give every connection its chance to speak. */
 static void tcp_run(void)
 {
     uint64_t now = pit_uptime_ms();
-
-    /*
-     * what each was, so a state that changed while nothing arrived,
-     * a retransmission timer giving up, a TIME_WAIT ending, still
-     * wakes whoever is blocked on it
-     */
-    static enum tcp_state was[TCP_CONN_MAX];
 
     for (int i = 0; i < TCP_CONN_MAX; i++) {
         struct tcp_conn *c = &conns[i];
@@ -227,15 +204,7 @@ static void tcp_run(void)
         for (int guard = 0; guard < 16; guard++) {
             size_t n = tcp_tick(c, now, tcp_out, sizeof tcp_out);
             if (n == 0) {
-                if (c->state != was[i]) {
-                    waitq_wake_all(&tcp_activity);
-                    was[i] = c->state;
-                }
                 break;
-            }
-            if (c->state != was[i]) {
-                waitq_wake_all(&tcp_activity);
-                was[i] = c->state;
             }
             if (!net_send_ip(c->remote, IP_PROTO_TCP, tcp_out, n)) {
                 /* arp has not answered yet. */
@@ -308,9 +277,6 @@ int net_tcp_listen(uint16_t port)
     return -1;
 }
 
-/* one waitq for all connection activity rather than one per connection. */
-static struct waitq tcp_activity;
-
 static struct tcp_conn *owned(int owner, int handle)
 {
     int i = handle - TCP_HANDLE_BASE;
@@ -344,49 +310,6 @@ int net_tcp_serve(int owner, uint16_t port)
     return TCP_HANDLE_BASE + i;
 }
 
-/*
- * a listening connection *becomes* the accepted one when a syn arrives,
- * because there is one entry per port and no backlog. so accept waits
- * for that entry to reach ESTABLISHED and hands back the same handle,
- * then opens a fresh listener on the same port if there is room.
- *
- * that is not what accept does on a real system, where the listening
- * socket survives and each connection is a new one. the difference
- * matters for a server taking two connections at once, and it is the
- * honest shape of a four-entry table, documented rather than hidden,
- * because a program written against this will need changing if the
- * table ever grows a backlog
- */
-int net_tcp_accept(int owner, int handle, int64_t timeout_ms)
-{
-    struct tcp_conn *c = owned(owner, handle);
-    if (c == NULL) {
-        return -1;
-    }
-    uint64_t deadline = pit_uptime_ms() + (uint64_t)(timeout_ms < 0 ? 0
-                                                     : timeout_ms);
-    for (;;) {
-        uint64_t flags = spin_lock_irq(&net_lock);
-        enum tcp_state st = c->state;
-        if (st == TCP_ESTABLISHED || st == TCP_CLOSE_WAIT) {
-            spin_unlock_irq(&net_lock, flags);
-            return handle;
-        }
-        if (st == TCP_CLOSED) {
-            spin_unlock_irq(&net_lock, flags);
-            return -1;
-        }
-        if (timeout_ms == 0
-         || (timeout_ms > 0 && pit_uptime_ms() >= deadline)) {
-            spin_unlock_irq(&net_lock, flags);
-            return -1;
-        }
-        waitq_enqueue(&tcp_activity);
-        spin_unlock_irq(&net_lock, flags);
-        waitq_sleep();
-    }
-}
-
 int64_t net_tcp_send(int owner, int handle, const void *data, size_t len)
 {
     struct tcp_conn *c = owned(owner, handle);
@@ -403,39 +326,23 @@ int64_t net_tcp_send(int owner, int handle, const void *data, size_t len)
     return (int64_t)n;
 }
 
-int64_t net_tcp_recv(int owner, int handle, void *out, size_t max,
-                     int64_t timeout_ms)
+int64_t net_tcp_recv(int owner, int handle, void *out, size_t max)
 {
     struct tcp_conn *c = owned(owner, handle);
     if (c == NULL) {
         return -1;
     }
-    uint64_t deadline = pit_uptime_ms() + (uint64_t)(timeout_ms < 0 ? 0
-                                                     : timeout_ms);
-    for (;;) {
-        uint64_t flags = spin_lock_irq(&net_lock);
-        size_t n = tcp_read(c, out, max);
-        if (n > 0) {
-            spin_unlock_irq(&net_lock, flags);
-            return (int64_t)n;
-        }
+    uint64_t flags = spin_lock_irq(&net_lock);
+    int64_t n = (int64_t)tcp_read(c, out, max);
 
-        /* nothing to read, and nothing ever will be. */
-        enum tcp_state st = c->state;
-        if (st == TCP_CLOSE_WAIT || st == TCP_CLOSED || st == TCP_LAST_ACK
-         || st == TCP_TIME_WAIT) {
-            spin_unlock_irq(&net_lock, flags);
-            return 0;
-        }
-        if (timeout_ms == 0
-         || (timeout_ms > 0 && pit_uptime_ms() >= deadline)) {
-            spin_unlock_irq(&net_lock, flags);
-            return -1;
-        }
-        waitq_enqueue(&tcp_activity);
-        spin_unlock_irq(&net_lock, flags);
-        waitq_sleep();
+    /* nothing to read, and nothing ever will be. */
+    enum tcp_state st = c->state;
+    if (n == 0 && st != TCP_CLOSE_WAIT && st != TCP_CLOSED
+        && st != TCP_LAST_ACK && st != TCP_TIME_WAIT) {
+        n = -1;
     }
+    spin_unlock_irq(&net_lock, flags);
+    return n;
 }
 
 bool net_tcp_shut(int owner, int handle)
@@ -450,15 +357,49 @@ bool net_tcp_shut(int owner, int handle)
     return true;
 }
 
-void net_tcp_close_all(int owner)
+bool net_tcp_give(int i_owner, int i_handle, int i_new_owner)
 {
-    uint64_t flags = spin_lock_irq(&net_lock);
-    for (int i = 0; i < TCP_CONN_MAX; i++) {
-        if (conns[i].owner == owner && conns[i].state != TCP_CLOSED) {
-            tcp_close(&conns[i]);
-        }
+    uint64_t u_flags = spin_lock_irq(&net_lock);
+    struct tcp_conn *p_conn = owned(i_owner, i_handle);
+    if (p_conn != NULL) {
+        p_conn->owner = i_new_owner;
     }
-    spin_unlock_irq(&net_lock, flags);
+    spin_unlock_irq(&net_lock, u_flags);
+    return p_conn != NULL;
+}
+
+int64_t net_tcp_waiting(int i_owner, int i_handle)
+{
+    uint64_t u_flags = spin_lock_irq(&net_lock);
+    struct tcp_conn *p_conn = owned(i_owner, i_handle);
+    int64_t i_waiting = (p_conn != NULL) ? (int64_t)p_conn->recv_len : -1;
+    spin_unlock_irq(&net_lock, u_flags);
+    return i_waiting;
+}
+
+bool net_tcp_ends(int i_owner, int i_handle, ipv4 *p_local,
+                  uint16_t *p_local_port, ipv4 *p_remote,
+                  uint16_t *p_remote_port)
+{
+    uint64_t u_flags = spin_lock_irq(&net_lock);
+    struct tcp_conn *p_conn = owned(i_owner, i_handle);
+    if (p_conn != NULL) {
+        *p_local = p_conn->local;
+        *p_local_port = p_conn->local_port;
+        *p_remote = p_conn->remote;
+        *p_remote_port = p_conn->remote_port;
+    }
+    spin_unlock_irq(&net_lock, u_flags);
+    return p_conn != NULL;
+}
+
+int net_tcp_error(int i_owner, int i_handle)
+{
+    uint64_t u_flags = spin_lock_irq(&net_lock);
+    struct tcp_conn *p_conn = owned(i_owner, i_handle);
+    int i_errno = (p_conn != NULL) ? p_conn->i_errno : 0;
+    spin_unlock_irq(&net_lock, u_flags);
+    return i_errno;
 }
 
 int net_tcp_state(int owner, int handle)
@@ -563,26 +504,6 @@ bool net_socket_close(int owner, int handle)
     return ok;
 }
 
-void net_socket_close_all(int owner)
-{
-    uint64_t flags = spin_lock_irq(&net_lock);
-    socket_close_all(&sockets, owner);
-    spin_unlock_irq(&net_lock, flags);
-}
-
-/* a program that wanted a datagram asked, was told "not yet", slept a while and asked again. */
-static struct waitq socket_waiters[SOCKET_MAX];
-static struct waitq socket_activity;
-
-/* called with the lock held, from the poll thread */
-static void socket_arrived(int index)
-{
-    if (index >= 0 && index < SOCKET_MAX) {
-        waitq_wake_all(&socket_waiters[index]);
-    }
-    waitq_wake_all(&socket_activity);
-}
-
 int64_t net_socket_take(int owner, int handle, ipv4 *from,
                         uint16_t *from_port, void *out, size_t max)
 {
@@ -592,76 +513,12 @@ int64_t net_socket_take(int owner, int handle, ipv4 *from,
     return n;
 }
 
-int64_t net_socket_wait(int owner, int handle, ipv4 *from,
-                        uint16_t *from_port, void *out, size_t max,
-                        int64_t timeout_ms)
+size_t net_socket_pending(int i_owner, int i_handle)
 {
-    if (handle < 0 || handle >= SOCKET_MAX) {
-        return -1;
-    }
-    uint64_t deadline = pit_uptime_ms() + (uint64_t)(timeout_ms < 0 ? 0
-                                                     : timeout_ms);
-
-    for (;;) {
-        uint64_t flags = spin_lock_irq(&net_lock);
-        int64_t n = socket_take(&sockets, owner, handle, from, from_port,
-                                out, max);
-        if (n >= 0) {
-            spin_unlock_irq(&net_lock, flags);
-            return n;
-        }
-
-        /*
-         * nothing waiting. a zero timeout is the old behaviour, kept
-         * because a program that genuinely wants to look and move on
-         * should not have to spawn a thread to do it
-         */
-        if (timeout_ms == 0) {
-            spin_unlock_irq(&net_lock, flags);
-            return -1;
-        }
-        if (timeout_ms > 0 && pit_uptime_ms() >= deadline) {
-            spin_unlock_irq(&net_lock, flags);
-            return -1;
-        }
-
-        /* on the queue *before* the lock is dropped. */
-        waitq_enqueue(&socket_waiters[handle]);
-        spin_unlock_irq(&net_lock, flags);
-        waitq_sleep();
-
-        /* and round again to look properly. */
-    }
-}
-
-size_t net_socket_ready(int owner, const int *handles, size_t count,
-                        int64_t timeout_ms, bool *ready)
-{
-    uint64_t deadline = pit_uptime_ms() + (uint64_t)(timeout_ms < 0 ? 0
-                                                     : timeout_ms);
-
-    for (;;) {
-        size_t n = 0;
-        uint64_t flags = spin_lock_irq(&net_lock);
-        for (size_t i = 0; i < count; i++) {
-            ready[i] = socket_waiting(&sockets, owner, handles[i]) > 0;
-            if (ready[i]) {
-                n++;
-            }
-        }
-        if (n > 0 || timeout_ms == 0) {
-            spin_unlock_irq(&net_lock, flags);
-            return n;
-        }
-        if (timeout_ms > 0 && pit_uptime_ms() >= deadline) {
-            spin_unlock_irq(&net_lock, flags);
-            return 0;
-        }
-
-        waitq_enqueue(&socket_activity);
-        spin_unlock_irq(&net_lock, flags);
-        waitq_sleep();
-    }
+    uint64_t u_flags = spin_lock_irq(&net_lock);
+    size_t sz_count = socket_waiting(&sockets, i_owner, i_handle);
+    spin_unlock_irq(&net_lock, u_flags);
+    return sz_count;
 }
 
 bool net_socket_send(int owner, int handle, ipv4 to, uint16_t port,
@@ -767,12 +624,8 @@ static void got_ip(const uint8_t *p, size_t len)
         }
         /* and now there is somewhere for it to go. */
         uint64_t flags = spin_lock_irq(&net_lock);
-        int which = socket_deliver(&sockets, uh.to_port, ih.from,
-                                   uh.from_port, payload + uh.payload_at,
-                                   uh.payload_len);
-        if (which >= 0) {
-            socket_arrived(which);
-        }
+        socket_deliver(&sockets, uh.to_port, ih.from, uh.from_port,
+                       payload + uh.payload_at, uh.payload_len);
         spin_unlock_irq(&net_lock, flags);
     }
 }

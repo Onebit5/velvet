@@ -15,19 +15,22 @@ requirements
 - ``make``. GNU make, for the ``GNUmakefile``
 - ``python3``, for the checks and image builders in ``tools/``. no
   third-party packages
-- ``qemu-system-x86_64``, only for ``make run`` and ``make boottest``
+- ``musl-gcc``, with musl's static libc, for the selftests and the
+  ``/init`` the image carries. ``MUSL_GCC=path`` names one built anywhere
+- ``qemu-system-x86_64``, only for ``make run``, ``make boottest`` and
+  ``make kselftest``
 
 on fedora:
 
 .. code-block:: sh
 
-   dnf install gcc nasm make python3 qemu-system-x86
+   dnf install gcc nasm make python3 musl-gcc musl-libc-static qemu-system-x86
 
 on debian or ubuntu:
 
 .. code-block:: sh
 
-   apt-get install gcc nasm make python3 qemu-system-x86
+   apt-get install gcc nasm make python3 musl-tools qemu-system-x86
 
 the targets
 -----------

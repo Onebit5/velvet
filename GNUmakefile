@@ -257,10 +257,11 @@ RAMDISK := $(BINDIR)/ramdisk.tar
 # a .c file is a test, so tools/testing/selftests/sched/wait.c is
 # selftests/sched/wait on the medium.
 #
-# a test is compiled with -nostdinc against the uapi headers and the
-# compiler's freestanding ones and nothing else, the headers a program
-# gets. so it cannot lean on how the kernel is built inside, only on what
-# it promises, and a test that starts failing is a promise broken
+# a test is a static program built with musl, a libc that has never heard
+# of this kernel, so it cannot lean on how the kernel is built inside,
+# only on what it promises every x86_64 program, and a test that starts
+# failing is a promise broken. the uapi headers come after the libc's,
+# for what is this kernel's own, never in place of them
 SELFTEST_DIR  := tools/testing/selftests
 SELFTESTS     := $(sort $(patsubst $(SELFTEST_DIR)/%.c,%, \
                    $(shell find $(SELFTEST_DIR) -mindepth 2 -name '*.c' \
@@ -293,26 +294,22 @@ $(SELFTEST_LIST): FORCE
 .PHONY: FORCE
 FORCE:
 
-SELFTEST_CFLAGS := -std=gnu11 -Wall -Wextra -O1 -g -ffreestanding \
-                   -fno-stack-protector -fno-stack-check -fno-pic -fno-pie \
-                   -fno-omit-frame-pointer -m64 -mno-80387 -mno-mmx \
-                   -mno-sse -mno-sse2 -mno-red-zone -nostdinc \
-                   -isystem $(shell $(CC) -print-file-name=include) \
-                   -Iinclude/uapi
-SELFTEST_LDFLAGS := -nostdlib -static -no-pie -Wl,--build-id=none \
-                    -T $(SELFTEST_DIR)/selftest.ld
+# musl-gcc, from the distribution's musl-tools or a musl built anywhere
+MUSL_GCC ?= musl-gcc
+
+SELFTEST_CFLAGS := -std=gnu11 -Wall -Wextra -O1 -g -fno-pie \
+                   -fno-omit-frame-pointer -idirafter include/uapi
+SELFTEST_LDFLAGS := -static -no-pie -Wl,--build-id=none
 
 $(BINDIR)/selftests/%: $(SELFTEST_DIR)/%.c $(SELFTEST_DIR)/kselftest.h \
-                       $(SELFTEST_DIR)/selftest.ld \
                        $(wildcard include/uapi/velvet/*.h)
 	@mkdir -p $(@D)
-	$(CC) $(SELFTEST_CFLAGS) $(SELFTEST_LDFLAGS) $< -o $@
+	$(MUSL_GCC) $(SELFTEST_CFLAGS) $(SELFTEST_LDFLAGS) $< -o $@
 
 $(SELFTEST_INIT): $(SELFTEST_DIR)/init.c $(SELFTEST_DIR)/kselftest.h \
-                  $(SELFTEST_DIR)/selftest.ld \
                   $(wildcard include/uapi/velvet/*.h)
 	@mkdir -p $(@D)
-	$(CC) $(SELFTEST_CFLAGS) $(SELFTEST_LDFLAGS) $< -o $@
+	$(MUSL_GCC) $(SELFTEST_CFLAGS) $(SELFTEST_LDFLAGS) $< -o $@
 
 # the makefile too, since what the archive is made from is written here,
 # and a change to that is a change make cannot otherwise see
@@ -436,7 +433,7 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/vmm $(T)/gdt \
              $(T)/ksyms $(T)/rtc $(T)/ramdisk $(T)/elf \
              $(T)/addrspace $(T)/process \
-             $(T)/syscall $(T)/tty $(T)/acpi $(T)/pci \
+             $(T)/tty $(T)/acpi $(T)/pci \
              $(T)/keyboard $(T)/serial \
              $(T)/fat32 $(T)/vfs $(T)/boot \
              $(T)/locks $(T)/path \
@@ -478,24 +475,14 @@ $(T)/rtc:      tests/test_rtc.c      drivers/rtc.c lib/epoch.c \
                sched/spinlock.c
 $(T)/process:  tests/test_process.c  sched/spinlock.c \
                fs/path.c sched/process.c sched/signal.c \
-               lib/env.c lib/string.c
+               lib/string.c
 $(T)/pci:      tests/test_pci.c      drivers/pci.c \
                lib/string.c
 $(T)/acpi:     tests/test_acpi.c     arch/x86_64/acpi.c \
                lib/string.c
 $(T)/tty:      tests/test_tty.c      sched/spinlock.c \
-               drivers/tty.c drivers/termios.c \
-               sched/process.c sched/signal.c lib/env.c lib/string.c
-# the real pipe, not a stub: what is under test here is that stdin and
-# stdout end up somewhere other than the terminal when a pipeline says
-# they should, and a stubbed pipe could only ever agree with itself
-$(T)/syscall:  tests/test_syscall.c  sched/spinlock.c \
-               fs/path.c arch/x86_64/syscall.c arch/x86_64/fpu.c \
-               arch/x86_64/uaccess.c fs/file.c fs/dev.c \
-               sched/process.c sched/signal.c lib/string.c \
-               lib/env.c \
-               fs/vfs.c fs/proc.c \
-               fs/pipe.c
+               drivers/tty.c drivers/termios.c arch/x86_64/uaccess.c \
+               sched/process.c sched/signal.c lib/string.c
 $(T)/elf:      tests/test_elf.c      fs/elf.c \
                lib/string.c
 $(T)/ramdisk:  tests/test_ramdisk.c  fs/ramdisk.c \
@@ -629,7 +616,7 @@ $(T)/ansi:     tests/test_ansi.c     drivers/ansi.c
 # what a terminal does about a key. the reading needs a machine and
 # the deciding does not, and the deciding is where ctrl+c arrives as
 # a signal or as the byte 0x03
-$(T)/termios:  tests/test_termios.c  drivers/termios.c
+$(T)/termios:  tests/test_termios.c  drivers/termios.c lib/string.c
 # the copies every subsystem makes, a word at a time where they can be,
 # held against a copy made a byte at a time at every alignment
 $(T)/string:   tests/test_string.c   lib/string.c

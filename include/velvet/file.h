@@ -13,6 +13,7 @@
 #include <stdbool.h>
 
 #include <velvet/vfs.h>
+#include <velvet/path.h>
 
 /* what a file was opened for, which no later call can widen */
 #define FILE_READ  1u
@@ -27,6 +28,8 @@ enum file_type {
     FILE_TYPE_PIPE,
     FILE_TYPE_TTY,
     FILE_TYPE_CHAR,             /* a device in /dev */
+    FILE_TYPE_DIR,              /* read with getdents64, not read */
+    FILE_TYPE_SOCKET,
 };
 
 struct file;
@@ -44,6 +47,10 @@ struct file_operations {
     int64_t (*seek)(struct file *p_file, int64_t i_offset, int i_whence);
     /* the last descriptor on it, in any process, has closed */
     void (*release)(struct file *p_file);
+    /* what a read or a write would do without waiting: POLLIN and the rest */
+    uint32_t (*poll)(struct file *p_file);
+    /* a request only this kind of file understands, u_arg as ring 3's */
+    int64_t (*ioctl)(struct file *p_file, uint32_t u_cmd, uint64_t u_arg);
 };
 
 /*
@@ -55,10 +62,13 @@ struct file {
     const struct file_operations *p_ops;
     uint32_t u_refs;            /* descriptors pointing here, anywhere */
     uint32_t u_mode;            /* FILE_READ and FILE_WRITE */
+    uint32_t u_flags;           /* O_APPEND and O_NONBLOCK, which fcntl sets */
     enum file_type e_type;
+    uint32_t u_rdev;            /* a device's number, major << 8 | minor */
     uint64_t u_pos;
 
     struct vfs_file node;       /* a file on a filesystem: where it lives */
+    char arr_path[PATH_MAX];    /* the name it was opened by, made absolute */
     void *p_private;            /* the pipe, for a pipe's end */
 };
 
@@ -70,6 +80,12 @@ struct file *file_alloc(const struct file_operations *p_ops, uint32_t u_mode,
                         enum file_type e_type);
 
 void file_get(struct file *p_file);
+
+/*
+ * a file put at the caller's lowest free descriptor below its limit,
+ * keeping the reference: which, or -EMFILE with the file let go of
+ */
+int64_t install_fd(struct file *p_file, bool b_cloexec);
 
 /*
  * one reference fewer, released with the last. never with a lock held:

@@ -9,7 +9,6 @@
 #include <velvet/sched.h>
 #include <velvet/thread.h>
 #include <asm/context.h>
-#include <velvet/input.h>
 #include <velvet/tty.h>
 #include <velvet/elf.h>
 #include <velvet/vfs.h>
@@ -25,14 +24,16 @@
 #include <velvet/file.h>
 #include <velvet/netif.h>
 #include <velvet/signal.h>
+#include <velvet/random.h>
+#include <velvet/errno.h>
 #include <asm/irq.h>
+#include <asm/uaccess.h>
+#include <uapi/velvet/auxvec.h>
 
 /* what a user thread needs to know before it stops being a kernel one. */
 struct user_start {
     uint64_t entry;
     uint64_t stack_top;
-    uint64_t argc;
-    uint64_t argv;      /* a user address, inside that same stack */
 };
 
 static void user_thread_start(void *arg)
@@ -40,8 +41,6 @@ static void user_thread_start(void *arg)
     struct user_start *u = arg;
     uint64_t entry = u->entry;
     uint64_t stack_top = u->stack_top;
-    uint64_t argc = u->argc;
-    uint64_t argv = u->argv;
     kfree(u);
 
     /*
@@ -50,99 +49,224 @@ static void user_thread_start(void *arg)
      * so a trap from ring 3 lands somewhere the kernel owns. everything below
      * this line is one way
      */
-    context_enter_user(entry, stack_top, argc, argv);
-}
-
-/* collect *everything* that has finished, whether anybody was going to ask about it or not. */
-static void reap_abandoned(void)
-{
-    /*
-     * collecting one renumbers the walk under the kernel, so finish and start
-     * over rather than trying to carry on from where the kernel was
-     */
-    bool collected_one = true;
-    while (collected_one) {
-        collected_one = false;
-        for (size_t i = 0; ; i++) {
-            const struct process *p = process_at(i);
-            if (p == NULL) {
-                break;
-            }
-            if (p->exited) {
-                /*
-                 * before the slot goes, since afterwards there is
-                 * nothing left to ask which pipes it was holding
-                 */
-                process_fds_release(p->pid);
-                net_socket_close_all(p->pid);
-                net_tcp_close_all(p->pid);
-                process_collect(p->pid, NULL);
-                collected_one = true;
-                break;
-            }
-        }
-    }
+    context_enter_user(entry, stack_top);
 }
 
 /*
- * lay the arguments out on the program's own stack, top downwards:
- * first the strings, then an array of pointers to them, then the stack
- * pointer it will start on.
- *
- * the kernel is writing into a stack that belongs to an address space nobody
- * has loaded yet, so every store goes through the direct map while
- * every *pointer* has to be the address the program will see. the two
- * run in lockstep, which is what user_addr() keeps straight.
+ * one vector of strings out of ring 3, appended to what is in p_buf: how
+ * many there were, or why not. the room counts a pointer for each as
+ * well as its bytes, as both will lie on the new program's stack
  */
-struct argblock {
-    uint64_t stack_top;     /* where rsp starts, 16-aligned */
-    uint64_t argv;          /* user address of the pointer array */
-    uint64_t argc;
+static int64_t copy_vector(uint64_t u_vec, char *p_buf, size_t *p_used,
+                           size_t *p_count, size_t sz_counted)
+{
+    if (u_vec == 0) {
+        return 0;
+    }
+    for (size_t sz_at = 0;; sz_at++) {
+        uint64_t u_str = 0;
+        if (get_user_u64(&u_str, u_vec + sz_at * 8) != 0) {
+            return -EFAULT;
+        }
+        if (u_str == 0) {
+            return 0;
+        }
+        size_t sz_pointers = (sz_counted + *p_count + 1) * 8;
+        if (*p_used + sz_pointers >= EXEC_ARGS_MAX) {
+            return -E2BIG;
+        }
+        size_t sz_room = EXEC_ARGS_MAX - sz_pointers - *p_used;
+        int64_t i_len = strncpy_from_user(p_buf + *p_used, u_str, sz_room);
+        if (i_len < 0) {
+            return (i_len == -ENAMETOOLONG) ? -E2BIG : i_len;
+        }
+        *p_used += (size_t)i_len + 1;
+        (*p_count)++;
+    }
+}
+
+/* pointers to the count strings lying one after another from p_from */
+static void point_at(const char **pp_out, char *p_from, size_t sz_count)
+{
+    for (size_t sz_at = 0; sz_at < sz_count; sz_at++) {
+        pp_out[sz_at] = p_from;
+        p_from += strlen(p_from) + 1;
+    }
+    pp_out[sz_count] = NULL;
+}
+
+int64_t exec_args_copy(uint64_t u_argv, uint64_t u_envp,
+                       struct exec_args *p_out)
+{
+    memset(p_out, 0, sizeof *p_out);
+    char *p_buf = kmalloc(EXEC_ARGS_MAX);
+    if (p_buf == NULL) {
+        return -ENOMEM;
+    }
+    size_t sz_used = 0;
+    size_t sz_argc = 0;
+    size_t sz_envc = 0;
+    int64_t i_why = copy_vector(u_argv, p_buf, &sz_used, &sz_argc, 0);
+    if (i_why == 0) {
+        i_why = copy_vector(u_envp, p_buf, &sz_used, &sz_envc, sz_argc);
+    }
+    const char **pp_vec = (i_why == 0)
+                          ? kmalloc((sz_argc + sz_envc + 2) * sizeof *pp_vec)
+                          : NULL;
+    if (i_why == 0 && pp_vec == NULL) {
+        i_why = -ENOMEM;
+    }
+    if (i_why < 0) {
+        kfree(p_buf);
+        return i_why;
+    }
+    point_at(pp_vec, p_buf, sz_argc);
+    char *p_env = p_buf;
+    for (size_t sz_at = 0; sz_at < sz_argc; sz_at++) {
+        p_env += strlen(p_env) + 1;
+    }
+    point_at(pp_vec + sz_argc + 1, p_env, sz_envc);
+
+    p_out->pp_argv = pp_vec;
+    p_out->sz_argc = sz_argc;
+    p_out->pp_envp = pp_vec + sz_argc + 1;
+    p_out->sz_envc = sz_envc;
+    p_out->p_strings = p_buf;
+    return 0;
+}
+
+void exec_args_free(struct exec_args *p_args)
+{
+    kfree(p_args->p_strings);
+    kfree((void *)p_args->pp_argv);
+    memset(p_args, 0, sizeof *p_args);
+}
+
+/* the auxiliary vector's entries, AT_NULL's included */
+#define AUX_PAIRS 18
+
+/* what the auxiliary vector says about the program and who runs it */
+struct aux_facts {
+    uint64_t u_entry;
+    uint64_t u_phdr;
+    uint64_t u_phnum;
+    int i_uid;
+    int i_gid;
 };
 
-/* the arguments go on the pages that exist before the program does. */
-static bool build_args(uint64_t stack_phys, int argc, const char *const argv[],
-                       struct argblock *out)
+/* the bytes a stack laid out for p_args needs, all of it */
+static size_t stack_need(const struct exec_args *p_args, const char *str_path)
 {
-    uint8_t *base_k = pmm_phys_to_virt(stack_phys);
-    uint8_t *top_k  = base_k + USER_STACK_EAGER * PAGE_SIZE;
-
-    /* the kernel address of a given user address inside this stack */
-    #define user_addr(va) (top_k - (USER_STACK_TOP - (va)))
-
-    uint64_t sp = USER_STACK_TOP;
-    uint64_t str_va[MAX_ARGS];
-
-    if (argc > MAX_ARGS) {
-        argc = MAX_ARGS;
+    size_t sz_bytes = strlen(str_path) + 1 + 16;
+    for (size_t sz_at = 0; sz_at < p_args->sz_argc; sz_at++) {
+        sz_bytes += strlen(p_args->pp_argv[sz_at]) + 1;
     }
-
-    /* the strings themselves, backwards so argv[0] ends up lowest */
-    for (int i = argc - 1; i >= 0; i--) {
-        uint64_t len = strlen(argv[i]) + 1;
-        if (sp - len <= USER_STACK_TOP - USER_STACK_EAGER * PAGE_SIZE + 256) {
-            return false;       /* it has to fit in what is mapped so far */
-        }
-        sp -= len;
-        memcpy(user_addr(sp), argv[i], len);
-        str_va[i] = sp;
+    for (size_t sz_at = 0; sz_at < p_args->sz_envc; sz_at++) {
+        sz_bytes += strlen(p_args->pp_envp[sz_at]) + 1;
     }
+    sz_bytes += (1 + p_args->sz_argc + 1 + p_args->sz_envc + 1
+                 + 2 * AUX_PAIRS) * 8;
+    return sz_bytes + 32;       /* the two alignments */
+}
 
-    /* then the array of pointers to them, aligned */
-    sp &= ~15ull;
-    sp -= (uint64_t)(argc + 1) * 8;
-    uint64_t *arr = (uint64_t *)user_addr(sp);
-    for (int i = 0; i < argc; i++) {
-        arr[i] = str_va[i];
+/*
+ * the stack a program starts on, as every x86_64 program expects to find
+ * it. from rsp up: argc, the argv pointers and a NULL, the envp pointers
+ * and a NULL, and the auxiliary vector ending in AT_NULL; above all of
+ * that the strings they point at, the path the program was run by, and
+ * sixteen bytes nobody could predict, for a libc's stack protector.
+ *
+ * written through the direct map into pages the new space does not have
+ * loaded yet, while every pointer is the address the program will see,
+ * which is what user_addr keeps straight. the stack pointer it starts
+ * on, 16-aligned
+ */
+static uint64_t build_stack(uint8_t *p_top_k, const struct exec_args *p_args,
+                            const char *str_path,
+                            const struct aux_facts *p_facts,
+                            struct addrspace *p_space)
+{
+    #define user_addr(va) (p_top_k - (USER_STACK_TOP - (va)))
+
+    uint64_t u_sp = USER_STACK_TOP;
+
+    size_t sz_len = strlen(str_path) + 1;
+    u_sp -= sz_len;
+    memcpy(user_addr(u_sp), str_path, sz_len);
+    uint64_t u_execfn = u_sp;
+
+    u_sp -= 16;
+    random_bytes(user_addr(u_sp), 16);
+    uint64_t u_random = u_sp;
+
+    /*
+     * the environment's strings and then the arguments', each set last
+     * first, so that from argv[0] up they lie in the order they are
+     * numbered, and the pointers can be worked out by walking them
+     */
+    p_space->u_env_end = u_sp;
+    for (size_t sz_at = p_args->sz_envc; sz_at-- > 0; ) {
+        sz_len = strlen(p_args->pp_envp[sz_at]) + 1;
+        u_sp -= sz_len;
+        memcpy(user_addr(u_sp), p_args->pp_envp[sz_at], sz_len);
     }
-    arr[argc] = 0;              /* the NULL every argv ends with */
+    p_space->u_env_start = u_sp;
+    for (size_t sz_at = p_args->sz_argc; sz_at-- > 0; ) {
+        sz_len = strlen(p_args->pp_argv[sz_at]) + 1;
+        u_sp -= sz_len;
+        memcpy(user_addr(u_sp), p_args->pp_argv[sz_at], sz_len);
+    }
+    uint64_t u_string = u_sp;
 
-    out->argv = sp;
-    out->argc = (uint64_t)argc;
-    out->stack_top = sp & ~15ull;   /* sysv wants rsp 16-aligned at entry */
+    uint64_t arr_aux[AUX_PAIRS * 2] = {
+        AT_PHDR,   p_facts->u_phdr,
+        AT_PHENT,  ELF_PHDR_SIZE,
+        AT_PHNUM,  p_facts->u_phnum,
+        AT_PAGESZ, PAGE_SIZE,
+        AT_BASE,   0,
+        AT_FLAGS,  0,
+        AT_ENTRY,  p_facts->u_entry,
+        AT_UID,    (uint64_t)p_facts->i_uid,
+        AT_EUID,   (uint64_t)p_facts->i_uid,
+        AT_GID,    (uint64_t)p_facts->i_gid,
+        AT_EGID,   (uint64_t)p_facts->i_gid,
+        AT_SECURE, 0,
+        AT_CLKTCK, 100,
+        AT_HWCAP,  0,
+        AT_RANDOM, u_random,
+        AT_EXECFN, u_execfn,
+        AT_IGNORE, 0,
+        AT_NULL,   0,
+    };
+
+    /*
+     * everything below the strings is words, and argc has to land on a
+     * sixteen byte boundary, so the gap goes above the words
+     */
+    size_t sz_words = 1 + p_args->sz_argc + 1 + p_args->sz_envc + 1
+                      + AUX_PAIRS * 2;
+    u_sp &= ~15ull;
+    if (sz_words % 2 != 0) {
+        u_sp -= 8;
+    }
+    u_sp -= sz_words * 8;
+
+    uint64_t *p_word = (uint64_t *)user_addr(u_sp);
+    *p_word++ = p_args->sz_argc;
+    for (size_t sz_at = 0; sz_at < p_args->sz_argc; sz_at++) {
+        *p_word++ = u_string;
+        u_string += strlen(p_args->pp_argv[sz_at]) + 1;
+    }
+    *p_word++ = 0;
+    for (size_t sz_at = 0; sz_at < p_args->sz_envc; sz_at++) {
+        *p_word++ = u_string;
+        u_string += strlen(p_args->pp_envp[sz_at]) + 1;
+    }
+    *p_word++ = 0;
+    memcpy(p_word, arr_aux, sizeof arr_aux);
 
     #undef user_addr
-    return true;
+    return u_sp;
 }
 
 /*
@@ -154,13 +278,29 @@ static bool build_args(uint64_t stack_phys, int argc, const char *const argv[],
 struct user_image {
     struct addrspace *p_space;
     uint64_t u_entry;
-    struct argblock args;
+    uint64_t u_stack_top;
 };
 
-static bool image_build(const char *str_path, int i_argc,
-                        const char *const pp_argv[],
-                        struct user_image *p_out, const char **pp_error)
+static int64_t image_build(const char *str_path,
+                           const struct exec_args *p_args, int i_uid,
+                           int i_gid, struct user_image *p_out,
+                           const char **pp_error)
 {
+    /*
+     * the stack has to hold all of it before the program has run an
+     * instruction, so what does not fit is refused before anything is
+     * read
+     */
+    size_t sz_need = stack_need(p_args, str_path);
+    size_t sz_eager = (sz_need + PAGE_SIZE - 1) / PAGE_SIZE + 1;
+    if (sz_eager < USER_STACK_EAGER) {
+        sz_eager = USER_STACK_EAGER;
+    }
+    if (sz_eager > USER_STACK_PAGES / 4) {
+        *pp_error = "those arguments do not fit on a stack";
+        return -E2BIG;
+    }
+
     /*
      * a program off the ramdisk is already in memory and is used where
      * it lies; one off the disk has to be read in first, and `owned`
@@ -171,15 +311,18 @@ static bool image_build(const char *str_path, int i_argc,
     bool owned = false;
     if (!vfs_slurp(str_path, &image, &image_size, &owned)) {
         *pp_error = "no such file";
-        return false;
+        return -ENOENT;
     }
 
     const char *bad = NULL;
     if (!elf_is_loadable(image, image_size, &bad)) {
         vfs_release(image, owned);
         *pp_error = bad;
-        return false;
+        return -ENOEXEC;
     }
+
+    struct aux_facts facts = { .i_uid = i_uid, .i_gid = i_gid };
+    elf_headers_at(image, image_size, &facts.u_phdr, &facts.u_phnum);
 
     /*
      * its own memory. two programs can now link to the same addresses
@@ -189,7 +332,7 @@ static bool image_build(const char *str_path, int i_argc,
     if (space == NULL) {
         vfs_release(image, owned);
         *pp_error = "no memory for an address space";
-        return false;
+        return -ENOMEM;
     }
 
     /*
@@ -219,7 +362,7 @@ static bool image_build(const char *str_path, int i_argc,
         vfs_release(image, owned);
         addrspace_destroy(space);
         *pp_error = why;
-        return false;
+        return -ENOEXEC;
     }
 
     /*
@@ -238,7 +381,7 @@ static bool image_build(const char *str_path, int i_argc,
             vfs_release(image, owned);
             addrspace_destroy(space);
             *pp_error = "no room to describe the program";
-            return false;
+            return -ENOMEM;
         }
     }
 
@@ -260,8 +403,9 @@ static bool image_build(const char *str_path, int i_argc,
     if (!loaded.ok) {
         addrspace_destroy(space);
         *pp_error = (loaded.error != NULL) ? loaded.error : why;
-        return false;
+        return -ENOEXEC;
     }
+    facts.u_entry = loaded.entry;
 
     /* the break starts on the page after the last segment, and grows up */
     space->u_brk_start = (loaded.brk + PAGE_SIZE - 1)
@@ -276,42 +420,41 @@ static bool image_build(const char *str_path, int i_argc,
                               stack_flags, VMA_ANON, NULL, 0, 0)) {
         addrspace_destroy(space);
         *pp_error = "no room to describe a stack";
-        return false;
+        return -ENOMEM;
     }
 
-    uint64_t eager_base = USER_STACK_TOP - USER_STACK_EAGER * PAGE_SIZE;
-    uint64_t stack_phys = pmm_alloc_pages(USER_STACK_EAGER);
+    uint64_t eager_base = USER_STACK_TOP - sz_eager * PAGE_SIZE;
+    uint64_t stack_phys = pmm_alloc_pages(sz_eager);
     if (stack_phys == 0) {
         addrspace_destroy(space);
         *pp_error = "no memory for a user stack";
-        return false;
+        return -ENOMEM;
     }
-    memset(pmm_phys_to_virt(stack_phys), 0, USER_STACK_EAGER * PAGE_SIZE);
+    memset(pmm_phys_to_virt(stack_phys), 0, sz_eager * PAGE_SIZE);
 
     if (!vmm_map_range(space->pml4, eager_base, stack_phys,
-                       USER_STACK_EAGER * PAGE_SIZE, stack_flags)) {
-        pmm_free_pages(stack_phys, USER_STACK_EAGER);
+                       sz_eager * PAGE_SIZE, stack_flags)) {
+        pmm_free_pages(stack_phys, sz_eager);
         addrspace_destroy(space);
         *pp_error = "could not map a user stack";
-        return false;
+        return -ENOMEM;
     }
 
-    if (!build_args(stack_phys, i_argc, pp_argv, &p_out->args)) {
-        addrspace_destroy(space);   /* which owns the stack by now */
-        *pp_error = "those arguments do not fit on a stack";
-        return false;
-    }
+    uint8_t *p_top_k = (uint8_t *)pmm_phys_to_virt(stack_phys)
+                       + sz_eager * PAGE_SIZE;
+    p_out->u_stack_top = build_stack(p_top_k, p_args, str_path, &facts,
+                                     space);
     p_out->p_space = space;
     p_out->u_entry = loaded.entry;
-    return true;
+    return 0;
 }
 
-int user_spawn(const char *path, int argc, const char *const argv[],
+int user_spawn(const char *path, const struct exec_args *p_args,
                const char *cwd, int parent, int uid, bool announce,
                const char **error)
 {
     struct user_image img;
-    if (!image_build(path, argc, argv, &img, error)) {
+    if (image_build(path, p_args, uid, uid, &img, error) < 0) {
         return 0;
     }
     struct addrspace *space = img.p_space;
@@ -323,9 +466,7 @@ int user_spawn(const char *path, int argc, const char *const argv[],
     }
 
     start->entry     = img.u_entry;
-    start->stack_top = img.args.stack_top;
-    start->argc      = img.args.argc;
-    start->argv      = img.args.argv;
+    start->stack_top = img.u_stack_top;
 
     /*
      * the process comes first, because it is what outlives the thread
@@ -333,41 +474,36 @@ int user_spawn(const char *path, int argc, const char *const argv[],
      */
     /* a program cannot ask to be somebody else: it runs as who started it */
     int pid = process_create(path, parent, uid, announce, pit_uptime_ms());
-    if (pid == 0) {
-        /*
-         * full. init collects orphans on its own schedule and a parent
-         * its own children, so anything still sitting here is something
-         * somebody may yet ask about, but a machine that cannot start a
-         * program is worse than one that lost an exit code, so this
-         * takes the lot and tries once more
-         */
-        reap_abandoned();
-        pid = process_create(path, parent, uid, announce, pit_uptime_ms());
-    }
 
     /* wherever whoever started it was standing. */
     if (pid != 0 && cwd != NULL) {
         process_set_cwd(pid, cwd);
     }
-
-    /* the environment it was born holding, which is its parent's. */
-    if (pid != 0 && parent != 0) {
-        static char inherited[PROC_ENV_MAX];
-        size_t n = process_get_env(parent, inherited, sizeof inherited);
-        process_set_env(pid, inherited, n);
-    }
-    if (pid == 0) {
+    struct file *p_console = (pid != 0) ? tty_open(0, FILE_READ | FILE_WRITE)
+                                        : NULL;
+    if (p_console == NULL) {
+        if (pid != 0) {
+            process_exited(pid, PROCESS_KILLED, pit_uptime_ms());
+            process_collect(pid, NULL);
+        }
         kfree(start);
         addrspace_destroy(space);
-        *error = "the process table is full";
+        *error = (pid == 0) ? "the process table is full"
+                            : "no memory for a terminal";
         return 0;
     }
 
-    /* a program the kernel starts reads and writes the console */
+    /*
+     * a program the kernel starts reads and writes the first console,
+     * one open of it on all three, as though it had opened it once and
+     * duplicated that twice
+     */
     for (int i_fd = FD_STDIN; i_fd <= FD_STDERR; i_fd++) {
         struct file *p_old = NULL;
-        process_fd_replace(pid, i_fd, tty_console_file(), false, &p_old);
+        file_get(p_console);
+        process_fd_replace(pid, i_fd, p_console, false, &p_old);
     }
+    file_put(p_console);
 
     /*
      * parked, not running.
@@ -383,10 +519,9 @@ int user_spawn(const char *path, int argc, const char *const argv[],
      */
     struct thread *t = thread_create_parked(path, user_thread_start, start);
     if (t == NULL) {
-        int ignored;
         process_exited(pid, PROCESS_KILLED, pit_uptime_ms());
         process_fds_release(pid);
-        process_collect(pid, &ignored);
+        process_collect(pid, NULL);
         kfree(start);
         addrspace_destroy(space);
         *error = "no memory for a thread";
@@ -403,19 +538,24 @@ int user_spawn(const char *path, int argc, const char *const argv[],
     return pid;
 }
 
-bool user_exec(const char *str_path, int i_argc, const char *const pp_argv[],
-               struct user_entry *p_out, const char **pp_error)
+int64_t user_exec(const char *str_path, const struct exec_args *p_args,
+                  struct user_entry *p_out)
 {
     struct thread *p_me = sched_current();
     if (p_me == NULL || p_me->pid == 0 || p_me->space == NULL) {
-        *pp_error = "only a program can become another one";
-        return false;
+        return -EPERM;
     }
+    const struct process *p_proc = process_find(p_me->pid);
+    int i_uid = (p_proc != NULL) ? p_proc->uid : 0;
+    int i_gid = (p_proc != NULL) ? p_proc->i_gid : 0;
 
     /* everything that can fail, done while the old program is still whole */
     struct user_image img;
-    if (!image_build(str_path, i_argc, pp_argv, &img, pp_error)) {
-        return false;
+    const char *str_why = NULL;
+    int64_t i_why = image_build(str_path, p_args, i_uid, i_gid, &img,
+                                &str_why);
+    if (i_why < 0) {
+        return i_why;
     }
 
     /*
@@ -430,17 +570,15 @@ bool user_exec(const char *str_path, int i_argc, const char *const pp_argv[],
     addrspace_destroy(p_old);
 
     signal_exec(process_signal_state(p_me->pid));
+    process_vfork_done(p_me->pid);
     process_set_name(p_me->pid, str_path);
     thread_set_name(p_me, str_path);
 
     p_out->u_entry = img.u_entry;
-    p_out->u_stack_top = img.args.stack_top;
-    p_out->u_argc = img.args.argc;
-    p_out->u_argv = img.args.argv;
-    return true;
+    p_out->u_stack_top = img.u_stack_top;
+    return 0;
 }
 
-/* wait for a pid, however it ends. */
 /*
  * collect a process that has ended, letting go of its pipes first. a
  * killed one leaves them for the reaper, and a parent that collects it

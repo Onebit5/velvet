@@ -44,6 +44,12 @@ void epoch_start(uint64_t seconds_at_boot);
 
 uint64_t epoch_now(void);
 
+/* the same in ms, which is as fine as the timer counts */
+uint64_t epoch_now_ms(void);
+
+/* the time now is this, from now on: boot is moved to agree */
+void epoch_set_ms(uint64_t u_now_ms);
+
 bool epoch_known(void);
 
 #endif

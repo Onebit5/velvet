@@ -25,7 +25,7 @@ struct socket_datagram {
 
 struct socket {
     bool     used;
-    int      owner;             /* the pid, so a dead program's ports go */
+    int      owner;             /* the socket file it belongs to */
     uint16_t port;
 
     struct socket_datagram q[SOCKET_QUEUE];
@@ -42,17 +42,12 @@ void socket_table_reset(struct socket_table *t);
 int socket_open(struct socket_table *t, int owner, uint16_t port);
 
 bool socket_close(struct socket_table *t, int owner, int handle);
-void socket_close_all(struct socket_table *t, int owner);
 
 /*
  * a datagram arrived. returns *which* socket took it, or -1 when
  * nothing had that port open, which is ordinary and is not an error
- * worth reporting anywhere.
- *
- * it returns the index rather than a yes/no because there
- * is somebody to wake, and the caller needs to know whose queue to
- * knock on. a socket whose queue was full is still named: nothing was
- * added, so nobody is woken, but the datagram did reach a socket
+ * worth reporting anywhere. a socket whose queue was full is still
+ * named: nothing was added, but the datagram did reach a socket
  */
 int socket_deliver(struct socket_table *t, uint16_t to_port, ipv4 from,
                    uint16_t from_port, const void *data, size_t len);

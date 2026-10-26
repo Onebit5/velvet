@@ -128,7 +128,6 @@ const char *init_state_name(enum service_state s)
 #include <velvet/spinlock.h>
 #include <velvet/console.h>
 #include <velvet/pit.h>
-#include <velvet/tty.h>
 #include <asm/machine.h>
 #include <asm/cpu.h>
 #include <velvet/disk.h>
@@ -336,7 +335,8 @@ static void supervise(void)
 void init_stop_machine(enum init_stop how)
 {
     stop_how     = (int)how;
-    stop_console = tty_my_console();
+    struct thread *p_me = sched_current();
+    stop_console = (p_me != NULL) ? p_me->console : 0;
     stop_pending = true;
     sched_wake_thread(init_tid);
 
@@ -501,12 +501,7 @@ static void init_thread(void *arg)
         }
     }
 
-    /*
-     * and only now, with the flusher there before anybody can write. in
-     * front of console 0, so what it says before it has taken a console
-     * of its own reaches the screen rather than nowhere
-     */
-    tty_set_foreground(INIT_PID);
+    /* and only now, with the flusher there before anybody can write */
     user_start(INIT_PID);
 
     for (;;) {
@@ -523,8 +518,9 @@ static void init_thread(void *arg)
          */
         const struct process *p_init = process_find(INIT_PID);
         if (p_init == NULL || p_init->exited) {
-            panic("%s ended, with %d, and there is no other init",
-                  INIT_PROGRAM, p_init != NULL ? p_init->exit_code : -1);
+            panic("%s ended, with status 0x%x, and there is no other init",
+                  INIT_PROGRAM,
+                  p_init != NULL ? (unsigned)p_init->i_wait_status : 0u);
         }
         supervise();
     }
@@ -545,10 +541,18 @@ bool init_boot(void)
         return false;
     }
 
-    const char *arr_argv[1] = { INIT_PROGRAM };
+    /*
+     * where it is and what it is talking to are all it is told: anything
+     * else in its environment is its own to decide
+     */
+    static const char *const s_arr_argv[] = { INIT_PROGRAM, NULL };
+    static const char *const s_arr_envp[] = { "HOME=/", "TERM=linux", NULL };
+    const struct exec_args args = {
+        .pp_argv = s_arr_argv, .sz_argc = 1,
+        .pp_envp = s_arr_envp, .sz_envc = 2,
+    };
     const char *str_why = NULL;
-    int pid = user_spawn(INIT_PROGRAM, 1, arr_argv, "/", 0, 0, true,
-                         &str_why);
+    int pid = user_spawn(INIT_PROGRAM, &args, "/", 0, 0, true, &str_why);
     if (pid != INIT_PID) {
         kprintf("init: %s would not start: %s\n", INIT_PROGRAM,
                 str_why != NULL ? str_why : "it was not pid 1");

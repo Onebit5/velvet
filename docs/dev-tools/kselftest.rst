@@ -6,11 +6,13 @@ each one is a small program that exercises one path through the kernel
 from ring 3, and checks what comes back against what the kernel promises a
 program. they run on a booted kernel, the way any program does.
 
-a selftest sees the kernel from where a program does. it is compiled with
-``-nostdinc`` against ``include/uapi/`` and the compiler's freestanding
-headers, and nothing else, so it can rely on the abi and on nothing behind
-it. that is what makes the selftests the abi's own record, and why a
-failing one is read the way `what a failing selftest means`_ says.
+a selftest sees the kernel from where a program does. it is an ordinary
+static program, built with musl, a libc that has never heard of this
+kernel and calls it the way it calls any kernel on x86_64. so it can rely
+on the abi and on nothing behind it, and every libc call it makes is a
+check that the abi is the one programs expect. that is what makes the
+selftests the abi's own record, and why a failing one is read the way
+`what a failing selftest means`_ says.
 
 running the selftests
 ---------------------
@@ -26,8 +28,15 @@ carries them under ``selftests/``, and its ``/init`` is what runs them. so
 ``make kselftest`` builds whatever is out of date, boots the image headless
 in qemu, answers the question ``/init`` asks with the tests to run, and
 reads the results back off the serial port. ``/init`` says when each test
-starts and how it ended, and powers the machine off after the last. qemu
-is the one thing it needs beyond the build.
+starts and how it ended, and powers the machine off after the last.
+
+beyond the build it needs qemu and ``musl-gcc``: from the distribution,
+``musl-tools`` on debian and ubuntu and ``musl-gcc`` on fedora, or from a
+musl built anywhere, named with ``MUSL_GCC``:
+
+.. code-block:: sh
+
+   make kselftest MUSL_GCC=$HOME/musl/bin/musl-gcc
 
 the results are one TAP 13 stream, each test's own TAP under it as ``#``
 lines:
@@ -39,11 +48,15 @@ lines:
    # timeout set to 30
    # selftests: sched: wait
    # TAP version 13
-   # 1..3
-   # ok 1 exit(42) reaches the parent as 42
-   # ok 2 a child ended by SIGTERM reaches the parent as 128 + 15
-   # ok 3 wait refuses a pid that is not the caller's child
-   # # Totals: pass:3 fail:0 xfail:0 xpass:0 skip:0 error:0
+   # 1..7
+   # ok 1 exit(42) reaches the parent as an exit with 42
+   # ok 2 WNOHANG says nothing has happened yet
+   # ok 3 a child ended by SIGTERM reaches it as that signal
+   # ok 4 wait refuses a pid that is not the caller's child
+   # ok 5 SIGCHLD under SA_RESTART leaves the wait whole
+   # ok 6 a child of a parent ignoring SIGCHLD is collected for it
+   # ok 7 and with none left, any child is none
+   # # Totals: pass:7 fail:0 xfail:0 xpass:0 skip:0 error:0
    ok 1 selftests: sched: wait
    # Totals: pass:1 fail:0
 
@@ -55,7 +68,8 @@ the tests run as guest, uid 1000, the account the kernel does the least
 for. ``/init`` puts each in a group of its own, in front of the console,
 and becomes guest in it before the test starts. a test can do only what
 any logged-in user could, and a promise the kernel keeps to a guest it
-keeps to everybody.
+keeps to everybody. before the first test ``/init`` makes ``/tmp`` on the
+disk, mode 1777, as somewhere a guest may make files of its own.
 
 the machine has a second drive: a copy of ``disk.img``, the disk ``make
 run`` boots, with the system mounted at ``/`` and a work filesystem at
@@ -130,8 +144,7 @@ contributing new tests
 in general, the rules for selftests are:
 
 - test what a program can see. a test includes ``kselftest.h`` and the
-  uapi headers, the ``<velvet/...>`` ones under ``include/uapi/``, and
-  nothing from inside the kernel.
+  libc's headers, and nothing from inside the kernel.
 - do everything as guest. ``/init`` never runs a test as anybody else.
 - don't take long: a few seconds, and never near the 30.
 - leave nothing behind: wait for every child the test forks, and end with
@@ -153,14 +166,12 @@ contributing new tests (details)
   ``selftests/<subsystem>/<test>``. a new directory is a new target.
   ``init.c``, above the directories, is not a test but the ``/init`` that
   runs them, built the same way.
-- a test defines ``main`` and includes ``../kselftest.h``, which brings
-  ``_start``. what ``main`` returns is the exit status, though a test ends
-  with ``ksft_finished()``, which exits with the right one.
-- it is freestanding: no libc, and built with ``-mno-sse``, so no floating
-  point either. ``selftest.ld`` links it at 0x400000, where a program
-  lives. gcc may still emit a call to ``memcpy`` or ``memset`` for a large
-  initialiser and there is nothing for it to link against, so local arrays
-  stay small.
+- a test defines ``main`` and includes ``../kselftest.h``. it ends with
+  ``ksft_finished()``, which exits with the right status.
+- it is linked static against musl, so the whole of a libc is there. its
+  results go through ``kselftest.h`` rather than stdio, which writes each
+  line with one ``write``: a test forks, and a buffer a child inherits
+  would be printed twice.
 - a result's name says what the kernel promises, not what the test did:
   ``exit(42) reaches the parent as 42``, rather than ``test exit``.
 - a diagnostic goes before the result it explains, through
@@ -192,43 +203,40 @@ reporting
    ran and was ok, ``KSFT_FAIL`` otherwise, with a note when the number
    run is not the number planned.
 
-the formats take ``%s``, ``%d``, ``%u`` and ``%x``, an ``l`` in front for
-the 64-bit ones, and ``%%``. each line is written with one call, so it
-reaches the serial port whole even when the kernel prints something at the
-same moment.
+the formats are printf's. each line is built whole and written with one
+call, so it reaches the serial port whole even when the kernel prints
+something at the same moment.
 
 ``KSFT_PASS`` (0), ``KSFT_FAIL`` (1) and ``KSFT_SKIP`` (4) are the exit
 codes. nothing skips yet.
 
-the calls
-~~~~~~~~~
+helpers
+~~~~~~~
 
-each is one syscall and nothing more, so what a test exercises is the
-kernel and not a library in front of it: ``write(fd, buf, len)``,
-``exit(code)``, ``fork()``, ``wait(pid, &status)``, ``getpid()``,
-``sigsend(pid, sig)``, ``sleep_ms(ms)``, ``open(path)``,
-``read(fd, buf, len)``, ``close(fd)``, ``readdir(path, index, buf,
-size)``, which puts the name of a directory's entry ``index`` in ``buf``,
-a directory's with a ``/`` after it, and returns -1 past the last,
-``execv(path, argv)``, which keeps the caller's environment,
-``pipe(fds)``, ``dup2(from, to)``, ``setpgid(pid, pgid)``,
-``tcgetpgrp()``, ``tcsetpgrp(pgid)`` and
-``klogctl(type, buf, len)``, the ``syslog`` call under the name a C
-library gives it.
-``ksft_memeq(a, b, len)`` and ``ksft_streq(a, b)`` compare bytes and
-strings, which a test without a libc would otherwise write each time.
-``ksft_read_file(path, buf, size)`` reads a whole file, up to ``size``
-bytes, and returns its length, or -1 when it would not open, and
-``ksft_contains(text, len, needle)`` says whether ``needle`` is somewhere
-in the first ``len`` bytes of ``text``: between them, a check of what a
-file in ``/proc`` says.
+everything else a test does is the libc's: ``fork``, ``waitpid``,
+``kill``, ``sigaction``, ``open``, ``mmap`` and the rest, under the names
+every program uses. a call the libc has no wrapper for is
+``syscall(SYS_name, ...)``, by the numbers in ``<sys/syscall.h>``. beside
+them, ``kselftest.h`` has the few things tests kept writing:
 
-``wait`` puts how the child ended in ``status``: what it passed to
-``exit``, or 128 plus the signal that ended it. ``waitpid(pid, &status,
-flags)`` is the same call with flags, ``WNOHANG`` and ``WUNTRACED``, and
--1 for any child. any other call is made
-with ``ksft_syscall(nr, a0, a1, a2)`` and its number from
-``<velvet/syscall.h>``, or ``ksft_syscall5`` for one that takes five.
+``ksft_streq(a, b)``
+   whether two strings are the same.
+
+``ksft_read_file(path, buf, size)``
+   reads a whole file, up to ``size`` bytes, and returns its length, or
+   -1 when it would not open.
+
+``ksft_contains(text, len, needle)``
+   whether ``needle`` is somewhere in the first ``len`` bytes of
+   ``text``. with ``ksft_read_file``, a check of what a file in ``/proc``
+   says.
+
+``ksft_sleep_ms(ms)``
+   a pause that a signal does not cut short.
+
+``ksft_exited(status, code)`` and ``ksft_killed_by(status, sig)``
+   whether a wait status says the child exited with ``code``, or was
+   ended by ``sig``.
 
 example
 -------
@@ -246,27 +254,23 @@ a whole test, with one result:
 
    #include "../kselftest.h"
 
-   int main(int i_argc, char **pp_argv)
+   int main(void)
    {
        int i_status = -1;
-       int i_pid;
 
-       (void)i_argc;
-       (void)pp_argv;
        ksft_print_header();
        ksft_set_plan(1);
 
-       i_pid = fork();
+       pid_t i_pid = fork();
        if (i_pid == 0) {
-           exit(7);
+           _exit(7);
        }
-       if (i_pid > 0) {
-           wait(i_pid, &i_status);
+       waitpid(i_pid, &i_status, 0);
+       if (!ksft_exited(i_status, 7)) {
+           ksft_print_msg("wanted an exit with 7, read 0x%x\n", i_status);
        }
-       if (i_status != 7) {
-           ksft_print_msg("wanted 7, read %d\n", i_status);
-       }
-       ksft_test_result(i_status == 7, "exit(7) reaches the parent as 7\n");
+       ksft_test_result(ksft_exited(i_status, 7),
+                        "exit(7) reaches the parent as an exit with 7\n");
        ksft_finished();
    }
 

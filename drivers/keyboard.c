@@ -18,11 +18,15 @@
 #define KBD_STATUS 0x64
 #define KBD_IRQ    1
 
-/* scancode set 1 -> ascii, the kernel layout. */
+/*
+ * scancode set 1 -> ascii, the kernel layout. backspace is DEL and enter
+ * is a carriage return, what a pc console has always sent: the terminal
+ * makes the return a newline unless a program asked it not to
+ */
 
 static const char keymap[128] = {
-    0,  27, '1','2','3','4','5','6','7','8','9','0','-','=','\b',
-    '\t','q','w','e','r','t','y','u','i','o','p','[',']','\n',
+    0,  27, '1','2','3','4','5','6','7','8','9','0','-','=',0x7f,
+    '\t','q','w','e','r','t','y','u','i','o','p','[',']','\r',
     0,  /* lctrl */
     'a','s','d','f','g','h','j','k','l',';','\'','`',
     0,  /* lshift */
@@ -35,8 +39,8 @@ static const char keymap[128] = {
 };
 
 static const char keymap_shift[128] = {
-    0,  27, '!','@','#','$','%','^','&','*','(',')','_','+','\b',
-    '\t','Q','W','E','R','T','Y','U','I','O','P','{','}','\n',
+    0,  27, '!','@','#','$','%','^','&','*','(',')','_','+',0x7f,
+    '\t','Q','W','E','R','T','Y','U','I','O','P','{','}','\r',
     0,
     'A','S','D','F','G','H','J','K','L',':','"','~',
     0,

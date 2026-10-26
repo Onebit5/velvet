@@ -54,11 +54,12 @@ the failing case. all of them:
    the allocators and the page tables, including draining ram dry, every
    frame handed out exactly once, and a leak-free teardown.
 
-``locks``, ``switch``, ``process``, ``syscall``, ``signal``, ``init``
+``locks``, ``switch``, ``process``, ``signal``, ``init``
    eight real threads through the real allocators at once; a real context
    switch in userspace; pids, zombies, file descriptors and a kill that
-   races; the syscall layer refusing every bad pointer; signals; and what
-   init decides about a service that keeps dying.
+   races; signals; and what init decides about a service that keeps
+   dying. the system calls themselves are checked from where a program
+   makes them, by the selftests below.
 
 ``gdt``, ``rtc``, ``acpi``, ``pci``, ``console``, ``keyboard``, ``serial``, ``mouse``, ``ksyms``, ``epoch``
    the x86 structures and the drivers, fed fabricated input. a machine's

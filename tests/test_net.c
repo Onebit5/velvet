@@ -451,18 +451,6 @@ int main(void)
     CHECK(socket_close(&st, 7, h), "the owner can");
     CHECK(socket_open(&st, 7, 5000) >= 0, "and the port is free again");
 
-    /* and everything a program held goes when it does */
-    socket_table_reset(&st);
-    for (int i = 0; i < 3; i++) {
-        CHECK(socket_open(&st, 7, (uint16_t)(6000 + i)) >= 0, "three ports");
-    }
-    CHECK(socket_open(&st, 9, 7000) >= 0, "and one belonging to somebody else");
-    socket_close_all(&st, 7);
-    CHECK(socket_open(&st, 8, 6000) >= 0 && socket_open(&st, 8, 6001) >= 0,
-          "a dead program's ports are free again");
-    CHECK(socket_open(&st, 8, 7000) < 0,
-          "and the other program still has its own");
-
     /* the table filling */
     socket_table_reset(&st);
     for (int i = 0; i < SOCKET_MAX; i++) {

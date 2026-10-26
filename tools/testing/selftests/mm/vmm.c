@@ -7,26 +7,27 @@
 
 #include "../kselftest.h"
 
-int main(int i_argc, char **pp_argv)
+#include <dirent.h>
+
+int main(void)
 {
-    char arr_name[64];
     bool b_listed = false;
 
-    (void)i_argc;
-    (void)pp_argv;
     ksft_print_header();
     ksft_set_plan(2);
 
-    for (size_t sz_at = 0; readdir("/proc", sz_at, arr_name,
-                                   sizeof arr_name) >= 0; sz_at++) {
-        if (ksft_streq(arr_name, "vmm")) {
-            b_listed = true;
-        }
+    DIR *p_dir = opendir("/proc");
+    for (struct dirent *p_ent; p_dir != NULL
+                               && (p_ent = readdir(p_dir)) != NULL; ) {
+        b_listed |= ksft_streq(p_ent->d_name, "vmm");
+    }
+    if (p_dir != NULL) {
+        closedir(p_dir);
     }
     ksft_test_result(b_listed, "/proc/vmm is there to be seen\n");
 
     /* the tests run as guest, and where the kernel keeps things is root's */
-    ksft_test_result(open("/proc/vmm") < 0,
+    ksft_test_result(open("/proc/vmm", O_RDONLY) < 0 && errno == EACCES,
                      "but a guest may not read the page tables\n");
     ksft_finished();
 }

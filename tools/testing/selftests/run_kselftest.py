@@ -200,7 +200,8 @@ def run(image, tests, timeout, log, disk):
             continue
 
         ended = re.compile(rb"init: selftests/" + mark +
-                           rb" (?:ended with (-?\d+)|ran out of)")
+                           rb" (?:ended with (-?\d+)|ended by signal (\d+)"
+                           rb"|ran out of)")
         # /init kills a test at the timeout; this is for an /init that
         # never says so
         end = m.expect(ended, start, timeout + 15)
@@ -232,7 +233,11 @@ def run(image, tests, timeout, log, disk):
         for l in tap:
             print("# " + l)
         at = end
-        if told.group(1) is None:
+        if told.group(2) is not None:
+            print("not ok %d %s # %s" % (n, name, why or "ended by signal %s"
+                                         % told.group(2).decode()))
+            failed += 1
+        elif told.group(1) is None:
             print("not ok %d %s # TIMEOUT %d seconds" % (n, name, timeout))
             failed += 1
         elif why or told.group(1) != b"0":

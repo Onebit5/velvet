@@ -166,11 +166,27 @@ its netmask and its router.
 ``bool net_arp_request(ipv4 who);``
     ask who has an address, whether or not anything wants to send yet
 
-``int64_t net_socket_wait(int owner, int handle, ipv4 *from, uint16_t *from_port, void *out, size_t max, int64_t timeout_ms);``
-    the same, but park the thread until something arrives.
+``size_t net_socket_pending(int owner, int handle);``
+    how many datagrams are waiting on a socket. nothing here waits: the
+    socket files in ``net/sockets.c`` look again, and a signal ends their
+    wait the way it ends any other.
 
-``size_t net_socket_ready(int owner, const int *handles, size_t count, int64_t timeout_ms, bool *ready);``
-    wait until one of several sockets has something, which is what every server is.
+``int64_t net_tcp_recv(int owner, int handle, void *out, size_t max);``
+    what has arrived, up to max: how much, 0 at the end of the stream, or
+    -1 for nothing yet.
+
+``int net_tcp_error(int owner, int handle);``
+    why a connection ended, as an errno, or 0 while it has not.
+
+``bool net_tcp_give(int owner, int handle, int new_owner);``
+    a connection handed to another owner, as accept hands one to the new
+    socket file it makes.
+
+``int64_t net_tcp_waiting(int owner, int handle);``
+    bytes received and not yet read, which is ``FIONREAD``.
+
+``bool net_tcp_ends(int owner, int handle, ipv4 *local, uint16_t *local_port, ipv4 *remote, uint16_t *remote_port);``
+    the addresses and ports at either end, for getsockname and getpeername.
 
 ``int net_tcp_connect(ipv4 to, uint16_t port);``
     connections live in a fixed table here, driven by the poll thread.

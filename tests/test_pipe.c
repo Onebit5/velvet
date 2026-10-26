@@ -199,11 +199,12 @@ int main(void)
     pipe_put(&p, "left over\n", 10);
     p.writers = 0;              /* the writer has gone */
 
-    CHECK(pipe_read(&p, 1, out, sizeof out) == 10,
+    CHECK(pipe_read(&p, 1, out, sizeof out, false) == 10,
           "what was already written is still readable after the writer goes");
-    CHECK(pipe_read(&p, 1, out, sizeof out) == 0,
+    CHECK(pipe_read(&p, 1, out, sizeof out, false) == 0,
           "and then it reads zero, which is end of file");
-    CHECK(pipe_read(&p, 1, out, sizeof out) == 0, "every time after, too");
+    CHECK(pipe_read(&p, 1, out, sizeof out, false) == 0,
+          "every time after, too");
 
     /* that ordering is the whole thing. */
 
@@ -211,7 +212,7 @@ int main(void)
 
     pipe_reset(&p);
     p.readers = 0;
-    CHECK(pipe_write(&p, 1, "nobody is listening", 19) == -EPIPE,
+    CHECK(pipe_write(&p, 1, "nobody is listening", 19, false) == -EPIPE,
           "writing with no reader left fails rather than filling a buffer");
 
     /* a write that got partway before the reader left reports what it managed. */
@@ -222,10 +223,10 @@ int main(void)
     pipe_put(&p, big, PIPE_BUF - 4);        /* nearly full already */
     {
         /* fill the last four, then the reader vanishes */
-        int64_t n = pipe_write(&p, 1, big, 4);
+        int64_t n = pipe_write(&p, 1, big, 4, false);
         CHECK(n == 4, "a write that exactly fills the pipe returns");
         p.readers = 0;
-        CHECK(pipe_write(&p, 1, big, 4) == -EPIPE,
+        CHECK(pipe_write(&p, 1, big, 4, false) == -EPIPE,
               "and the next one has nowhere to go");
     }
 
@@ -235,7 +236,7 @@ int main(void)
     sleeps = 0;
     wakes = 0;
     pipe_put(&p, big, PIPE_BUF);
-    CHECK(pipe_write(&p, 1, big, 100) == 100,
+    CHECK(pipe_write(&p, 1, big, 100, false) == 100,
           "a write into a full pipe waits for room and then completes");
     CHECK(sleeps > 0, "having really slept rather than spun");
     CHECK(wakes > 0, "and woken the reader when it put something in");
@@ -244,7 +245,7 @@ int main(void)
     /* an interrupt gets a blocked reader out. */
     pipe_reset(&p);
     interrupt_pending = true;
-    CHECK(pipe_read(&p, 1, out, sizeof out) == -EINTR,
+    CHECK(pipe_read(&p, 1, out, sizeof out, false) == -EINTR,
           "an interrupted read gives up rather than waiting for ever");
     interrupt_pending = false;
 
@@ -305,6 +306,14 @@ int main(void)
     }
 
     CHECK(pipe_count() == before, "nothing leaked along the way");
+
+    /* a descriptor that may not wait is told so, rather than waited on */
+    pipe_reset(&p);
+    CHECK(pipe_read(&p, 1, out, sizeof out, true) == -EAGAIN,
+          "an empty pipe read without waiting is EAGAIN");
+    pipe_put(&p, big, PIPE_BUF);
+    CHECK(pipe_write(&p, 1, big, 1, true) == -EAGAIN,
+          "and a full one written without waiting is too");
 
     if (failures == 0) printf("all good\n");
     return failures;

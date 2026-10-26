@@ -27,9 +27,20 @@ bool epoch_known(void)
 
 uint64_t epoch_now(void)
 {
+    return epoch_now_ms() / 1000;
+}
+
+uint64_t epoch_now_ms(void)
+{
     if (boot_epoch == 0) {
         /* nobody has said when boot was. */
         return 0;
     }
-    return boot_epoch + pit_uptime_ms() / 1000;
+    return boot_epoch * 1000 + pit_uptime_ms();
+}
+
+void epoch_set_ms(uint64_t u_now_ms)
+{
+    uint64_t u_up = pit_uptime_ms();
+    boot_epoch = (u_now_ms > u_up) ? (u_now_ms - u_up) / 1000 : 1;
 }

@@ -120,16 +120,6 @@ pass 0 for ``rbp`` to start from wherever the caller is; pass a saved one
 and not ``backtrace()``, because glibc has a ``backtrace()`` and the host
 tests link against it. the kernel's was quietly being shadowed.
 
-the environment
----------------
-
-``env.c`` implements the environment *block* each process in the table
-carries. one block of ``NAME=value`` strings, each ended by a NUL,
-with an empty string for the end of the lot, that shape is what makes the
-whole thing one ``memcpy`` to inherit, and inheriting is most of what an
-environment is *for*. what a program does with it is the program's.
-
-
 the epoch interface
 -------------------
 

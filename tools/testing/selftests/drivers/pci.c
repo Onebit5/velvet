@@ -9,13 +9,11 @@
 
 #define TEXT_MAX 4096
 
-int main(int i_argc, char **pp_argv)
+int main(void)
 {
     char arr_text[TEXT_MAX];
     int64_t i_len;
 
-    (void)i_argc;
-    (void)pp_argv;
     ksft_print_header();
     ksft_set_plan(2);
 

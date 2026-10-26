@@ -69,31 +69,44 @@ bool net_arp_request(ipv4 who);
 
 int  net_socket_open(int owner, uint16_t port);
 bool net_socket_close(int owner, int handle);
-void net_socket_close_all(int owner);
 bool net_socket_send(int owner, int handle, ipv4 to, uint16_t port,
                      const void *data, size_t len);
 int64_t net_socket_take(int owner, int handle, ipv4 *from,
                         uint16_t *from_port, void *out, size_t max);
 
-int64_t net_socket_wait(int owner, int handle, ipv4 *from,
-                        uint16_t *from_port, void *out, size_t max,
-                        int64_t timeout_ms);
 
-size_t net_socket_ready(int owner, const int *handles, size_t count,
-                        int64_t timeout_ms, bool *ready);
+
+/* how many datagrams are waiting on a socket */
+size_t net_socket_pending(int i_owner, int i_handle);
 
 /* handles are offset by TCP_HANDLE_BASE so that one number space serves both kinds. */
 #define TCP_HANDLE_BASE 64
 
 int  net_tcp_open(int owner, ipv4 to, uint16_t port);
 int  net_tcp_serve(int owner, uint16_t port);
-int  net_tcp_accept(int owner, int handle, int64_t timeout_ms);
 int64_t net_tcp_send(int owner, int handle, const void *data, size_t len);
-int64_t net_tcp_recv(int owner, int handle, void *out, size_t max,
-                     int64_t timeout_ms);
+/*
+ * what has arrived, up to max: how much, 0 at the end of the stream, or
+ * -1 for nothing yet. nothing here waits; a caller that wants to looks
+ * again
+ */
+int64_t net_tcp_recv(int owner, int handle, void *out, size_t max);
 bool net_tcp_shut(int owner, int handle);
-void net_tcp_close_all(int owner);
 int  net_tcp_state(int owner, int handle);
+
+/* why a connection ended, as an errno, or 0 while it has not */
+int net_tcp_error(int i_owner, int i_handle);
+
+/* a connection handed to another owner, as accept hands one over */
+bool net_tcp_give(int i_owner, int i_handle, int i_new_owner);
+
+/* bytes received and not yet read, or -1 for a handle not the owner's */
+int64_t net_tcp_waiting(int i_owner, int i_handle);
+
+/* the addresses and ports at either end */
+bool net_tcp_ends(int i_owner, int i_handle, ipv4 *p_local,
+                  uint16_t *p_local_port, ipv4 *p_remote,
+                  uint16_t *p_remote_port);
 
 int net_tcp_connect(ipv4 to, uint16_t port);
 int net_tcp_listen(uint16_t port);

@@ -22,6 +22,7 @@
 #include <velvet/sched.h>
 #include <velvet/thread.h>
 #include <velvet/process.h>
+#include <velvet/string.h>
 #include <asm/syscall.h>
 #include <asm/uaccess.h>
 #include <stddef.h>
@@ -151,17 +152,39 @@ void interrupt_dispatch(struct pt_regs *f)
  * SIGILL, arithmetic is SIGFPE, a debug trap is SIGTRAP, and an
  * unaligned access the program asked to be told about is SIGBUS
  */
-static int fault_signal(uint64_t vector)
+static int fault_signal(const struct pt_regs *f, struct signal_origin *p_out)
 {
-    switch (vector) {
-    case 0:  return SIGFPE;     /* #DE */
-    case 1:
-    case 3:  return SIGTRAP;    /* #DB, #BP */
-    case 6:  return SIGILL;     /* #UD */
+    memset(p_out, 0, sizeof *p_out);
+    p_out->u_addr = f->rip;
+    switch (f->vector) {
+    case 0:                     /* #DE */
+        p_out->i_code = FPE_INTDIV;
+        return SIGFPE;
+    case 1:                     /* #DB: a step taken */
+        p_out->i_code = TRAP_TRACE;
+        return SIGTRAP;
+    case 3:                     /* #BP: int3, which says nothing more */
+        p_out->i_code = SI_KERNEL;
+        return SIGTRAP;
+    case 6:                     /* #UD */
+        p_out->i_code = ILL_ILLOPN;
+        return SIGILL;
     case 16:
-    case 19: return SIGFPE;     /* #MF, #XM */
-    case 17: return SIGBUS;     /* #AC */
-    default: return SIGSEGV;    /* #GP, #PF, #SS, #NP, and the rest */
+    case 19:                    /* #MF, #XM */
+        p_out->i_code = FPE_FLTINV;
+        return SIGFPE;
+    case 17:                    /* #AC */
+        p_out->i_code = BUS_ADRALN;
+        p_out->u_addr = 0;
+        return SIGBUS;
+    case 14:                    /* #PF: where, and whether anything was there */
+        p_out->i_code = (f->error_code & 1) ? SEGV_ACCERR : SEGV_MAPERR;
+        p_out->u_addr = read_cr2();
+        return SIGSEGV;
+    default:                    /* #GP, #SS, #NP, and the rest */
+        p_out->i_code = SI_KERNEL;
+        p_out->u_addr = 0;
+        return SIGSEGV;
     }
 }
 
@@ -291,7 +314,8 @@ static void interrupt_handle(struct pt_regs *f)
      */
     if (user_mode(f) && me != NULL && me->pid != 0 && f->vector != 8
         && f->vector != 2 && f->vector != 18) {
-        int i_sig = fault_signal(f->vector);
+        struct signal_origin origin;
+        int i_sig = fault_signal(f, &origin);
         kprintf("[kernel] pid %d (%s): %s at rip %p, sp %p",
                 me->pid, me->name, exception_names[f->vector],
                 (void *)f->rip, (void *)f->rsp);
@@ -299,7 +323,7 @@ static void interrupt_handle(struct pt_regs *f)
             kprintf(", address %p", (void *)read_cr2());
         }
         kprintf("\n");
-        process_force_signal(me->pid, i_sig);
+        process_force_signal(me->pid, i_sig, &origin);
         return;
     }
 

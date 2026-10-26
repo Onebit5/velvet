@@ -40,6 +40,7 @@ struct vfs_file {
     uint32_t mode;
     uint32_t uid, gid;
     bool     is_symlink;
+    uint32_t u_ino;         /* the inode, where a filesystem has them */
 
     const void *data;
     uint32_t    cluster;
@@ -58,9 +59,11 @@ bool vfs_open(const char *path, struct vfs_file *out);
 bool vfs_readdir(const char *path, size_t index, struct vfs_file *out);
 
 /* make a file. only the disk can, and it says so when it cannot */
-bool vfs_create(const char *path, struct vfs_file *out);
+bool vfs_create(const char *path, uint32_t u_mode, uint32_t u_uid,
+                uint32_t u_gid, struct vfs_file *out);
 
-bool vfs_mkdir(const char *path);
+bool vfs_mkdir(const char *path, uint32_t u_mode, uint32_t u_uid,
+               uint32_t u_gid);
 bool vfs_rmdir(const char *path);
 
 bool vfs_unlink(const char *path);
@@ -75,7 +78,8 @@ bool vfs_rename(const char *from, const char *to);
 
 bool vfs_chmod(const char *path, uint32_t mode);
 bool vfs_chown(const char *path, uint32_t uid, uint32_t gid);
-bool vfs_symlink(const char *path, const char *target);
+bool vfs_symlink(const char *path, const char *target, uint32_t u_uid,
+                 uint32_t u_gid);
 
 bool vfs_readlink(const char *path, char *out, size_t size);
 bool vfs_open_nofollow(const char *path, struct vfs_file *out);

@@ -77,12 +77,8 @@ bool process_interrupt_pending(int i_pid)
 #include <velvet/input.h>
 #include <velvet/console.h>
 
-/* which console the reader belongs to, and which is being looked at. */
+/* which console the reader reads, and which is being looked at. */
 static unsigned my_console_n, shown_console_n;
-unsigned tty_my_console(void)
-{
-    return my_console_n;
-}
 unsigned console_active(void)
 {
     return shown_console_n;
@@ -105,6 +101,11 @@ static int failures = 0;
     if (!(cond)) { printf("FAIL: %s\n", msg); failures++; } \
 } while (0)
 
+static int take(void)
+{
+    return input_take(my_console_n);
+}
+
 static void feed(const uint8_t *bytes, int n)
 {
     for (int i = 0; i < n; i++) keyboard_feed(bytes[i]);
@@ -115,7 +116,7 @@ static void expect(const char *want, const char *what)
 {
     char got[512];
     int n = 0, c;
-    while ((c = input_getchar()) >= 0 && n < 511) got[n++] = (char)c;
+    while ((c = take()) >= 0 && n < 511) got[n++] = (char)c;
     got[n] = 0;
     if (strcmp(got, want) != 0) {
         printf("FAIL %s: got \"%s\" want \"%s\"\n", what, got, want);
@@ -127,7 +128,7 @@ static void expect(const char *want, const char *what)
 static void expect_keys(const int *want, int wantn, const char *what)
 {
     int got[64], n = 0, c;
-    while ((c = input_getchar()) >= 0 && n < 64) got[n++] = c;
+    while ((c = take()) >= 0 && n < 64) got[n++] = c;
     int bad = (n != wantn);
     for (int i = 0; !bad && i < n; i++) bad = (got[i] != want[i]);
     if (bad) {
@@ -164,7 +165,8 @@ int main(void)
     expect("", "modifiers alone are silent");
 
     feed((uint8_t[]){0x1c, 0x39, 0x0e, 0x0f}, 4);
-    expect("\n \b\t", "enter, space, backspace, tab");
+    expect("\r \x7f\t", "enter, space, backspace, tab, as a pc console "
+           "sends them: a return, and DEL for the key that rubs out");
 
     feed((uint8_t[]){0x23,0xa3, 0x12,0x92, 0x26,0xa6, 0x26,0xa6, 0x18,0x98}, 10);
     expect("hello", "a word, typed like a person");
@@ -186,20 +188,24 @@ int main(void)
     expect_keys(NULL, 0, "ctrl+digit is dropped, not mangled");
 
 
+    /* the keys that are not characters, as the sequences a console sends */
     feed((uint8_t[]){0xe0, 0x48}, 2);
-    expect_keys((int[]){KEY_UP}, 1, "arrow up");
+    expect("\x1b[A", "arrow up");
 
     feed((uint8_t[]){0xe0, 0x50}, 2);
-    expect_keys((int[]){KEY_DOWN}, 1, "arrow down");
+    expect("\x1b[B", "arrow down");
 
     feed((uint8_t[]){0xe0, 0x4b, 0xe0, 0x4d}, 4);
-    expect_keys((int[]){KEY_LEFT, KEY_RIGHT}, 2, "arrow left then right");
+    expect("\x1b[D\x1b[C", "arrow left then right");
+
+    feed((uint8_t[]){0xe0, 0x47, 0xe0, 0x4f, 0xe0, 0x53}, 6);
+    expect("\x1b[1~\x1b[4~\x1b[3~", "home, end and delete");
 
     feed((uint8_t[]){0xe0, 0xc8, 0xe0, 0xd0}, 4);
-    expect_keys(NULL, 0, "arrow releases are silent");
+    expect("", "arrow releases are silent");
 
     feed((uint8_t[]){0x1e, 0x9e, 0xe0, 0x48, 0x30, 0xb0}, 6);
-    expect_keys((int[]){'a', KEY_UP, 'b'}, 3, "arrows keep their place in the queue");
+    expect("a\x1b[Ab", "arrows keep their place in the queue");
 
     feed((uint8_t[]){0xe0, 0x5b, 0xe0, 0xdb, 0x1e, 0x9e}, 6);
     expect("a", "an e0 key do not know is swallowed whole");
@@ -207,7 +213,7 @@ int main(void)
 
     for (int i = 0; i < 400; i++) feed((uint8_t[]){0x1e, 0x9e}, 2);
     int n = 0;
-    while (input_getchar() >= 0) n++;
+    while (take() >= 0) n++;
     if (n != 255) {
         printf("FAIL overflow: drained %d keys, want 255\n", n);
         failures++;
@@ -233,16 +239,16 @@ int main(void)
         keyboard_feed(0x1e | 0x80);
 
         my_console_n = 1;
-        CHECK(input_getchar() == -1,
+        CHECK(take() == -1,
               "a key typed at console 1 is not there for console 2");
         my_console_n = 2;
-        CHECK(input_getchar() == -1, "nor for console 3");
+        CHECK(take() == -1, "nor for console 3");
 
         my_console_n = 0;
-        CHECK(input_getchar() == 'a',
+        CHECK(take() == 'a',
               "and console 1 has it, exactly one reader, which is the "
               "whole point of a ring each");
-        CHECK(input_getchar() == -1, "and only once");
+        CHECK(take() == -1, "and only once");
 
         /* the screen moves, and so do the keys */
         shown_console_n = 2;
@@ -250,11 +256,11 @@ int main(void)
         keyboard_feed(0x30 | 0x80);
 
         my_console_n = 0;
-        CHECK(input_getchar() == -1,
+        CHECK(take() == -1,
               "a key typed after switching does not reach the console that "
               "was showing");
         my_console_n = 2;
-        CHECK(input_getchar() == 'b', "it reaches the one that is");
+        CHECK(take() == 'b', "it reaches the one that is");
 
         shown_console_n = 0;
         my_console_n = 0;
@@ -266,23 +272,23 @@ int main(void)
      * rather than thrown away with it
      */
     {
-        while (input_getchar() >= 0) { }
+        while (take() >= 0) { }
         s_b_interrupted = true;
-        CHECK(input_getchar_blocking() == -1,
+        CHECK(!input_wait(my_console_n),
               "an interrupt with no key waiting ends the wait");
         keyboard_feed(0x1e);
         keyboard_feed(0x1e | 0x80);
-        CHECK(input_getchar_blocking() == 'a',
+        CHECK(input_wait(my_console_n) && take() == 'a',
               "and a key that is there is handed over all the same");
         s_b_interrupted = false;
     }
 
     /* scancode 0x03 is the 2 key. */
     {
-        while (input_getchar() >= 0) { }
+        while (take() >= 0) { }
         keyboard_feed(0x03);
         keyboard_feed(0x03 | 0x80);
-        CHECK(input_getchar() == '2',
+        CHECK(take() == '2',
               "scancode 3 is the 2 key, which is also the device id a "
               "wheel mouse answers with, and is why a stray 2 appeared at "
               "the login prompt");
@@ -317,13 +323,13 @@ int main(void)
         keyboard_feed(0x38 | 0x80);     /* alt up */
 
         /* without alt they are the keys they have always been */
-        while (input_getchar() >= 0) { }
+        while (take() >= 0) { }
         keyboard_feed(0x04);
         keyboard_feed(0x04 | 0x80);
-        CHECK(input_getchar() == '3', "and without alt, 3 is just a three");
+        CHECK(take() == '3', "and without alt, 3 is just a three");
 
         keyboard_feed(0x3d);
-        CHECK(input_getchar() == -1, "while f3 alone still means nothing here");
+        CHECK(take() == -1, "while f3 alone still means nothing here");
     }
 
     if (failures == 0) printf("all good\n");

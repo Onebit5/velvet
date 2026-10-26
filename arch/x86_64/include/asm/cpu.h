@@ -27,6 +27,9 @@
  */
 #define CPU_MAX SMP_MAX_CPUS
 
+/* what uname calls the machine */
+#define ARCH_MACHINE "x86_64"
+
 /*
  * how many times a second the clock this architecture installs will
  * interrupt. the scheduler needs it to say how long a quantum is in

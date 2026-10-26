@@ -27,6 +27,7 @@
 #include <velvet/netif.h>
 #include <velvet/backtrace.h>
 #include <velvet/proc.h>
+#include <asm/uaccess.h>
 
 /* how many ticks a thread gets before the kernel takes the cpu back. */
 #define QUANTUM_TICKS 5
@@ -152,8 +153,7 @@ static void reap_dead(void)
          * because closing one wakes whoever is waiting on it
          */
         process_fds_release(dead[i]->pid);
-        net_socket_close_all(dead[i]->pid);
-        net_tcp_close_all(dead[i]->pid);
+        process_forget(dead[i]->pid);
         thread_free_stack(dead[i]);
         thread_free(dead[i]);   /* a no-op for the boot thread */
     }
@@ -561,24 +561,30 @@ static void sched_show_stack(void)
 }
 
 /*
- * the reader's own environment, each NAME=value ended by a NUL, as the
- * block is kept. a program can only ask for a variable it can name, and
- * this is how it finds out which there are. the block's last string is
- * empty, the end of the list rather than one more name, and stays out
+ * the reader's own environment, each NAME=value ended by a NUL, as exec
+ * laid it out on the stack. what a program changed there since is what
+ * it reads back, since these are its own bytes
  */
 static void sched_show_environ(void)
 {
-    int i_pid = (current != NULL) ? current->pid : 0;
-    char *str_block = (i_pid != 0) ? kmalloc(PROC_ENV_MAX) : NULL;
-
-    if (str_block == NULL) {
+    struct addrspace *p_as = (current != NULL) ? current->space : NULL;
+    if (p_as == NULL || p_as->u_env_end <= p_as->u_env_start) {
         return;
     }
-    size_t sz_len = process_get_env(i_pid, str_block, PROC_ENV_MAX);
-    if (sz_len > 0) {
-        kwrite(str_block, sz_len - 1);
+    char *p_buf = kmalloc(PAGE_SIZE);
+    if (p_buf == NULL) {
+        return;
     }
-    kfree(str_block);
+    for (uint64_t u_at = p_as->u_env_start; u_at < p_as->u_env_end; ) {
+        size_t sz_take = (p_as->u_env_end - u_at < PAGE_SIZE)
+                         ? (size_t)(p_as->u_env_end - u_at) : PAGE_SIZE;
+        if (copy_from_user(p_buf, u_at, sz_take) != 0) {
+            break;
+        }
+        kwrite(p_buf, sz_take);
+        u_at += sz_take;
+    }
+    kfree(p_buf);
 }
 
 void sched_proc_init(void)
@@ -639,6 +645,7 @@ enum sched_kill_result sched_kill(int id)
                     unlink(q, t);   /* the lock is already the kernel's */
                 }
                 if (t->pid != 0) {
+                    process_account(t->pid, t->cpu_ticks);
                     process_exited(t->pid, PROCESS_KILLED, pit_uptime_ms());
                 }
                 t->state = THREAD_DEAD;

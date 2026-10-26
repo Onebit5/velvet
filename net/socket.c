@@ -67,15 +67,6 @@ bool socket_close(struct socket_table *t, int owner, int handle)
     return true;
 }
 
-void socket_close_all(struct socket_table *t, int owner)
-{
-    for (int i = 0; i < SOCKET_MAX; i++) {
-        if (t->s[i].used && t->s[i].owner == owner) {
-            memset(&t->s[i], 0, sizeof t->s[i]);
-        }
-    }
-}
-
 int socket_deliver(struct socket_table *t, uint16_t to_port, ipv4 from,
                    uint16_t from_port, const void *data, size_t len)
 {

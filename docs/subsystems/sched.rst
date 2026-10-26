@@ -143,8 +143,10 @@ parentage live in a process slot that stays occupied until somebody collects
 it. that is a zombie.
 
 ``struct process`` carries the pid, the parent, the **job group** (``pgid``)
-and the uid, the environment block, the current working directory, the file
-descriptors, and the signal state.
+and the session, the uid, the current working directory, the file
+descriptors, the limits, and the signal state. the environment is not
+the kernel's: exec copies it onto the new program's stack, and from
+there it is the program's to keep.
 
 pid 0 is not a process at all; it is the parent of what the kernel starts
 itself, which is ``/init``. pid 1 is init, handed out first so reparenting
@@ -247,8 +249,10 @@ and waits for delivery like any other. the process remembers which signal
 stopped it, and ``wait`` with ``WUNTRACED`` tells a parent, once per
 stop, which is how a shell learns that ctrl+z happened to its job.
 
-a program sends one with ``sigsend``, and only where it has a say: to its
-own processes, or to anybody's when it is root. the kernel raises signals
+a program sends one with ``kill``, or ``tkill`` and ``tgkill``, which name
+a thread and here mean the same process, and only where it has a say: to
+a process of its own uid, ``SIGCONT`` to any process of its session, or
+to anybody's when it is root. the kernel raises signals
 of its own, ctrl+c and a pipe with no reader among them, and those go
 wherever they are due; the rule is about one program reaching another.
 a guest able to stop root's programs, init among them, would be a guest
@@ -256,10 +260,10 @@ able to stop the machine.
 
 a job is a process group, and a shell makes one with ``setpgid``: itself
 or a child of its own, into a group named after it or one that already
-has a member of the same user. minus a pgid, given to ``sigsend``, is the
-whole group, and reaches every member the sender may signal. -1 is not a
-group: elsewhere it means everyone, which is not something this kernel
-offers.
+has a member of the same user. minus a pgid, given to ``kill``, is the
+whole group, and reaches every member the sender may signal; 0 is the
+sender's own group, and -1 everybody it may signal but init and itself.
+signal 0 sends nothing, and says whether it could have.
 
 init
 ----
@@ -346,16 +350,12 @@ the process interface
 ---------------------
 
 a process is a program someone started, and it outlives the thread that ran
-it. it owns the descriptors, the working directory, the environment and the
-signal state, which is what makes ``&``, ``cd`` and ``export`` mean anything:
-each of those belongs to the process rather than to the thread or to the
-program.
+it. it owns the descriptors, the working directory and the signal state,
+which is what makes ``&`` and ``cd`` mean anything: each of those belongs
+to the process rather than to the thread or to the program.
 
 what follows is what each call takes and gives back, and what each field of
 the table means.
-
-``#define PROC_ENV_MAX    1024``
-    how much environment one process may carry.
 
 ``#define MAX_FDS         64``
     how many descriptors one process has.
@@ -428,25 +428,11 @@ the table means.
     what it is called. a forked child takes its parent's name, since it is the same program
 
 ``void process_inherit(int i_child, int i_parent);``
-    a forked child made its parent's copy: the group, the working
-    directory, the environment, the signal dispositions and mask, and the
-    trampoline its handlers return through. not what is pending: a child
-    is not born owing its parent's interrupts
-
-``/* replace the whole environment. `len` counts the trailing empty string */ bool process_set_env(int pid, const char *block, size_t len);``
-    these work on the block rather than on one variable at a time, because the block is what gets inherited and inheriting is most of what an environment is for
-
-``bool process_set_env(int pid, const char *block, size_t len);``
-    replace the whole environment. `len` counts the trailing empty string
-
-``size_t process_get_env(int pid, char *out, size_t max);``
-    a copy of it. returns how many bytes, including the terminator
-
-``bool process_env_get(int pid, const char *name, char *out, size_t max);``
-    look one variable up.
-
-``bool process_env_set(int pid, const char *name, const char *value);``
-    set or replace one. a NULL value removes it
+    a forked child made its parent's copy: the group and session, who it
+    runs as, its umask and limits, the working directory, and the signal
+    actions, mask and alternate stack. not what is pending: a child is not
+    born owing its parent's interrupts. the environment is not here: it
+    is in the program's own memory, which fork copies with the rest
 
 ``void process_interrupt(int pid);``
     deliver an interrupt.
@@ -643,9 +629,9 @@ ready, goes to sleep, or stops existing.
 ``void sched_proc_init(void);``
     registers ``/proc/threads`` and ``/proc/environ``, for anyone, and
     ``/proc/stack``, for root. ``environ`` is the reader's own
-    environment, each ``NAME=value`` ended by a NUL, which is how a
-    program learns which variables there are when it can only ask for
-    one by name. ``stack`` is the kernel's call trace of whoever reads
+    environment as exec laid it out on its stack, each ``NAME=value``
+    ended by a NUL, with whatever the program changed there since.
+    ``stack`` is the kernel's call trace of whoever reads
     it, which is the walker a panic uses with nothing on fire, and which
     names functions
     by where the kernel keeps them
@@ -749,8 +735,9 @@ the usermode interface
 ------------------------
 
 entering ring 3, and everything that has to be true before a program runs:
-the redirect that gives it its descriptors and its environment, the stack and
-the trampoline it starts on, and the path back in through a trap.
+the image loaded, the stack with its arguments, environment and auxiliary
+vector, the descriptors the first program starts with, and the path back
+in through a trap.
 
 it is also where the ABI lives, since this is the code that decides what a
 program is handed when it starts and what it finds when it asks for
@@ -762,18 +749,25 @@ something.
 ``#define USER_STACK_TOP 0x0000700000000000ull``
     where user stacks go.
 
-``#define MAX_ARGS 8``
-    how many arguments a program may be handed.
+``#define EXEC_ARGS_MAX (128 * 1024)``
+    how many bytes of arguments and environment, strings and pointers
+    together, a program may be handed.
 
-``int user_spawn(const char *path, int argc, const char *const argv[], const char *cwd, int parent, int uid, bool announce, const char **error);``
-    start a program, parked until ``user_start``, holding its parent's
-    environment, and return its pid, or 0 with ``*error`` set.
+``int64_t exec_args_copy(uint64_t u_argv, uint64_t u_envp, struct exec_args *p_out);``
+    the arguments and environment a program in ring 3 passed, copied into
+    the kernel before the memory they are in goes away: 0, -EFAULT, -E2BIG
+    or -ENOMEM. ``exec_args_free`` lets go.
 
-``bool user_exec(const char *str_path, int i_argc, const char *const pp_argv[], struct user_entry *p_out, const char **pp_error);``
+``int user_spawn(const char *path, const struct exec_args *p_args, const char *cwd, int parent, int uid, bool announce, const char **error);``
+    start a program, parked until ``user_start``, with the first console on
+    0, 1 and 2, and return its pid, or 0 with ``*error`` set. the kernel
+    starts ``/init`` this way, and nothing else.
+
+``int64_t user_exec(const char *str_path, const struct exec_args *p_args, struct user_entry *p_out);``
     the calling process becomes the program at ``str_path``, keeping its
-    pid, descriptors, working directory, uid and environment, with its
-    caught signals back to their defaults. true with ``p_out`` saying
-    where the new program starts; false with nothing changed at all
+    pid, descriptors, working directory and uid, with its caught signals
+    back to their defaults. 0 with ``p_out`` saying where the new program
+    starts, or minus an errno with nothing changed at all
 
 spawn and exec share everything up to the program being ready to run:
 the image read and described or loaded, a fresh address space, a stack

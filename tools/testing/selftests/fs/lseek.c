@@ -13,37 +13,35 @@
 static char s_arr_whole[TEXT_MAX];
 static char s_arr_again[TEXT_MAX];
 
-static int64_t lseek(int i_fd, int64_t i_offset, int i_whence)
-{
-    return ksft_syscall(SYS_LSEEK, i_fd, i_offset, i_whence);
-}
-
 int main(int i_argc, char **pp_argv)
 {
     char arr_tail[5];
 
     (void)i_argc;
     ksft_print_header();
-    ksft_set_plan(4);
+    ksft_set_plan(5);
 
     /*
      * the test's own file, by the path it was started by: a file every
      * medium that carries the test has, whatever else it carries
      */
-    int i_fd = open(pp_argv[0]);
-    int64_t i_len = read(i_fd, s_arr_whole, TEXT_MAX);
+    int i_fd = open(pp_argv[0], O_RDONLY);
+    ssize_t i_len = read(i_fd, s_arr_whole, TEXT_MAX);
     ksft_test_result(i_len > 5 && lseek(i_fd, 0, SEEK_SET) == 0
                      && read(i_fd, s_arr_again, TEXT_MAX) == i_len
-                     && ksft_memeq(s_arr_whole, s_arr_again, (size_t)i_len),
+                     && memcmp(s_arr_whole, s_arr_again, (size_t)i_len) == 0,
                      "back to the start, the file reads again the same\n");
     ksft_test_result(lseek(i_fd, -5, SEEK_END) == i_len - 5
                      && read(i_fd, arr_tail, 5) == 5
-                     && ksft_memeq(arr_tail, s_arr_whole + i_len - 5, 5),
+                     && memcmp(arr_tail, s_arr_whole + i_len - 5, 5) == 0,
                      "five from the end is its last five bytes\n");
-    ksft_test_result(lseek(i_fd, 1, SEEK_END) == -1
-                     && lseek(i_fd, 0, SEEK_CUR) == i_len,
-                     "past the end is -1, and moves nothing\n");
-    ksft_test_result(lseek(1, 0, SEEK_SET) == -1,
+    ksft_test_result(lseek(i_fd, 1, SEEK_END) == i_len + 1
+                     && read(i_fd, arr_tail, 5) == 0,
+                     "past the end is somewhere, with nothing to read\n");
+    ksft_test_result(lseek(i_fd, -1, SEEK_SET) == -1 && errno == EINVAL
+                     && lseek(i_fd, 0, SEEK_CUR) == i_len + 1,
+                     "before the start is EINVAL, and moves nothing\n");
+    ksft_test_result(lseek(1, 0, SEEK_SET) == -1 && errno == ESPIPE,
                      "and the console has no position to move\n");
     close(i_fd);
     ksft_finished();

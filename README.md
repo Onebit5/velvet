@@ -49,10 +49,11 @@ and the build writes it into `<generated/version.h>` for the banner to print.
 
 ## building
 
-you need `gcc`, `nasm`, `make`, `python3` and `qemu` (any recentish versions). on fedora:
+you need `gcc`, `nasm`, `make`, `python3`, `musl-gcc` and `qemu` (any recentish versions).
+musl is the libc the selftests are built with. on fedora:
 
 ```
-dnf install gcc nasm make python3 qemu-system-x86
+dnf install gcc nasm make python3 musl-gcc musl-libc-static qemu-system-x86
 ```
 
 then:

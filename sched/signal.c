@@ -19,6 +19,7 @@ static bool valid(int sig)
 void signal_reset(struct signal_state *s)
 {
     memset(s, 0, sizeof *s);
+    s->altstack.ss_flags = SS_DISABLE;
 }
 
 void signal_inherit(struct signal_state *child,
@@ -27,8 +28,9 @@ void signal_inherit(struct signal_state *child,
     memset(child, 0, sizeof *child);
     child->blocked = parent->blocked;
     for (int i = 0; i < SIGNAL_MAX; i++) {
-        child->handler[i] = parent->handler[i];
+        child->action[i] = parent->action[i];
     }
+    child->altstack = parent->altstack;
     /* deliberately not `pending`. */
 }
 
@@ -36,37 +38,54 @@ void signal_exec(struct signal_state *s)
 {
     /* the handlers pointed into the program that is being replaced. */
     for (int i = 0; i < SIGNAL_MAX; i++) {
-        if (s->handler[i] != SIG_IGNORE) {
-            s->handler[i] = SIG_DEFAULT;
-        }
+        bool b_ignored = s->action[i].sa_handler == SIG_IGNORE;
+        memset(&s->action[i], 0, sizeof s->action[i]);
+        s->action[i].sa_handler = b_ignored ? SIG_IGNORE : SIG_DEFAULT;
     }
-    s->pending = 0;
-    s->running = 0;
+    s->altstack.ss_sp = 0;
+    s->altstack.ss_size = 0;
+    s->altstack.ss_flags = SS_DISABLE;
+    s->b_suspended = false;
 }
 
-bool signal_raise(struct signal_state *s, int sig)
+bool signal_raise(struct signal_state *s, int sig,
+                  const struct signal_origin *origin)
 {
     if (!valid(sig)) {
         return false;
     }
     /*
-     * a set, not a queue. raising one already raised changes nothing,
-     * which is why two ctrl+c presses in the same instant are one
-     * interrupt
+     * one that would be ignored is gone as it is sent, the way it would
+     * be on taking it, unless it is blocked: then it waits, since the
+     * action may have changed by the time it is unblocked. dropped here,
+     * it never cuts short a call that was waiting for something else
+     */
+    if (signal_action_for(s, sig) == SIGNAL_ACTION_IGNORE
+        && !(s->blocked & SIGNAL_BIT(sig))) {
+        return true;
+    }
+    /*
+     * a set, not a queue. raising one already raised changes nothing
+     * but who it is from, which is why two ctrl+c presses in the same
+     * instant are one interrupt
      */
     s->pending |= SIGNAL_BIT(sig);
+    if (origin != NULL) {
+        s->origin[sig] = *origin;
+    } else {
+        memset(&s->origin[sig], 0, sizeof s->origin[sig]);
+        s->origin[sig].i_code = SI_KERNEL;
+    }
     return true;
 }
 
 int signal_next(const struct signal_state *s)
 {
     uint64_t ready = s->pending & ~(s->blocked & ~UNBLOCKABLE);
-
     /*
-     * lowest number first, so that SIGKILL at 9 is delivered before
-     * SIGTERM at 15 when a process has been asked twice. the ordering
-     * is not otherwise meaningful and this is the one case where it
-     * decides something
+     * lowest first. SIGKILL is 9 and comes before most things a program
+     * could be busy handling, and a stop or a fault, SIGSEGV 11, comes
+     * before the signals a program sends itself
      */
     for (int sig = 1; sig < SIGNAL_MAX; sig++) {
         if (ready & SIGNAL_BIT(sig)) {
@@ -94,7 +113,7 @@ enum signal_action signal_action_for(const struct signal_state *s, int sig)
         return SIGNAL_ACTION_STOP;
     }
 
-    uint64_t h = s->handler[sig];
+    uint64_t h = s->action[sig].sa_handler;
     if (h == SIG_IGNORE) {
         return SIGNAL_ACTION_IGNORE;
     }
@@ -126,72 +145,96 @@ enum signal_action signal_action_for(const struct signal_state *s, int sig)
 }
 
 enum signal_action signal_take(struct signal_state *s, int sig,
-                               uint64_t *handler_out)
+                               struct sigaction *act_out,
+                               uint64_t *old_mask_out,
+                               struct signal_origin *origin_out)
 {
     if (!valid(sig) || !(s->pending & SIGNAL_BIT(sig))) {
         return SIGNAL_ACTION_NONE;
     }
     s->pending &= ~SIGNAL_BIT(sig);
+    if (origin_out != NULL) {
+        *origin_out = s->origin[sig];
+    }
 
     enum signal_action a = signal_action_for(s, sig);
     if (a != SIGNAL_ACTION_HANDLER) {
         return a;
     }
-
-    if (handler_out != NULL) {
-        *handler_out = s->handler[sig];
+    if (act_out != NULL) {
+        *act_out = s->action[sig];
     }
 
-    /* the handler runs with its own signal blocked, and the mask is put back when it returns. */
-    s->saved_mask = s->blocked;
-    s->blocked   |= SIGNAL_BIT(sig);
-    s->running    = sig;
+    /*
+     * the mask the handler interrupted goes in its frame, and comes back
+     * from there when it returns, so a handler interrupted by another
+     * gets its own mask back and not the inner one's. that of a
+     * suspend is the one it was waiting under the caller's mask for
+     */
+    if (old_mask_out != NULL) {
+        *old_mask_out = s->b_suspended ? s->u_suspend_mask : s->blocked;
+    }
+    s->b_suspended = false;
+
+    uint64_t u_mask = s->action[sig].sa_mask;
+    if (!(s->action[sig].sa_flags & SA_NODEFER)) {
+        u_mask |= SIGNAL_BIT(sig);
+    }
+    s->blocked = (s->blocked | u_mask) & ~UNBLOCKABLE;
+    if (s->action[sig].sa_flags & SA_RESETHAND) {
+        memset(&s->action[sig], 0, sizeof s->action[sig]);
+    }
     return SIGNAL_ACTION_HANDLER;
 }
 
-void signal_handler_returned(struct signal_state *s)
-{
-    /*
-     * FIXME: one saved mask and one `running`, so two handlers that nest
-     * lose the outer one. a signal arriving while a handler for a
-     * different one runs, SIGALRM inside a SIGCHLD handler being the
-     * ordinary case, goes through signal_take again and overwrites
-     * saved_mask and running with the inner values. the inner return
-     * restores the inner mask and clears running; the outer return then
-     * sees running at zero, comes back here, and never puts its own
-     * blocked bit back. that signal stays blocked for the rest of the
-     * process, so a program with an alarm never gets its second one. the
-     * masks want a stack, or a depth counter and an array of them.
-     */
-    if (s->running == 0) {
-        return;
-    }
-    s->blocked = s->saved_mask;
-    s->running = 0;
-}
-
-bool signal_set_handler(struct signal_state *s, int sig, uint64_t handler)
+bool signal_set_action(struct signal_state *s, int sig,
+                       const struct sigaction *act)
 {
     if (!valid(sig)) {
         return false;
     }
     if (sig == SIGKILL || sig == SIGSTOP) {
-        /* refused rather than accepted-and-ignored. */
-        return false;
+        /* the only thing that may be asked of these is to leave them be */
+        return act->sa_handler == SIG_DEFAULT;
     }
-    s->handler[sig] = handler;
+    s->action[sig] = *act;
+    s->action[sig].sa_mask &= ~UNBLOCKABLE;
+
+    /* an ignored signal already pending is gone, not merely deferred */
+    if (signal_action_for(s, sig) == SIGNAL_ACTION_IGNORE) {
+        s->pending &= ~SIGNAL_BIT(sig);
+    }
     return true;
 }
 
 void signal_set_mask(struct signal_state *s, uint64_t mask)
 {
-    /* the two special ones stay unblocked however hard anybody tries. */
+    /* KILL and STOP cannot be blocked, whatever was asked */
     s->blocked = mask & ~UNBLOCKABLE;
 }
 
 uint64_t signal_get_mask(const struct signal_state *s)
 {
     return s->blocked;
+}
+
+void signal_info(int i_sig, const struct signal_origin *p_origin,
+                 struct siginfo *p_info)
+{
+    memset(p_info, 0, sizeof *p_info);
+    p_info->si_signo = i_sig;
+    p_info->si_code = p_origin->i_code;
+    if (i_sig == SIGCHLD && p_origin->i_code >= CLD_EXITED
+        && p_origin->i_code <= CLD_CONTINUED) {
+        p_info->u.proc.si_pid = p_origin->i_pid;
+        p_info->u.proc.si_uid = p_origin->u_uid;
+        p_info->u.proc.si_status = p_origin->i_status;
+    } else if (p_origin->i_code > 0 && p_origin->i_code != SI_KERNEL) {
+        p_info->u.si_addr = p_origin->u_addr;     /* a fault's */
+    } else if (p_origin->i_code <= 0) {
+        p_info->u.proc.si_pid = p_origin->i_pid;  /* a sender's */
+        p_info->u.proc.si_uid = p_origin->u_uid;
+    }
 }
 
 bool signal_deliverable(const struct signal_state *s)

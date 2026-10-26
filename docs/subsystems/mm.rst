@@ -149,8 +149,10 @@ are legitimately empty. every not-present fault is answered out of that
 table or not at all, so a stack that wants to grow and a program
 dereferencing nonsense are told apart.
 
-- ``addrspace_reserve()`` and ``addrspace_map_anon()`` record a range of
-  anonymous memory without mapping it. that is the whole of ``mmap``.
+- ``addrspace_map_anon()`` records a range of anonymous memory without
+  mapping it, which is the whole of an anonymous ``mmap``, and
+  ``addrspace_discard()`` gives a range's pages back and keeps the range,
+  which is ``MADV_DONTNEED``.
 - ``addrspace_unmap()`` and ``addrspace_protect()`` take any range, cutting
   a region where the range crosses its edge, so a hole in the middle of a
   region leaves two, and ``addrspace_brk()`` grows and shrinks the heap
@@ -243,16 +245,16 @@ program going wrong.
     touch, which is what makes a large stack or a large allocation cost
     nothing until it is used.
 
-``bool addrspace_drop_region(struct addrspace *as, uint64_t start)``
-    take one back, unmapping and freeing whatever of it had been populated.
-
-``uint64_t addrspace_reserve(struct addrspace *as, uint64_t len, uint64_t flags)``
-    find somewhere `len` bytes will fit and agree to it, for memory with no
-    file behind it.
-
 ``uint64_t addrspace_map_anon(as, hint, len, flags, fixed)``
-    the same at a hint when it is free, or at the hint and over whatever was
-    there when fixed. nothing is mapped below 64 KiB, where NULL points.
+    somewhere `len` bytes of memory with no file behind it will fit,
+    agreed to: at the hint when it is free, or at the hint and over
+    whatever was there when fixed. nothing is mapped below 64 KiB, where
+    NULL points.
+
+``bool addrspace_discard(struct addrspace *as, uint64_t start, uint64_t len)``
+    every page made in a range given back, the regions kept: the next
+    touch makes each again, as zeroes or from the image, the way it was
+    made the first time. false when part of the range is in no region.
 
 ``bool addrspace_unmap(struct addrspace *as, uint64_t start, uint64_t len)``
     nothing in a range any more, whichever regions it cut through. false

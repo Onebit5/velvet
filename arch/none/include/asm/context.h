@@ -19,8 +19,7 @@
  */
 extern void switch_context(uint64_t *save_sp, uint64_t *load_sp);
 
-void context_enter_user(uint64_t entry, uint64_t stack_top,
-                        uint64_t argc, uint64_t argv)
+void context_enter_user(uint64_t entry, uint64_t stack_top)
     __attribute__((noreturn));
 
 ARCH_INLINE void context_set_kernel_stack(uint64_t top)

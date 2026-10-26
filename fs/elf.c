@@ -18,6 +18,7 @@
 
 #define ET_EXEC 2
 #define PT_LOAD 1
+#define PT_PHDR 6
 
 #define PF_X 1
 #define PF_W 2
@@ -50,6 +51,9 @@ struct elf64_phdr {
     uint64_t memsz;
     uint64_t align;
 } __attribute__((packed));
+
+_Static_assert(sizeof(struct elf64_phdr) == ELF_PHDR_SIZE,
+               "a program header is 56 bytes, as AT_PHENT says");
 
 bool elf_is_loadable(const void *image, uint64_t size, const char **why)
 {
@@ -194,6 +198,36 @@ bool elf_describe(const void *image, uint64_t size,
     if (*count == 0) {
         *why = "nothing to load";
         return false;
+    }
+    return true;
+}
+
+bool elf_headers_at(const void *p_image, uint64_t u_size, uint64_t *p_addr,
+                    uint64_t *p_count)
+{
+    if (!elf_is_loadable(p_image, u_size, NULL)) {
+        return false;
+    }
+    const struct elf64_header *h = p_image;
+    const struct elf64_phdr *ph =
+        (const struct elf64_phdr *)((const uint8_t *)p_image + h->phoff);
+    uint64_t u_bytes = (uint64_t)h->phnum * sizeof *ph;
+
+    *p_count = h->phnum;
+    *p_addr = 0;
+    for (uint16_t i = 0; i < h->phnum; i++) {
+        if (ph[i].type == PT_PHDR) {
+            *p_addr = ph[i].vaddr;
+            return true;
+        }
+    }
+    /* no PT_PHDR: wherever the segment the headers are part of puts them */
+    for (uint16_t i = 0; i < h->phnum; i++) {
+        if (ph[i].type == PT_LOAD && ph[i].offset <= h->phoff
+            && h->phoff + u_bytes <= ph[i].offset + ph[i].filesz) {
+            *p_addr = ph[i].vaddr + (h->phoff - ph[i].offset);
+            return true;
+        }
     }
     return true;
 }

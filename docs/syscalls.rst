@@ -1,98 +1,263 @@
-the system calls
+system calls
+============
 
 the abi between ring 3 and the kernel: what a program can ask for, what
-it passes, and what it gets back. the numbers are the kernel's and are
-deliberately few, since there is no libc out there to satisfy, only the
-handful of things a program here could want.
+it passes, and what it gets back. it is the one every x86_64 program
+and every libc for the machine already speaks, so a program is built
+with an ordinary toolchain and an ordinary libc, and runs. the selftests
+are built that way, against musl, which has never heard of this kernel.
+
+the convention
+--------------
+
+the number goes in ``rax`` and the arguments in ``rdi``, ``rsi``, ``rdx``,
+``r10``, ``r8`` and ``r9``, and ``syscall`` goes in. the answer comes back
+in ``rax``: what was asked for, or minus an errno, a number from -4095 to
+-1 that no successful call returns. ``syscall`` itself destroys ``rcx``
+and ``r11``; every other register comes back as it went in.
+
+a number with nothing behind it is ``-ENOSYS``, which every libc expects
+from a kernel older than the call, and falls back from where it can.
+
+the numbers are in ``include/uapi/velvet/unistd.h``, the errnos in
+``errno.h`` beside it, and what the calls take in the rest of that
+directory: ``stat.h``, ``fcntl.h``, ``signal.h``, ``termios.h``,
+``socket.h`` and so on, each laid out byte for byte as programs expect.
+that directory is the part of the kernel a program compiles against, and
+it includes nothing else of the kernel's.
 
 the table
 ---------
 
-======  ============  ================================================  ======================
-number  name          arguments                                         returns
-======  ============  ================================================  ======================
-0       EXIT          (code)                                            never returns
-1       WRITE         (fd, buf, len)                                    bytes written
-2       READ          (fd, buf, len)                                    bytes read
-3       UPTIME        ()                                                ms since boot
-4       YIELD         ()                                                
-5       SLEEP         (ms)                                              
-6       OPEN          (path, len)                                       fd
-7       CLOSE         (fd)                                              
-8       GETPID        ()                                                pid
-9       SPAWN         (path, len)                                       pid of the new one
-10      WAIT          (pid, int \*status, flags)                       pid, 0, or -1
-11      READDIR       (n,buf,len,path,plen)                             name length, or -1
-12      GETUID        ()                                                who this runs as
-13      CREATE        (path, len)                                       fd, for writing
-14      CHDIR         (path, len)                                       0, or -1
-15      GETCWD        (buf, len)                                        length written
-16      MKDIR         (path, len)                                       0, or -1
-17      RMDIR         (path, len)                                       0, or -1
-18      UNLINK        (path, len)                                       0, or -1
-19      RENAME        (from,flen,to,tlen)                               0, or -1
-20      STAT          (path, len, struct user_stat \*)                  0, or -1
-21      GETKEY        ()                                                one key, no echo
-22      SCREEN        (uint32 \*cols, uint32 \*rows)                    0
-23      CURSOR        (col, row)                                        0
-24      CLEAR         ()                                                0
-25      FORK          ()                                                the child's pid, or 0 if you are it
-26      MMAP          (len)                                             address, or 0
-27      MUNMAP        (address)                                         0, or -1
-28      CHMOD         (path, len, mode)                                 0, or -1
-29      CHOWN         (path, len, uid, gid)                             0, or -1
-30      SYMLINK       (path,len,target,tlen)                            0, or -1
-31      READLINK      (path,len,buf,size)                               length, or -1
-32      GETENV        (name,len,buf,size)                               length, or -1
-33      SETENV        (name,len,value,vlen)                             0, or -1
-34      SOCKET        (port)                                            handle, or -1
-35      SENDTO        (h, ip, port, buf, len)                           sent, or -1
-36      RECVFROM      (h, struct user_from \*, buf, len)                n or -1
-37      RECVWAIT      (h, struct user_from \*, buf, len, timeout)       n
-38      SELECT        (handles, count, timeout, ready)                  how many
-39      CONNECT       (ip, port)                                        handle, or -1
-40      LISTEN        (port)                                            handle, or -1
-41      ACCEPT        (h, timeout)                                      handle, or -1
-42      SEND          (h, buf, len)                                     sent, or -1
-43      RECV          (h, buf, len, timeout)                            n, 0 at end, -1
-44      SHUTDOWN      (h)                                               0, or -1
-45      SIGNAL        (sig, handler, trampoline)                        0, or -1
-46      SIGSEND       (pid, sig)                                        0, or -1
-47      SIGRETURN     (frame)                                           : does not return
-48      SIGMASK       (how, mask)                                       the previous mask
-49      TTYMODE       (set, flags)                                      the previous flags
-50      WINSIZE       (cols\*, rows\*)                                  0, or -1
-51      NOW           ()                                                seconds since 1970, or 0 if unknown
-52      ALARM         (seconds)                                         seconds left on the last one
-53      SYSLOG        (type, buf, len)                                  bytes copied, the size, or -1
-54      SYNC          ()                                                0, or -1
-55      (none)        was FSCK, until 0.4.4                             -1
-56      RESIZE        (path, len, blocks, user_resize\*)                0, or -1
-57      (none)        was SOURCE, until 0.4.4                           -1
-58      EXECVE        (path, len, argv)                                 does not return, or -1
-59      PIPE          (fds\*)                                           0, or -1
-60      DUP2          (from, to)                                        to, or -1
-61      SETPGID       (pid, pgid)                                       0, or -1
-62      TTYATTACH     (console)                                         0, or -1
-63      TCSETPGRP     (pgid)                                            0, or -1
-64      TCGETPGRP     ()                                                the pgid in front
-65      SETUID        (uid)                                             0, or -1
-66      REBOOT        (how)                                             does not return, or -1
-67      LSEEK         (fd, offset, whence)                              the position, or -1
-158     ARCH_PRCTL    (code, addr)                                      0, or -1
-======  ============  ================================================  ======================
+``where`` is the file the call is answered in. the calls in the arch file
+are the old ones a newer call does the work of, with the newer one in the
+notes, and the few that take the saved registers apart: fork, clone,
+execve, rt_sigreturn and arch_prctl.
 
-the kernel side
----------------
+======  ===============  =====================  =========================================
+number  name             where                  notes
+======  ===============  =====================  =========================================
+0       read             fs/read_write.c
+1       write            fs/read_write.c
+2       open             arch/x86_64/syscall.c  openat from the working directory
+3       close            fs/open.c
+4       stat             arch/x86_64/syscall.c  newfstatat, following a link
+5       fstat            fs/stat.c
+6       lstat            arch/x86_64/syscall.c  newfstatat, not following one
+7       poll             fs/select.c            every 10 ms
+8       lseek            fs/read_write.c
+9       mmap             mm/mmap.c              anonymous, or a private copy of a file
+10      mprotect         mm/mmap.c
+11      munmap           mm/mmap.c
+12      brk              mm/mmap.c
+13      rt_sigaction     sched/sigcall.c
+14      rt_sigprocmask   sched/sigcall.c
+15      rt_sigreturn     arch/x86_64/syscall.c  from the frame a handler was entered with
+16      ioctl            fs/fcntl.c             terminals, sockets, ext4 resize
+17      pread64          fs/read_write.c
+18      pwrite64         fs/read_write.c
+19      readv            fs/read_write.c
+20      writev           fs/read_write.c
+21      access           arch/x86_64/syscall.c  faccessat from the working directory
+22      pipe             arch/x86_64/syscall.c  pipe2 with no flags
+23      select           fs/select.c            every 10 ms
+24      sched_yield      sched/sys.c
+25      mremap           mm/mmap.c              smaller in place; larger is -ENOMEM
+28      madvise          mm/mmap.c              MADV_DONTNEED gives pages back
+32      dup              fs/fcntl.c
+33      dup2             fs/fcntl.c
+34      pause            sched/sigcall.c
+35      nanosleep        sched/time.c
+36      getitimer        sched/sigcall.c        ITIMER_REAL
+37      alarm            sched/sigcall.c
+38      setitimer        sched/sigcall.c        ITIMER_REAL
+39      getpid           sched/sys.c
+41      socket           net/sockets.c          AF_INET, stream and datagram
+42      connect          net/sockets.c
+43      accept           arch/x86_64/syscall.c  accept4 with no flags
+44      sendto           net/sockets.c
+45      recvfrom         net/sockets.c
+46      sendmsg          net/sockets.c
+47      recvmsg          net/sockets.c
+48      shutdown         net/sockets.c
+49      bind             net/sockets.c
+50      listen           net/sockets.c
+51      getsockname      net/sockets.c
+52      getpeername      net/sockets.c
+54      setsockopt       net/sockets.c
+55      getsockopt       net/sockets.c
+56      clone            arch/x86_64/syscall.c  a new process only, see below
+57      fork             arch/x86_64/syscall.c  clone with SIGCHLD
+58      vfork            arch/x86_64/syscall.c  the parent waits for exec or exit
+59      execve           arch/x86_64/syscall.c  see the stack below
+60      exit             sched/exit.c
+61      wait4            sched/exit.c           with the child's rusage
+62      kill             sched/sigcall.c
+63      uname            sched/sys.c            velvet, its version, x86_64
+72      fcntl            fs/fcntl.c
+74      fsync            fs/open.c
+75      fdatasync        arch/x86_64/syscall.c  fsync
+76      truncate         fs/open.c
+77      ftruncate        fs/open.c
+79      getcwd           fs/open.c
+80      chdir            fs/open.c
+81      fchdir           fs/open.c
+82      rename           arch/x86_64/syscall.c  renameat2
+83      mkdir            arch/x86_64/syscall.c  mkdirat
+84      rmdir            arch/x86_64/syscall.c  unlinkat with AT_REMOVEDIR
+85      creat            arch/x86_64/syscall.c  open with O_CREAT, O_WRONLY, O_TRUNC
+86      link             arch/x86_64/syscall.c  linkat: -EPERM, files have one name
+87      unlink           arch/x86_64/syscall.c  unlinkat
+88      symlink          arch/x86_64/syscall.c  symlinkat
+89      readlink         arch/x86_64/syscall.c  readlinkat
+90      chmod            arch/x86_64/syscall.c  fchmodat
+91      fchmod           fs/open.c
+92      chown            arch/x86_64/syscall.c  fchownat
+93      fchown           fs/open.c
+94      lchown           arch/x86_64/syscall.c  fchownat, not following
+95      umask            fs/open.c
+96      gettimeofday     sched/time.c
+97      getrlimit        sched/sys.c
+98      getrusage        sched/sys.c
+99      sysinfo          sched/sys.c
+100     times            sched/sys.c
+102     getuid           sched/sys.c
+103     syslog           sched/sys.c            actions 0, 1, 3 and 10
+104     getgid           sched/sys.c
+105     setuid           sched/sys.c
+106     setgid           sched/sys.c
+107     geteuid          arch/x86_64/syscall.c  the uid: there is one per process
+108     getegid          arch/x86_64/syscall.c  the gid, likewise
+109     setpgid          sched/sys.c
+110     getppid          sched/sys.c
+111     getpgrp          sched/sys.c
+112     setsid           sched/sys.c
+113     setreuid         sched/sys.c
+114     setregid         sched/sys.c
+115     getgroups        sched/sys.c
+116     setgroups        sched/sys.c
+117     setresuid        sched/sys.c
+118     getresuid        sched/sys.c
+119     setresgid        sched/sys.c
+120     getresgid        sched/sys.c
+121     getpgid          sched/sys.c
+124     getsid           sched/sys.c
+127     rt_sigpending    sched/sigcall.c
+128     rt_sigtimedwait  sched/sigcall.c
+130     rt_sigsuspend    sched/sigcall.c
+131     sigaltstack      sched/sigcall.c
+157     prctl            sched/sys.c            PR_SET_NAME, PR_GET_NAME
+158     arch_prctl       arch/x86_64/syscall.c  ARCH_SET_FS and ARCH_GET_FS
+160     setrlimit        sched/sys.c
+162     sync             fs/open.c
+164     settimeofday     sched/time.c
+169     reboot           sched/sys.c            root; restart or power off
+170     sethostname      sched/sys.c            root; uname tells it
+171     setdomainname    sched/sys.c            root, likewise
+186     gettid           sched/sys.c
+200     tkill            sched/sigcall.c
+201     time             sched/time.c
+217     getdents64       fs/stat.c
+218     set_tid_address  sched/exit.c
+227     clock_settime    sched/time.c
+228     clock_gettime    sched/time.c
+229     clock_getres     sched/time.c
+230     clock_nanosleep  sched/time.c           not on a cpu-time clock
+231     exit_group       sched/exit.c
+234     tgkill           sched/sigcall.c
+257     openat           fs/open.c
+258     mkdirat          fs/namei.c
+260     fchownat         fs/open.c
+262     newfstatat       fs/stat.c
+263     unlinkat         fs/namei.c
+264     renameat         arch/x86_64/syscall.c  renameat2 with no flags
+265     linkat           fs/namei.c             -EPERM, files have one name
+266     symlinkat        fs/namei.c
+267     readlinkat       fs/namei.c
+268     fchmodat         fs/open.c
+269     faccessat        fs/open.c
+270     pselect6         fs/select.c            under its own mask
+271     ppoll            fs/select.c            under its own mask
+273     set_robust_list  sched/sys.c            accepted, for threads to come
+288     accept4          net/sockets.c
+292     dup3             fs/fcntl.c
+293     pipe2            fs/fcntl.c
+302     prlimit64        sched/sys.c
+306     syncfs           arch/x86_64/syscall.c  sync
+316     renameat2        fs/namei.c
+318     getrandom        sched/sys.c            chacha20, never blocks
+439     faccessat2       arch/x86_64/syscall.c  faccessat, with flags
+======  ===============  =====================  =========================================
 
-the numbers, ``struct user_stat``, ``struct user_from`` and ``struct
-user_resize`` are in
-``include/uapi/velvet/syscall.h``, with what the calls take beside it in
-the same directory: the signal numbers in ``signal.h``, the keys
-``getkey`` hands back in ``input.h``, and ``TTYMODE``'s flags in ``tty.h``.
-that directory is the part of the kernel a program compiles against, and
-it includes nothing else of the kernel's. the entry stub, the saved frame
-and the rest of what follows are x86's, in ``<asm/syscall.h>``.
+a call a signal cuts short
+--------------------------
+
+a call that waits, a read with nothing to read, a wait4 with no child
+done, a sleep, answers inside the kernel with one of three numbers no
+program sees, and the way back to ring 3 decides what it becomes:
+
+``ERESTARTSYS``
+   made again when no handler ran, or after a handler installed with
+   ``SA_RESTART``; ``-EINTR`` after any other handler.
+
+``ERESTARTNOHAND``
+   made again only when no handler ran. sigsuspend, pause, poll and
+   select are this kind, since they wait *for* the handler.
+
+``ERESTARTNOINTR``
+   made again whatever happened.
+
+making a call again is ``rip`` put back on the ``syscall`` instruction and
+the number back in ``rax``, so the program runs it again having never
+noticed. a sleep is told how much was left through its second argument.
+
+signals
+-------
+
+a handler is entered on the frame every x86_64 program expects: the
+return address, a ``ucontext`` holding the interrupted registers, the
+mask they ran under and a pointer to the saved fpu state, then the
+``siginfo``, all on the program's stack below the 128 byte red zone, or on
+the alternate stack when ``SA_ONSTACK`` asks and ``sigaltstack`` gave one.
+the return address is the ``sa_restorer`` the program installed, since
+the kernel puts no code in a program's memory. a handler with no
+restorer, or a frame with nowhere writable to go, cannot be entered, and
+the program is ended by ``SIGSEGV`` the way a fault ends it.
+``rt_sigreturn`` puts everything back from the frame, including what the
+handler changed in it.
+
+a fault in ring 3 is a signal with ``si_code`` and ``si_addr`` saying what
+happened: a page that is not mapped (``SEGV_MAPERR``) or not the
+program's to touch that way (``SEGV_ACCERR``), an instruction the cpu
+will not run (``SIGILL``), a division by zero (``SIGFPE``). a program
+with no handler for it ends by it, and its parent sees that in wait4.
+
+pid 1 is not ended by a signal it has not asked for: one with its
+default action is dropped on the way in, so init cannot be taken down by
+a stray ``kill``.
+
+a new program
+-------------
+
+execve replaces the caller's memory with the program at the path and
+enters it with the stack every psABI program starts from: ``argc``, then
+``argv`` and a NULL, ``envp`` and a NULL, then the auxiliary vector,
+pairs ending in ``AT_NULL``: ``AT_PHDR``, ``AT_PHENT``, ``AT_PHNUM``,
+``AT_PAGESZ``, ``AT_BASE``, ``AT_FLAGS``, ``AT_ENTRY``, the four ids,
+``AT_SECURE``, ``AT_CLKTCK``, ``AT_HWCAP``, ``AT_RANDOM`` (16 bytes from
+the kernel's generator) and ``AT_EXECFN``. every other register is zero.
+the arguments and the environment together may be 128 KiB.
+
+the environment is the program's and nowhere else: the kernel copies it
+across an exec and keeps nothing, and ``/proc/environ`` is the reader's
+own, read out of its own stack.
+
+the kernel starts ``/init`` with ``argv`` of ``/init`` and an environment
+of ``HOME=/`` and a ``TERM`` naming the terminal type its console speaks,
+on descriptors 0, 1 and 2 open on the console.
+
+pointers
+--------
 
 a pointer a program hands over is never read or written where it lies.
 it goes through ``copy_from_user``, ``copy_to_user`` or
@@ -101,76 +266,41 @@ below the end of ring 3 and copy. a page not touched yet, or one a forked
 child still shares, is made or copied by the fault the copy takes, the way
 a store from the program would. one that is not the program's at all, or
 not its to write, is a fault in an instruction listed in ``__ex_table``,
-and the fault handler sends it to its fixup: the call fails, and the
-machine carries on.
+and the fault handler sends it to its fixup: the call fails with
+``-EFAULT``, and the machine carries on.
 
-the door between ring 3 and here. numbers are the kernel's, deliberately small in number, there is no libc out there to satisfy, only the handful of things a program in this kernel could want
+what is not there yet
+---------------------
 
-wait(pid, &status, flags). pid is a child, or -1 for any. the status is what the child passed to exit, 128 plus the signal that ended it, or with WUNTRACED, WAIT_STOPPED plus the signal that stopped it, told once per stop. WNOHANG returns 0 rather than waiting when no child has anything to tell yet. -1 for no such child, or an interrupted wait
+these answer, but less than they will:
 
-four calls here are for a program drawing whole screens, and a shell needs none of them: it prints a prompt, reads a line and prints an answer, and the console keeps the cursor where the printing left it. an editor cannot work that way. it paints the entire screen, puts the cursor somewhere in the middle of what it painted, and waits for one keystroke rather than a line. getkey is the interesting one, because it is *also* how raw mode arrives. there is no flag anywhere saying "this terminal is raw": asking for a line gets the line discipline with its echo and its backspace handling, and asking for a key gets the key. the two questions are different, so they are different calls, and nothing has to remember which mode anything is in
+- clone makes a new process, never a thread: ``CLONE_VM``, ``CLONE_FILES``
+  and the rest of the sharing flags are ``-EINVAL``, and so is a signal
+  other than ``SIGCHLD``. ``CLONE_VFORK``, ``CLONE_SETTLS``,
+  ``CLONE_PARENT_SETTID``, ``CLONE_CHILD_SETTID`` and
+  ``CLONE_CHILD_CLEARTID`` work. there is no futex.
+- a file is mapped as a private copy. ``MAP_SHARED`` over a file is
+  refused with ``-ENODEV`` when it could be written, since nothing would
+  carry the writes back.
+- mremap only makes a mapping smaller.
+- poll and select look again every 10 ms rather than being woken.
+- the interval timers count real time only; ``ITIMER_VIRTUAL`` and
+  ``ITIMER_PROF`` are ``-EINVAL``.
+- sockets are ``AF_INET`` only, a stream or a datagram, and the network
+  is configured by nothing yet, so until it is, connecting anywhere is
+  ``-ENETUNREACH``.
+- a file has one name: link and linkat are ``-EPERM``.
 
-what a file is, for anyone who wants to know without reading it. a program sees it under its posix name, struct stat, and a libc that keeps its own can hold that one against this one field by field at compile time, so the two cannot drift apart without its build saying so. the padding is explicit so that neither side's compiler gets to decide it
+and these are ``-ENOSYS`` until they exist: mount and the rest of the
+mount table, futex, statx, utimensat, the ``*xattr`` calls, inotify,
+epoll, eventfd and timerfd.
 
-three calls are the smallest set that lets a program use udp: claim a port, send to somebody, take what arrived. there is no `connect` and no `accept`, because udp has neither, a socket here hears from everybody and says who each datagram came from, which is what makes a udp server one port rather than a connection per talker. recvfrom does not block. it says "nothing yet" and the program sleeps and asks again, which is a poll rather than a wait, honest for a kernel with no way yet to park a thread on a socket, and it keeps the receive path out of the business of waking anybody
+the kernel side
+---------------
 
-waiting, rather than asking again in a loop. every one of these takes a timeout in milliseconds, 0 to look and move on, which is exactly what recvfrom did before, and negative to wait as long as it takes
-
-the kernel's log, what dmesg reads. the first argument says what to do with it: SYSLOG_SIZE_BUFFER answers how big a buffer the whole log needs, and SYSLOG_READ_ALL copies the newest len bytes of it, oldest first, and leaves it as it was. anyone may read it, as anyone at the shell may run dmesg. the numbers are the ones every dmesg already passes
-
-everything the kernel is holding for the disk, written to it. 0 once the disk holds what the kernel believes, which it already does when nothing was waiting or there is no disk, and -1 when the drive refused part of it
-
-55 was fsck, a filesystem checker run in ring 0, until 0.4.4. a check is a program's work, done over the drive. the number is given to nothing else, so a program that still asks for it is told -1 rather than handed some other call
-
-grow or shrink the ext4 filesystem mounted at a path to a number of its own blocks, 0 for as far as its partition and its descriptor table both allow. root's alone. what happened goes in a struct user_resize: 0 when it is that size now, which it may already have been, and -1 when it is not
-
-what SYS_RESIZE did, in blocks of u_block_size: the partition's room, the most the descriptor table can describe, and the filesystem before and after. a shrink that would lose something refuses and counts what was in the way. when the call returns -1, arr_why says why
-
-57 was source, until 0.4.4: the kernel read a source archive off the medium it booted from and hashed it against a stamp the build linked in. reading a file off a drive is a program's work, and so is knowing which tree a system was built from. like 55, the number is given to nothing else
-
-become another program: the one at path, with argv, a NULL-ended array of strings, as its arguments, or with only its own path when argv is NULL. the pid, the descriptors, the working directory, the uid and the environment stay; caught signals go back to their defaults, since the code that caught them is gone. it does not return, unless it failed, and then it returns -1 with nothing changed. an argv longer than MAX_ARGS is refused rather than cut short
-
-a pipe the caller holds both ends of: the reading end's descriptor in fds[0] and the writing end's in fds[1], two ints. reads wait for something to arrive and return 0 once every writing end is closed
-
-make descriptor to another handle on whatever from is, closing what to held first: to, or -1 when from is not open. the two are the same open file, sharing its position, and a pipe's end closes only when every descriptor on it has
-
-put a process in a group: the caller or a child of its own, into a group named after it or one that already has a member of the same user. 0 for the pid means the caller and 0 for the group means the pid's own. sigsend with minus a pgid signals the whole group
-
-the terminal. ttyattach, root's alone, moves the caller onto console n and makes it the program that console belongs to, with its group in front; its children are born on that console. tcsetpgrp puts a group in front of the caller's console, which the console's program may do, and so may a member of the group in front, giving it away. tcgetpgrp says which group is in front, 0 while no program is. ctrl+c and ctrl+z are SIGINT and SIGTSTP to the group in front
-
-run as uid from now on. root may become anybody, which is how a login becomes the user it let in, and anyone else only who they already are, so nothing that is not root ever becomes root this way
-
-stop the machine: REBOOT_RESTART or REBOOT_POWER_OFF, and root's alone. on success it does not return. every program but init is asked to stop, then the kernel's own services, and the disk is written out and closed before the machine goes. -1 for anyone else, or for anything else asked
-
-move a file's position: to offset from its start, SEEK_SET, from where it is, SEEK_CUR, or from its end, SEEK_END, which is how a write goes on the end of a file rather than over its start. the new position, or -1 for a pipe, a terminal or a place outside the file
-
-the architecture's own settings for the caller. on x86_64 that is where %fs points, which is how a program finds its thread's data: ARCH_SET_FS sets it to addr, ARCH_GET_FS writes it into the uint64_t at addr. gs is the kernel's on this machine, so ARCH_SET_GS and ARCH_GET_GS are refused. 0, or -1 for an address that is not the program's. the number is the one x86_64 programs already use for it
-
-who a datagram came from, filled in by recvfrom. a struct rather than two more registers because the syscall abi has six and recvfrom would otherwise want seven
-
-every way into the kernel leaves one frame, struct pt_regs in asm/ptrace.h: an interrupt and an exception push it in isr.asm, and the call's entry stub builds the same thing by hand, with the user's stack, flags and return address where the cpu would have put them. vector holds the call's number, kept apart from rax, which becomes the answer. a signal handler, a fork and a program faulting in a call all read that one layout, and every way back to ring 3 is the same iretq, so whatever the frame holds is what the program gets back, rcx and r11 included
-
-leave for ring 3 through a frame rather than through a call. the only caller is a forked child, whose frame already holds the zero in rax that tells it it is the child
-
-how many times each has been asked for, and what to call it. the numbers are the cheapest possible picture of what a program actually does, one line of arithmetic per call, and afterwards you can say with certainty which door gets used
-
-which kernel stack `syscall` should land on. the scheduler keeps this pointed at the running thread, exactly like the tss rsp0
-
-where this core's kernel stack is, for the entry stub to stand on. per core, not global: the scheduler on one core must not be able to rewrite the stack another core is about to use
-
-the libc side
--------------
-
-the other side of the door is not in this tree. a libc wraps each of these
-in a function, so a program calls ``write(1, buf, len)`` rather than the
-number. a wrapper is one instruction and a return value, and the shape of
-each is the argument list above.
-
-the numbers are written down once, in ``include/uapi/velvet/``, which is the
-part of this tree a program is meant to include. a libc that includes those
-headers from the release it builds on, rather than keeping a copy, cannot
-disagree with the kernel about which number is which, and a ``struct
-stat`` checked against ``struct user_stat`` with ``_Static_assert``\ s,
-size and every offset, fails to compile when a layout drifts. a call added
-here is usable there from the first release that has it.
-
+the arch file's table maps each number to a small function that takes
+the saved frame apart into typed arguments and calls the ``sys_`` function
+in the subsystem the call belongs to, declared in
+``include/velvet/syscalls.h``. nothing below the table knows registers
+exist. the entry stub, the saved frame and the rest of what follows
+are x86's, in ``<asm/syscall.h>``.

@@ -13,6 +13,8 @@
 #include <velvet/sched.h>
 #include <velvet/thread.h>
 #include <uapi/velvet/errno.h>
+#include <uapi/velvet/fcntl.h>
+#include <uapi/velvet/poll.h>
 
 /* how many are alive. only for saying so, nothing depends on it */
 static size_t live;
@@ -152,7 +154,8 @@ size_t pipe_count(void)
 
 
 
-int64_t pipe_read(struct pipe *p, int pid, void *buf, uint64_t len)
+int64_t pipe_read(struct pipe *p, int pid, void *buf, uint64_t len,
+                  bool b_nonblock)
 {
     if (p == NULL || len == 0) {
         return -EINVAL;
@@ -167,6 +170,10 @@ int64_t pipe_read(struct pipe *p, int pid, void *buf, uint64_t len)
         if (p->writers == 0) {
             spin_unlock_irq(&p->lock, flags);
             return 0;           /* end of file, and the only kind there is */
+        }
+        if (b_nonblock) {
+            spin_unlock_irq(&p->lock, flags);
+            return -EAGAIN;
         }
         if (process_interrupt_pending(pid)) {
             spin_unlock_irq(&p->lock, flags);
@@ -188,7 +195,8 @@ int64_t pipe_read(struct pipe *p, int pid, void *buf, uint64_t len)
     return (int64_t)n;
 }
 
-int64_t pipe_write(struct pipe *p, int pid, const void *buf, uint64_t len)
+int64_t pipe_write(struct pipe *p, int pid, const void *buf, uint64_t len,
+                   bool b_nonblock)
 {
     if (p == NULL || len == 0) {
         return (p == NULL) ? -EINVAL : 0;
@@ -206,6 +214,10 @@ int64_t pipe_write(struct pipe *p, int pid, const void *buf, uint64_t len)
             return (done > 0) ? (int64_t)done : -EPIPE;
         }
         if (p->count == PIPE_BUF) {
+            if (b_nonblock) {
+                spin_unlock_irq(&p->lock, flags);
+                return (done > 0) ? (int64_t)done : -EAGAIN;
+            }
             if (process_interrupt_pending(pid)) {
                 spin_unlock_irq(&p->lock, flags);
                 return (done > 0) ? (int64_t)done : -EINTR;
@@ -241,13 +253,40 @@ static int caller(void)
 
 static int64_t end_read(struct file *p_file, void *p_buf, size_t sz_len)
 {
-    return pipe_read(p_file->p_private, caller(), p_buf, sz_len);
+    return pipe_read(p_file->p_private, caller(), p_buf, sz_len,
+                     (p_file->u_flags & O_NONBLOCK) != 0);
 }
 
 static int64_t end_write(struct file *p_file, const void *p_buf,
                          size_t sz_len)
 {
-    return pipe_write(p_file->p_private, caller(), p_buf, sz_len);
+    return pipe_write(p_file->p_private, caller(), p_buf, sz_len,
+                      (p_file->u_flags & O_NONBLOCK) != 0);
+}
+
+/*
+ * readable with bytes in it, or with every writer gone, when the read
+ * would be the end; writable with room, and an error when no reader is
+ * left to take what is written
+ */
+static uint32_t end_poll_read(struct file *p_file)
+{
+    struct pipe *p = p_file->p_private;
+    uint64_t u_flags = spin_lock_irq(&p->lock);
+    uint32_t u_mask = (p->count > 0 ? POLLIN : 0)
+                      | (p->writers == 0 ? POLLHUP : 0);
+    spin_unlock_irq(&p->lock, u_flags);
+    return u_mask;
+}
+
+static uint32_t end_poll_write(struct file *p_file)
+{
+    struct pipe *p = p_file->p_private;
+    uint64_t u_flags = spin_lock_irq(&p->lock);
+    uint32_t u_mask = (p->count < PIPE_BUF ? POLLOUT : 0)
+                      | (p->readers == 0 ? POLLERR : 0);
+    spin_unlock_irq(&p->lock, u_flags);
+    return u_mask;
 }
 
 static void end_release_read(struct file *p_file)
@@ -263,11 +302,13 @@ static void end_release_write(struct file *p_file)
 static const struct file_operations read_end_ops = {
     .read = end_read,
     .release = end_release_read,
+    .poll = end_poll_read,
 };
 
 static const struct file_operations write_end_ops = {
     .write = end_write,
     .release = end_release_write,
+    .poll = end_poll_write,
 };
 
 bool pipe_open(struct file **pp_read, struct file **pp_write)

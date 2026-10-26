@@ -9,13 +9,11 @@
 
 #define TEXT_MAX 8192
 
-int main(int i_argc, char **pp_argv)
+int main(void)
 {
     char arr_text[TEXT_MAX];
     int64_t i_len;
 
-    (void)i_argc;
-    (void)pp_argv;
     ksft_print_header();
     ksft_set_plan(4);
 
@@ -33,7 +31,7 @@ int main(int i_argc, char **pp_argv)
                      "and the program reading it\n");
 
     /* the tests run as guest, and a call trace is root's */
-    ksft_test_result(open("/proc/stack") < 0,
+    ksft_test_result(open("/proc/stack", O_RDONLY) < 0 && errno == EACCES,
                      "a guest may not read the kernel's call trace\n");
     ksft_finished();
 }

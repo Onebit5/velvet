@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * include/uapi/velvet/syslog.h
+ * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
+ * what syslog, the kernel log's reader, is asked.
+ */
+
+#ifndef UAPI_VELVET_SYSLOG_H
+#define UAPI_VELVET_SYSLOG_H
+
+#define SYSLOG_ACTION_CLOSE         0
+#define SYSLOG_ACTION_OPEN          1
+#define SYSLOG_ACTION_READ          2
+#define SYSLOG_ACTION_READ_ALL      3
+#define SYSLOG_ACTION_READ_CLEAR    4
+#define SYSLOG_ACTION_CLEAR         5
+#define SYSLOG_ACTION_CONSOLE_OFF   6
+#define SYSLOG_ACTION_CONSOLE_ON    7
+#define SYSLOG_ACTION_CONSOLE_LEVEL 8
+#define SYSLOG_ACTION_SIZE_UNREAD   9
+#define SYSLOG_ACTION_SIZE_BUFFER   10
+
+#endif

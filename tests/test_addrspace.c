@@ -500,16 +500,17 @@ int main(void)
 
         /* taking it back frees whatever was ever touched */
         uint64_t before_drop = outstanding;
-        CHECK(addrspace_drop_region(p, 0x700000), "a range can be taken back");
+        CHECK(addrspace_unmap(p, 0x700000, 0x10000),
+              "a range can be taken back");
         CHECK(outstanding == before_drop - 1,
               "and the one page that was made goes back with it");
         CHECK(vmm_translate(p->pml4, 0x704000) == VMM_NO_MAPPING,
               "with nothing left mapped");
         CHECK(!addrspace_fault(p, 0x704000, true, false),
               "and touching it is a wild pointer again");
-        CHECK(!addrspace_drop_region(p, 0x700000), "dropping it twice does nothing");
-        CHECK(!addrspace_drop_region(p, 0x704000),
-              "and it goes by the address it was made at, not one inside it");
+        CHECK(addrspace_unmap(p, 0x700000, 0x10000)
+              && outstanding == before_drop - 1,
+              "taking it back twice is nothing to take back, not an error");
 
         addrspace_destroy(p);
         CHECK(outstanding == level, "and nothing leaked");
@@ -562,8 +563,8 @@ int main(void)
 
         uint64_t empty = outstanding;
 
-        uint64_t a = addrspace_reserve(p, 4096, flags);
-        uint64_t b = addrspace_reserve(p, 100 * 4096, flags);
+        uint64_t a = addrspace_map_anon(p, 0, 4096, flags, false);
+        uint64_t b = addrspace_map_anon(p, 0, 100 * 4096, flags, false);
         CHECK(a != 0 && b != 0, "two ranges can be asked for");
         CHECK(a != b, "and they are different");
         CHECK(b >= a + 4096 || a >= b + 100 * 4096, "and do not overlap");
@@ -577,10 +578,20 @@ int main(void)
         CHECK(vmm_translate(p->pml4, b + 50 * 4096) != VMM_NO_MAPPING,
               "and makes exactly that page");
 
-        /* a length that would not fit anywhere */
-        CHECK(addrspace_reserve(p, 0, flags) == 0, "asking for nothing gets nothing");
+        CHECK(addrspace_map_anon(p, 0, 0, flags, false) == 0,
+              "asking for nothing gets nothing");
 
-        CHECK(addrspace_drop_region(p, b), "and it can be given back");
+        uint64_t u_before = outstanding;
+        CHECK(addrspace_discard(p, b + 50 * 4096, 4096)
+              && vmm_translate(p->pml4, b + 50 * 4096) == VMM_NO_MAPPING
+              && outstanding == u_before - 1,
+              "a page can be given back with its range kept");
+        CHECK(addrspace_fault(p, b + 50 * 4096, false, false),
+              "and the next touch makes it again");
+        CHECK(!addrspace_discard(p, b + 100 * 4096, 4096),
+              "though not past the end of the range");
+
+        CHECK(addrspace_unmap(p, b, 100 * 4096), "and it can be given back");
         CHECK(!addrspace_fault(p, b + 50 * 4096, true, false),
               "after which it is nobody's memory again");
 

@@ -13,31 +13,46 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* where every source of typing meets. */
+/*
+ * a key is a byte, or one of these, above any byte so the two cannot be
+ * confused. the first few reach a program as the sequences a terminal
+ * sends for them; the rest are the terminal's own and reach nobody
+ */
+#define KEY_UP     0x100
+#define KEY_DOWN   0x101
+#define KEY_LEFT   0x102
+#define KEY_RIGHT  0x103
+#define KEY_DELETE 0x104
+#define KEY_HOME   0x105
+#define KEY_END    0x106
+#define KEY_PGUP   0x107
+#define KEY_PGDN   0x108
 
-/* the ones a program can be handed by getkey are the abi */
-#include <uapi/velvet/input.h>
-
-/* and these never leave the kernel */
-#define KEY_CTRL_C 0x03
-#define KEY_CTRL_Z 0x1a
-
-/* alt+f1 through f4, and shift with the page keys. */
-#define KEY_CONSOLE_1  0x110    /* .. 0x113 */
+/* alt+f1 through f5, and shift with the page keys. */
+#define KEY_CONSOLE_1  0x110    /* .. 0x114 */
 #define KEY_SCROLL_UP  0x120
 #define KEY_SCROLL_DOWN 0x121
 
-/* called from irq handlers. wakes whoever is waiting */
+/*
+ * called from irq handlers: a key typed at the console on the screen,
+ * offered to the terminal first. wakes whoever is waiting
+ */
 void input_push(int key);
 
-int  input_getchar(void);           /* next key, or -1 if nothing waiting */
+/* the next byte typed at a console, or -1 when there is none */
+int input_take(unsigned u_console);
+
+/* whether a byte is waiting there, without taking it */
+bool input_waiting(unsigned u_console);
+
+/* everything typed there and not yet read, thrown away */
+void input_flush(unsigned u_console);
 
 /*
- * wait for a key. the calling thread sleeps on a waitq and costs
- * nothing until an irq wakes it, which is how a program can sit at a
- * prompt all day without burning a single cycle. -1 instead when the
- * caller's process is interrupted with no key waiting
+ * sleep until a byte is waiting there, which costs nothing until an irq
+ * wakes the thread: true, or false when a signal for the caller's
+ * process ended the wait first
  */
-int  input_getchar_blocking(void);
+bool input_wait(unsigned u_console);
 
 #endif

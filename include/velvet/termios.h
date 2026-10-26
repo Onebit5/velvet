@@ -9,50 +9,51 @@
 #define VELVET_TERMIOS_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
-/* how a terminal treats what is typed at it. */
-
-struct term_mode {
-    /* keys arrive one at a time rather than a line at a time */
-    bool raw;
-
-    /* what is typed appears on the screen. */
-    bool echo;
-
-    /* ctrl+c and ctrl+z are signals rather than bytes. */
-    bool signals;
-};
+#include <uapi/velvet/termios.h>
 
 /*
- * what a terminal does by default: everything on, which is what a shell
- * wants and what every program has had until now
+ * the decisions of a terminal's line discipline, one byte at a time,
+ * over the termios a program sets. nothing here knows about buffers,
+ * screens or processes, so every rule is checked without a machine
  */
-#define TERM_COOKED ((struct term_mode){ .raw = false, .echo = true, \
-                                         .signals = true })
 
 /*
- * and what an editor asks for: keys as they come, nothing echoed, and
- * ctrl+c delivered as a byte
+ * what a terminal is when it is made, and what a shell expects: a line
+ * at a time, echoed and editable, ctrl+c a signal, return a newline
  */
-#define TERM_RAW    ((struct term_mode){ .raw = true, .echo = false, \
-                                         .signals = false })
+void term_default(struct termios *p_t);
 
 enum term_action {
-    TERM_KEEP,          /* an ordinary character: put it in the buffer */
-    TERM_ERASE,         /* backspace: take one back */
-    TERM_DELIVER,       /* the read is complete */
-    TERM_END,           /* end of input: ctrl+d on an empty line */
-    TERM_INTERRUPT,     /* ctrl+c, as a signal */
-    TERM_SUSPEND,       /* ctrl+z, likewise */
-    TERM_IGNORE         /* nothing at all */
+    TERM_KEEP,          /* into the line */
+    TERM_ERASE,         /* the last one in the line taken back */
+    TERM_WERASE,        /* and the word before the cursor */
+    TERM_KILL,          /* and the whole line */
+    TERM_DELIVER,       /* kept, and the line is complete */
+    TERM_EOF,           /* the line complete as it is, nothing kept */
 };
 
-/* what to do about `key`, given the mode and how much has been typed so far. */
-enum term_action term_input(const struct term_mode *m, int key,
-                            uint64_t so_far);
+/* a byte as the input flags make it: \r as \n and so on, or -1 when dropped */
+int term_translate(const struct termios *p_t, uint8_t u_c);
 
-/* whether this key should appear on the screen. */
-bool term_should_echo(const struct term_mode *m, int key);
+/*
+ * the signal a byte is under ISIG, and 0 for one that is not: SIGINT,
+ * SIGQUIT or SIGTSTP
+ */
+int term_signal(const struct termios *p_t, uint8_t u_c);
+
+/* what a byte does to a line being typed, with ICANON on */
+enum term_action term_input(const struct termios *p_t, uint8_t u_c);
+
+/*
+ * what appears for a byte as it is kept: itself, or a control character
+ * as ^X, into p_out, at least two bytes. how many
+ */
+size_t term_echo(const struct termios *p_t, uint8_t u_c, char *p_out);
+
+/* the columns one kept byte took, which is what an erase takes back */
+size_t term_width(const struct termios *p_t, uint8_t u_c);
 
 #endif
