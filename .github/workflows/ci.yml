@@ -25,15 +25,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # the runner takes its packages from ubuntu's amd64v3 archive, and
+      # musl's static libc there is built for a cpu with avx2, which the
+      # selftests would link into programs for any x86_64. no variants
+      # is the plain amd64 archive, and said on the command line it wins
+      # over the runner's own apt.conf.d, whatever its files are called
       - name: install the toolchain
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            nasm musl-tools qemu-system-x86
+          sudo apt-get -o APT::Architecture-Variants= update -qq
+          sudo apt-get -o APT::Architecture-Variants= install -y \
+            --no-install-recommends nasm musl-tools qemu-system-x86
 
       - name: versions, for when something inevitably breaks
         run: |
           gcc --version | head -1
+          gcc -Q --help=target | grep -m1 'march='
           nasm -v
           dpkg-query -W musl-tools
           qemu-system-x86_64 --version | head -1

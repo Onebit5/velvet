@@ -16,7 +16,10 @@ requirements
 - ``python3``, for the checks and image builders in ``tools/``. no
   third-party packages
 - ``musl-gcc``, with musl's static libc, for the selftests and the
-  ``/init`` the image carries. ``MUSL_GCC=path`` names one built anywhere
+  ``/init`` the image carries. ``MUSL_GCC=path`` names one built anywhere.
+  the libc has to be built for any x86_64, as the programs are: the one
+  in ubuntu's amd64v3 archive is built for a cpu with avx2, and a
+  selftest linked with it stops at its first avx2 instruction
 - ``qemu-system-x86_64``, only for ``make run``, ``make boottest`` and
   ``make kselftest``
 

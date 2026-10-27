@@ -297,7 +297,13 @@ FORCE:
 # musl-gcc, from the distribution's musl-tools or a musl built anywhere
 MUSL_GCC ?= musl-gcc
 
-SELFTEST_CFLAGS := -std=gnu11 -Wall -Wextra -O1 -g -fno-pie \
+# every program built for the machine is built for any x86_64, as the
+# kernel is. what gcc assumes otherwise is its distribution's choice,
+# and the one in ubuntu's amd64v3 archive assumes bmi2 and avx2, which
+# qemu's default cpu does not have
+MACHINE_CPU := -march=x86-64
+
+SELFTEST_CFLAGS := -std=gnu11 -Wall -Wextra -O1 -g -fno-pie $(MACHINE_CPU) \
                    -fno-omit-frame-pointer -idirafter include/uapi
 SELFTEST_LDFLAGS := -static -no-pie -Wl,--build-id=none
 
