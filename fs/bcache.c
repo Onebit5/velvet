@@ -10,8 +10,14 @@
 
 /* no lock in here, and that is deliberate rather than forgotten. */
 
+/*
+ * a block is known by the drive it came from as well as its number, the
+ * drive being the ctx a read or write is handed, so one cache serves
+ * every drive and two of them never answer for each other
+ */
 struct block {
-    uint64_t index;         /* which block of the disk, not which sector */
+    void    *ctx;           /* which drive */
+    uint64_t index;         /* which block of it, not which sector */
     bool     valid;
     bool     dirty;
     uint64_t used_at;       /* the clock reading when it was last touched */
@@ -23,26 +29,25 @@ static struct bcache_stats stats;
 
 static bcache_in  disk_read;
 static bcache_out disk_write;
-static void      *disk_ctx;
 
 /* a counter rather than a real clock. */
 static uint64_t tick;
 
-void bcache_init(bcache_in read, bcache_out write, void *ctx)
+void bcache_init(bcache_in read, bcache_out write)
 {
     disk_read = read;
     disk_write = write;
-    disk_ctx = ctx;
 
     memset(blocks, 0, sizeof blocks);
     memset(&stats, 0, sizeof stats);
     tick = 0;
 }
 
-static struct block *find(uint64_t index)
+static struct block *find(void *ctx, uint64_t index)
 {
     for (size_t i = 0; i < BCACHE_BLOCKS; i++) {
-        if (blocks[i].valid && blocks[i].index == index) {
+        if (blocks[i].valid && blocks[i].ctx == ctx
+            && blocks[i].index == index) {
             return &blocks[i];
         }
     }
@@ -57,7 +62,7 @@ static bool flush(struct block *b)
     if (disk_write == NULL) {
         return false;
     }
-    if (!disk_write(disk_ctx, b->index * BCACHE_BLOCK_SECTORS,
+    if (!disk_write(b->ctx, b->index * BCACHE_BLOCK_SECTORS,
                     BCACHE_BLOCK_SECTORS, b->data)) {
         return false;
     }
@@ -88,9 +93,9 @@ static struct block *victim(void)
 }
 
 /* the block holding `index`, read in if it is not here yet */
-static struct block *fetch(uint64_t index)
+static struct block *fetch(void *ctx, uint64_t index)
 {
-    struct block *b = find(index);
+    struct block *b = find(ctx, index);
     if (b != NULL) {
         stats.hits++;
         b->used_at = ++tick;
@@ -103,7 +108,7 @@ static struct block *fetch(uint64_t index)
         return NULL;
     }
 
-    if (!disk_read(disk_ctx, index * BCACHE_BLOCK_SECTORS,
+    if (!disk_read(ctx, index * BCACHE_BLOCK_SECTORS,
                    BCACHE_BLOCK_SECTORS, b->data)) {
         /*
          * it may have scribbled over half of what was there, so what is
@@ -114,6 +119,7 @@ static struct block *fetch(uint64_t index)
         return NULL;
     }
 
+    b->ctx = ctx;
     b->index = index;
     b->valid = true;
     b->dirty = false;
@@ -123,11 +129,10 @@ static struct block *fetch(uint64_t index)
 
 bool bcache_read(void *ctx, uint64_t lba, uint32_t count, void *buf)
 {
-    (void)ctx;
     uint8_t *out = buf;
 
     while (count > 0) {
-        struct block *b = fetch(bcache_block_of(lba));
+        struct block *b = fetch(ctx, bcache_block_of(lba));
         if (b == NULL) {
             return false;
         }
@@ -149,7 +154,6 @@ bool bcache_read(void *ctx, uint64_t lba, uint32_t count, void *buf)
 
 bool bcache_write(void *ctx, uint64_t lba, uint32_t count, const void *buf)
 {
-    (void)ctx;
     const uint8_t *in = buf;
 
     while (count > 0) {
@@ -171,12 +175,13 @@ bool bcache_write(void *ctx, uint64_t lba, uint32_t count, const void *buf)
              * writing a large file cost one trip to the drive per block
              * rather than two
              */
-            b = find(index);
+            b = find(ctx, index);
             if (b == NULL) {
                 b = victim();
                 if (b == NULL) {
                     return false;
                 }
+                b->ctx = ctx;
                 b->index = index;
                 b->valid = true;
                 b->dirty = false;
@@ -187,7 +192,7 @@ bool bcache_write(void *ctx, uint64_t lba, uint32_t count, const void *buf)
              * part of a block. the rest of it has to be right, so it
              * has to be read
              */
-            b = fetch(index);
+            b = fetch(ctx, index);
             if (b == NULL) {
                 return false;
             }

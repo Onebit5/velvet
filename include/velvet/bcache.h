@@ -23,7 +23,7 @@ typedef bool (*bcache_in)(void *ctx, uint64_t lba, uint32_t count, void *buf);
 typedef bool (*bcache_out)(void *ctx, uint64_t lba, uint32_t count,
                            const void *buf);
 
-void bcache_init(bcache_in read, bcache_out write, void *ctx);
+void bcache_init(bcache_in read, bcache_out write);
 
 bool bcache_read(void *ctx, uint64_t lba, uint32_t count, void *buf);
 bool bcache_write(void *ctx, uint64_t lba, uint32_t count, const void *buf);

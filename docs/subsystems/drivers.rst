@@ -207,6 +207,14 @@ polled, because a disk read that blocks the kernel for a millisecond is not
 worth an interrupt handler yet. every wait is bounded, so a controller that
 never answers cannot hang the boot.
 
+each drive is a port, and each port gets its own command list and its own
+page for the drive's replies when the controller is found. a read or a write
+is handed the drive it is for, as the ``ctx`` from ``ahci_drive(n)``, so
+reaching another drive is naming it: no port is stopped, pointed somewhere
+else and started again in the middle of the kernel's work. the one page every
+transfer is copied through is shared by all of them, and the disk layer's
+lock is what keeps two transfers out of it at once.
+
 ``part.c`` reads partition tables. up to 0.2.14 the kernel believed a disk
 was a filesystem; it asked each drive whether byte 1024 looked like an ext2
 superblock. a real disk begins with a *table* saying where several

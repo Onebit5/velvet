@@ -115,41 +115,62 @@ struct fis_h2d {
 
 
 
-static struct hba_mem  *hba;
-static struct hba_port *port;
+static struct hba_mem *hba;
 
-static struct cmd_header *cmd_list;     /* 32 headers */
-static struct cmd_table  *cmd_tab;
-static uint8_t           *bounce;       /* one page, for the dma */
+/*
+ * a drive is a port, and each port has its own command list and its own
+ * place for the drive's replies, set up once when the controller is
+ * found. which drive a command is for is then the argument it is given,
+ * rather than whichever port was last pointed at, and nothing has to be
+ * stopped and started again to reach another drive. the ctx a read or a
+ * write is handed is the drive itself, so no ctx names a drive by
+ * accident: NULL is no drive at all
+ */
+struct ahci_drive {
+    struct hba_port   *p_port;
+    struct cmd_header *p_cmd_list;      /* 32 headers */
+    struct cmd_table  *p_cmd_tab;
+    uint64_t u_cmd_list_phys, u_cmd_tab_phys, u_fis_phys;
+    uint64_t u_sectors;
+    char     arr_model[41];
+    char     arr_serial[21];
+};
 
-static uint64_t cmd_list_phys, cmd_tab_phys, fis_phys, bounce_phys;
+static struct ahci_drive s_arr_drives[AHCI_MAX_DISKS];
+static size_t s_sz_drives;
 
-static bool     present;
+/*
+ * one page every transfer passes through, for every drive. the callers
+ * are the disk layer's and hold its lock, which is what keeps two
+ * transfers out of it at once
+ */
+static uint8_t *bounce;
+static uint64_t bounce_phys;
 static bool     addr64;
-static uint64_t sector_count;
-static char     model[41];
-static char     serial[21];
 
-bool ahci_present(void)
+void *ahci_drive(size_t sz_which)
 {
-    return present;
-}
-const char *ahci_model(void)
-{
-    return model;
-}
-const char *ahci_serial(void)
-{
-    return serial;
-}
-uint64_t ahci_sectors(void)
-{
-    return sector_count;
+    return (sz_which < s_sz_drives) ? &s_arr_drives[sz_which] : NULL;
 }
 
+const char *ahci_model(size_t sz_which)
+{
+    return (sz_which < s_sz_drives) ? s_arr_drives[sz_which].arr_model : "";
+}
+
+const char *ahci_serial(size_t sz_which)
+{
+    return (sz_which < s_sz_drives) ? s_arr_drives[sz_which].arr_serial : "";
+}
+
+uint64_t ahci_sectors(size_t sz_which)
+{
+    return (sz_which < s_sz_drives) ? s_arr_drives[sz_which].u_sectors : 0;
+}
 
 
-static bool stop_port(void)
+
+static bool stop_port(struct hba_port *port)
 {
     port->cmd &= ~PORT_CMD_ST;
     port->cmd &= ~PORT_CMD_FRE;
@@ -163,7 +184,7 @@ static bool stop_port(void)
     return false;
 }
 
-static bool start_port(void)
+static bool start_port(struct hba_port *port)
 {
     for (uint64_t spin = 0; spin < SPIN_LIMIT; spin++) {
         if (!(port->cmd & PORT_CMD_CR)) {
@@ -176,7 +197,7 @@ static bool start_port(void)
 }
 
 /* wait for the drive to stop being busy */
-static bool wait_ready(void)
+static bool wait_ready(struct hba_port *port)
 {
     for (uint64_t spin = 0; spin < SPIN_LIMIT; spin++) {
         if (!(port->tfd & (TFD_BSY | TFD_DRQ))) {
@@ -188,16 +209,18 @@ static bool wait_ready(void)
 
 
 
-static bool run_command(uint8_t command, uint64_t lba, uint32_t count,
-                        uint32_t bytes, bool writing)
+static bool run_command(struct ahci_drive *p_drive, uint8_t command,
+                        uint64_t lba, uint32_t count, uint32_t bytes,
+                        bool writing)
 {
-    if (!wait_ready()) {
+    struct hba_port *port = p_drive->p_port;
+    if (!wait_ready(port)) {
         return false;
     }
 
     port->is = (uint32_t)-1;        /* clear anything left from last time */
 
-    struct cmd_header *header = &cmd_list[0];
+    struct cmd_header *header = &p_drive->p_cmd_list[0];
     header->cfl_flags = (uint8_t)((sizeof(struct fis_h2d) / 4) & 0x1f);
     if (writing) {
         header->cfl_flags |= (1u << 6);     /* this one moves data outward */
@@ -205,9 +228,10 @@ static bool run_command(uint8_t command, uint64_t lba, uint32_t count,
     header->flags2 = 0;
     header->prdtl = 1;
     header->prdbc = 0;
-    header->ctba = (uint32_t)cmd_tab_phys;
-    header->ctbau = (uint32_t)(cmd_tab_phys >> 32);
+    header->ctba = (uint32_t)p_drive->u_cmd_tab_phys;
+    header->ctbau = (uint32_t)(p_drive->u_cmd_tab_phys >> 32);
 
+    struct cmd_table *cmd_tab = p_drive->p_cmd_tab;
     memset(cmd_tab, 0, sizeof *cmd_tab);
     cmd_tab->prdt[0].dba = (uint32_t)bounce_phys;
     cmd_tab->prdt[0].dbau = (uint32_t)(bounce_phys >> 32);
@@ -259,14 +283,15 @@ static bool run_command(uint8_t command, uint64_t lba, uint32_t count,
 
 bool ahci_read(void *ctx, uint64_t lba, uint32_t count, void *buf)
 {
-    (void)ctx;
-    if (!present || count == 0 || count > AHCI_MAX_SECTORS) {
+    struct ahci_drive *p_drive = ctx;
+    if (p_drive == NULL || count == 0 || count > AHCI_MAX_SECTORS) {
         return false;
     }
-    if (lba + count > sector_count) {
+    if (lba + count > p_drive->u_sectors) {
         return false;
     }
-    if (!run_command(ATA_READ_DMA_EX, lba, count, count * AHCI_SECTOR, false)) {
+    if (!run_command(p_drive, ATA_READ_DMA_EX, lba, count,
+                     count * AHCI_SECTOR, false)) {
         return false;
     }
     memcpy(buf, bounce, (size_t)count * AHCI_SECTOR);
@@ -275,15 +300,16 @@ bool ahci_read(void *ctx, uint64_t lba, uint32_t count, void *buf)
 
 bool ahci_write(void *ctx, uint64_t lba, uint32_t count, const void *buf)
 {
-    (void)ctx;
-    if (!present || count == 0 || count > AHCI_MAX_SECTORS) {
+    struct ahci_drive *p_drive = ctx;
+    if (p_drive == NULL || count == 0 || count > AHCI_MAX_SECTORS) {
         return false;
     }
-    if (lba + count > sector_count) {
+    if (lba + count > p_drive->u_sectors) {
         return false;
     }
     memcpy(bounce, buf, (size_t)count * AHCI_SECTOR);
-    return run_command(ATA_WRITE_DMA_EX, lba, count, count * AHCI_SECTOR, true);
+    return run_command(p_drive, ATA_WRITE_DMA_EX, lba, count,
+                       count * AHCI_SECTOR, true);
 }
 
 
@@ -305,29 +331,30 @@ static void ata_string(const uint16_t *words, size_t count, char *out)
     }
 }
 
-static bool identify(void)
+static bool identify(struct ahci_drive *p_drive)
 {
-    if (!run_command(ATA_IDENTIFY, 0, 1, AHCI_SECTOR, false)) {
+    if (!run_command(p_drive, ATA_IDENTIFY, 0, 1, AHCI_SECTOR, false)) {
         return false;
     }
 
     const uint16_t *words = (const uint16_t *)bounce;
-    ata_string(&words[27], 20, model);
-    ata_string(&words[10], 10, serial);
+    ata_string(&words[27], 20, p_drive->arr_model);
+    ata_string(&words[10], 10, p_drive->arr_serial);
 
     /*
      * word 83 bit 10 says it understands 48-bit addressing, which is
      * what tells the kernel whether words 100..103 mean anything
      */
     if (words[83] & (1u << 10)) {
-        sector_count = (uint64_t)words[100]
-                     | ((uint64_t)words[101] << 16)
-                     | ((uint64_t)words[102] << 32)
-                     | ((uint64_t)words[103] << 48);
+        p_drive->u_sectors = (uint64_t)words[100]
+                           | ((uint64_t)words[101] << 16)
+                           | ((uint64_t)words[102] << 32)
+                           | ((uint64_t)words[103] << 48);
     } else {
-        sector_count = (uint64_t)words[60] | ((uint64_t)words[61] << 16);
+        p_drive->u_sectors = (uint64_t)words[60]
+                           | ((uint64_t)words[61] << 16);
     }
-    return sector_count > 0;
+    return p_drive->u_sectors > 0;
 }
 
 
@@ -347,16 +374,82 @@ static const struct pci_device *find_controller(void)
     return NULL;
 }
 
-/* every port with a real disk on it. */
-static uint8_t usable[AHCI_MAX_DISKS];
-static size_t usable_count;
+/* a zeroed page the controller can reach, or 0 */
+static uint64_t dma_page(void)
+{
+    uint64_t u_phys = pmm_alloc();
+    if (u_phys == 0) {
+        return 0;
+    }
+    if (!addr64 && (u_phys >> 32) != 0) {
+        pmm_free(u_phys);
+        return 0;
+    }
+    memset(pmm_phys_to_virt(u_phys), 0, PAGE_SIZE);
+    return u_phys;
+}
 
-static void find_ports(void)
+static void give_back(uint64_t u_phys)
+{
+    if (u_phys != 0) {
+        pmm_free(u_phys);
+    }
+}
+
+/* point a stopped port at its drive's pages and start it: whether it answers */
+static bool run_port(struct ahci_drive *p_drive)
+{
+    struct hba_port *port = p_drive->p_port;
+    p_drive->p_cmd_list = pmm_phys_to_virt(p_drive->u_cmd_list_phys);
+    p_drive->p_cmd_tab = pmm_phys_to_virt(p_drive->u_cmd_tab_phys);
+
+    port->clb  = (uint32_t)p_drive->u_cmd_list_phys;
+    port->clbu = (uint32_t)(p_drive->u_cmd_list_phys >> 32);
+    port->fb   = (uint32_t)p_drive->u_fis_phys;
+    port->fbu  = (uint32_t)(p_drive->u_fis_phys >> 32);
+    port->serr = (uint32_t)-1;      /* write ones to clear */
+    port->is   = (uint32_t)-1;
+    port->ie   = 0;                 /* the kernel polls; no interrupts wanted */
+
+    return start_port(port) && identify(p_drive);
+}
+
+/* a port with a disk on it, made ready for commands: whether it took */
+static bool start_drive(struct ahci_drive *p_drive, struct hba_port *port)
+{
+    memset(p_drive, 0, sizeof *p_drive);
+    p_drive->p_port = port;
+    p_drive->u_cmd_list_phys = dma_page();
+    p_drive->u_cmd_tab_phys = dma_page();
+    p_drive->u_fis_phys = dma_page();
+
+    if (p_drive->u_cmd_list_phys != 0 && p_drive->u_cmd_tab_phys != 0
+        && p_drive->u_fis_phys != 0 && stop_port(port)) {
+        if (run_port(p_drive)) {
+            return true;
+        }
+        /*
+         * the port has the pages' addresses now and may still write a
+         * reply into one, so they go back only once it has stopped, and
+         * stay its for good if it will not
+         */
+        if (!stop_port(port)) {
+            return false;
+        }
+    }
+    give_back(p_drive->u_cmd_list_phys);
+    give_back(p_drive->u_cmd_tab_phys);
+    give_back(p_drive->u_fis_phys);
+    return false;
+}
+
+/* every port with a real disk on it, in port order. */
+static void find_drives(void)
 {
     uint32_t implemented = hba->pi;
-    usable_count = 0;
+    s_sz_drives = 0;
 
-    for (int i = 0; i < 32 && usable_count < AHCI_MAX_DISKS; i++) {
+    for (int i = 0; i < 32 && s_sz_drives < AHCI_MAX_DISKS; i++) {
         if (!(implemented & (1u << i))) {
             continue;
         }
@@ -371,55 +464,20 @@ static void find_ports(void)
         if (p->sig != SIG_SATA) {
             continue;   /* an atapi drive or a port multiplier, not a disk */
         }
-        usable[usable_count++] = (uint8_t)i;
+        if (start_drive(&s_arr_drives[s_sz_drives], p)) {
+            s_sz_drives++;
+        }
     }
 }
 
 size_t ahci_disk_count(void)
 {
-    return usable_count;
-}
-
-/* point the one set of command structures at a different port. */
-bool ahci_use_disk(size_t which)
-{
-    if (which >= usable_count) {
-        return false;
-    }
-    present = false;
-    port = &hba->ports[usable[which]];
-
-    memset(cmd_list, 0, PAGE_SIZE);
-    memset(cmd_tab, 0, PAGE_SIZE);
-    memset(pmm_phys_to_virt(fis_phys), 0, PAGE_SIZE);
-
-    if (!stop_port()) {
-        return false;
-    }
-
-    port->clb  = (uint32_t)cmd_list_phys;
-    port->clbu = (uint32_t)(cmd_list_phys >> 32);
-    port->fb   = (uint32_t)fis_phys;
-    port->fbu  = (uint32_t)(fis_phys >> 32);
-    port->serr = (uint32_t)-1;      /* write ones to clear */
-    port->is   = (uint32_t)-1;
-    port->ie   = 0;                 /* the kernel polls; no interrupts wanted */
-
-    if (!start_port()) {
-        return false;
-    }
-
-    present = true;
-    if (!identify()) {
-        present = false;
-        return false;
-    }
-    return true;
+    return s_sz_drives;
 }
 
 bool ahci_init(void)
 {
-    present = false;
+    s_sz_drives = 0;
 
     const struct pci_device *dev = find_controller();
     if (dev == NULL) {
@@ -451,36 +509,18 @@ bool ahci_init(void)
     hba->ghc |= GHC_AE;             /* talk ahci, not legacy ide */
     addr64 = (hba->cap & (1u << 31)) != 0;
 
-    find_ports();
-    if (usable_count == 0) {
-        return false;               /* a controller, but nothing plugged in */
-    }
-
-    /* three pages: the command list, the frames the drive sends back, and one command table. */
-    cmd_list_phys = pmm_alloc();
-    fis_phys      = pmm_alloc();
-    cmd_tab_phys  = pmm_alloc();
-    bounce_phys   = pmm_alloc();
-    if (cmd_list_phys == 0 || fis_phys == 0
-        || cmd_tab_phys == 0 || bounce_phys == 0) {
-        return false;
-    }
-
     /*
      * a controller that cannot address memory above 4 GiB must not be
      * handed a buffer up there. rather than fight the allocator, say so
      * and carry on without a disk
      */
-    if (!addr64 && (cmd_list_phys >> 32 || fis_phys >> 32
-                    || cmd_tab_phys >> 32 || bounce_phys >> 32)) {
-        kprintf("ahci       : controller is 32-bit only and its buffers are not\n");
+    bounce_phys = dma_page();
+    if (bounce_phys == 0) {
+        kprintf("ahci       : no page the controller can reach\n");
         return false;
     }
+    bounce = pmm_phys_to_virt(bounce_phys);
 
-    cmd_list = pmm_phys_to_virt(cmd_list_phys);
-    cmd_tab  = pmm_phys_to_virt(cmd_tab_phys);
-    bounce   = pmm_phys_to_virt(bounce_phys);
-
-    /* the ports are found but none is chosen. */
-    return true;
+    find_drives();
+    return s_sz_drives > 0;
 }

@@ -35,10 +35,10 @@ because a rename that copies is not a rename.
 
 every call that touches a file says which of the two disks it means
 (``DISK_ROOT`` or ``DISK_WORK``). the alternative was a second copy of each
-with ``work_`` in front of it, and two copies of anything drift. both are on
-the same drive, and that is the block cache's doing rather than a
-simplification: the cache holds absolute sector numbers and is bound to
-whichever drive is selected.
+with ``work_`` in front of it, and two copies of anything drift. the two can
+be on different drives: the block cache knows a block by its drive as well as
+its number, so one cache holds both and neither answers for the other. at
+boot the second is looked for on the drive the first was found on.
 
 /proc
 -----
@@ -543,7 +543,7 @@ file says which of them it means.
     and the last one: everything out, then the journal closed behind it.
 
 ``size_t   disk_drive_count(void);``
-    everything else here goes through the mounted filesystem, which is the right shape for every question except one: writing a *different* drive, where there is no filesystem yet and the bytes have to land at particular sector numbers. these bypass the block cache entirely, and that is deliberate rather than lazy. the cache holds absolute sector numbers and is therefore bound to whichever drive is selected, a cached block written back after the drive changed would land on the wrong disk, which is the worst failure this kernel could have. the drive is selected, the transfer happens, and the mounted drive is selected again before returning, so nothing above notices
+    everything else here goes through the mounted filesystem, which is the right shape for every question except one: writing a drive by its sector numbers, where there may be no filesystem yet. these go straight to the drive and around the block cache, so the bytes are on the drive when the call returns. the cache does not see them either, so a raw write to sectors a mounted filesystem is using leaves the cache holding an older copy, which it goes on answering with and may write back over the new one: keeping clear of a mounted partition is the caller's business. every drive is ready for commands from the moment it is found, so nothing is switched to reach one and nothing is switched back
 
 ``int disk_mounted_drive(void);``
     which drive the mounted filesystem is on, or -1 if nothing is mounted.
@@ -725,8 +725,8 @@ is the price of the speed, and it is why ``sync`` exists.
 ``typedef bool (*bcache_in)(void *ctx, uint64_t lba, uint32_t count, void *buf);``
     how to reach the actual drive.
 
-``void bcache_init(bcache_in read, bcache_out write, void *ctx);``
-    point it at a drive. forgets everything it was holding, which is the right thing when the drive underneath has changed and the wrong thing to do without syncing first, so mounting a second disk over a dirty cache is a caller's mistake, not something to paper over here
+``void bcache_init(bcache_in read, bcache_out write);``
+    say how to reach the drives. a block is known by the ``ctx`` it was read or written with as well as its number, and that ``ctx`` is what it goes back to the drive with, so one cache serves every drive. forgets everything it was holding, which is the wrong thing to do without syncing first, so calling it over a dirty cache is a caller's mistake, not something to paper over here
 
 ``bool bcache_read(void *ctx, uint64_t lba, uint32_t count, void *buf);``
     the two calls the filesystem makes.

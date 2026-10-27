@@ -32,8 +32,9 @@ struct mount {
     enum disk_kind kind;
     bool           ready;
 
-    /* the partition it looks through. */
+    /* the partition it looks through, and the drive that partition is on */
     uint64_t first, sectors;
+    void    *p_drive;
 
     int          part;          /* which entry of `table`, or -1 */
     const char  *at;            /* where the vfs hangs it */
@@ -163,7 +164,7 @@ static bool view_read(void *ctx, uint64_t lba, uint32_t count, void *buf)
          */
         return false;
     }
-    return bcache_read(NULL, m->first + lba, count, buf);
+    return bcache_read(m->p_drive, m->first + lba, count, buf);
 }
 
 static bool view_write(void *ctx, uint64_t lba, uint32_t count,
@@ -173,7 +174,7 @@ static bool view_write(void *ctx, uint64_t lba, uint32_t count,
     if (lba + count > m->sectors) {
         return false;
     }
-    return bcache_write(NULL, m->first + lba, count, buf);
+    return bcache_write(m->p_drive, m->first + lba, count, buf);
 }
 
 /*
@@ -200,6 +201,7 @@ static bool try_mount(struct mount *m, size_t index)
 
     m->first = e->p.first_lba;
     m->sectors = e->p.sectors;
+    m->p_drive = ahci_drive(e->p.drive);
 
     /* the filesystem is handed the view rather than the drive. */
     if (ext4_mount(&m->ext, view_read, view_write, m)) {
@@ -230,17 +232,6 @@ static bool try_mount(struct mount *m, size_t index)
     return false;
 }
 
-/* the drive the mounts live on, selected once and left selected. */
-static bool select_drive(unsigned drive)
-{
-    if (!ahci_use_disk(drive)) {
-        return false;
-    }
-    bcache_sync();
-    bcache_init(ahci_read, ahci_write, NULL);
-    return true;
-}
-
 bool disk_mount(void)
 {
     for (size_t i = 0; i < DISK_MOUNTS; i++) {
@@ -255,18 +246,17 @@ bool disk_mount(void)
     if (!ahci_init()) {
         return false;
     }
+    bcache_init(ahci_read, ahci_write);
 
     /* every drive, and everything each of them says it holds. */
     for (size_t i = 0; i < ahci_disk_count() && table_count < DISK_PARTS_MAX;
          i++) {
-        if (!ahci_use_disk(i)) {
-            continue;
-        }
+        void *p_drive = ahci_drive(i);
 
-        /* while this drive is selected anyway: is it a boot medium? */
+        /* is it a boot medium? */
         if (system_drive < 0) {
             uint8_t sector[PART_SECTOR];
-            if (ahci_read(NULL, BOOT_TABLE_LBA, 1, sector)) {
+            if (ahci_read(p_drive, BOOT_TABLE_LBA, 1, sector)) {
                 struct boot_table t;
                 memcpy(&t, sector, sizeof t);
                 if (t.magic == BOOT_MAGIC) {
@@ -277,7 +267,7 @@ bool disk_mount(void)
 
         struct partition found[PART_MAX];
         enum part_scheme scheme;
-        size_t n = part_scan(ahci_read, NULL, found, PART_MAX, &scheme);
+        size_t n = part_scan(ahci_read, p_drive, found, PART_MAX, &scheme);
 
         if (n == 0) {
             /*
@@ -290,7 +280,7 @@ bool disk_mount(void)
             memset(e, 0, sizeof *e);
             e->p.drive = (unsigned)i;
             e->p.first_lba = 0;
-            e->p.sectors = ahci_sectors();
+            e->p.sectors = ahci_sectors(i);
             e->p.kind = "whole drive";
             e->scheme = PART_NONE;
             e->fs = "";
@@ -310,7 +300,7 @@ bool disk_mount(void)
     /* and now the first one with something on it. */
     struct mount *root = at(DISK_ROOT);
     for (size_t i = 0; i < table_count; i++) {
-        if (!select_drive(table[i].p.drive) || !try_mount(root, i)) {
+        if (!try_mount(root, i)) {
             continue;
         }
 
@@ -356,19 +346,9 @@ bool disk_mount_part(size_t which, size_t index)
         return false;
     }
     /*
-     * the same drive as everything else, for the reason the cache gives
-     * at the top of this file. a partition on another drive is a
-     * partition this cannot reach without a second cache
-     */
-    struct mount *root = at(DISK_ROOT);
-    if (root->ready && root->part >= 0
-        && table[index].p.drive != table[root->part].p.drive) {
-        return false;
-    }
-    /*
-     * and not the one that is already somewhere else, because two
-     * mounts of one filesystem are two block caches' worth of state
-     * disagreeing about the same disk
+     * not the one that is already somewhere else, because two mounts of
+     * one filesystem are two copies of its state disagreeing about the
+     * same disk
      */
     for (size_t i = 0; i < DISK_MOUNTS; i++) {
         if (i != which && mounts[i].ready && mounts[i].part == (int)index) {
@@ -779,7 +759,7 @@ bool disk_symlink(size_t which, const char *path, const char *target,
     return ok;
 }
 
-/* everything the cache is holding, onto the drive. */
+/* everything the cache is holding, onto the drives. */
 bool disk_sync(void)
 {
     /*
@@ -947,9 +927,16 @@ const char *disk_label(size_t which)
     return (m->kind == DISK_EXT4) ? m->ext.label : m->fat.label;
 }
 
+/* the drive the root filesystem is on, or the first there is */
+static size_t main_drive(void)
+{
+    int i_drive = disk_mounted_drive();
+    return (i_drive >= 0) ? (size_t)i_drive : 0;
+}
+
 const char *disk_model(void)
 {
-    return ahci_model();
+    return ahci_model(main_drive());
 }
 
 /* is the mounted filesystem writing through a log? */
@@ -961,7 +948,7 @@ bool disk_journalled(size_t which)
 
 uint64_t disk_bytes(void)
 {
-    return ahci_sectors() * AHCI_SECTOR;
+    return ahci_sectors(main_drive()) * AHCI_SECTOR;
 }
 
 /* ext2 calls them blocks and fat calls them clusters. */
@@ -1014,30 +1001,9 @@ static bool with_drive(unsigned drive, bool writing, uint64_t lba,
     if (drive >= ahci_disk_count()) {
         return false;
     }
-
     uint64_t flags = enter();
-
-    /*
-     * where to go back to. the mounted filesystem is still pointing at
-     * its own drive and has no idea any of this is happening
-     */
-    int root = mounts[DISK_ROOT].part;
-    int back = (root >= 0) ? (int)table[root].p.drive : -1;
-
-    /* and the drive that is already selected is not selected again. */
-    bool same = (back >= 0 && back == (int)drive);
-
-    bool ok = false;
-    if (same || ahci_use_disk(drive)) {
-        ok = writing ? ahci_write(NULL, lba, count, buf)
-                     : ahci_read(NULL, lba, count, buf);
-    }
-
-    /* put it back whatever happened. */
-    if (back >= 0 && !same) {
-        ahci_use_disk((size_t)back);
-    }
-
+    bool ok = writing ? ahci_write(ahci_drive(drive), lba, count, buf)
+                      : ahci_read(ahci_drive(drive), lba, count, buf);
     leave(flags);
     return ok;
 }
@@ -1056,52 +1022,12 @@ bool disk_raw_write(unsigned drive, uint64_t lba, uint32_t count,
 
 uint64_t disk_drive_sectors(unsigned drive)
 {
-    if (drive >= ahci_disk_count()) {
-        return 0;
-    }
-    /* the same selection, and therefore the same lock */
-    uint64_t flags = enter();
-    int root = mounts[DISK_ROOT].part;
-    int back = (root >= 0) ? (int)table[root].p.drive : -1;
-    uint64_t n = 0;
-    if (ahci_use_disk(drive)) {
-        n = ahci_sectors();
-    }
-    if (back >= 0) {
-        ahci_use_disk((size_t)back);
-    }
-    leave(flags);
-    return n;
+    return ahci_sectors(drive);
 }
 
-/*
- * FIXME: this is the one function in the file that picks a disk without
- * taking disk_lock, and it is the one that must not. the switch below
- * stops the port, starts it again and re-reads the identify page, and
- * every sibling that does the same thing wraps that in enter() and
- * leave(); this one can therefore land in the middle of another thread's
- * transfer. the pointer it returns is the worse half: ahci_model() hands
- * back a static buffer inside the driver, and the switch back on the way
- * out rewrites exactly that buffer, so the caller can print a string
- * that changes under it. take the lock, and copy the name out instead of
- * returning a pointer into a controller that is about to be
- * reconfigured.
- */
 const char *disk_drive_model(unsigned drive)
 {
-    if (drive >= ahci_disk_count()) {
-        return "?";
-    }
-    int root = mounts[DISK_ROOT].part;
-    int back = (root >= 0) ? (int)table[root].p.drive : -1;
-    const char *m = "?";
-    if (ahci_use_disk(drive)) {
-        m = ahci_model();
-    }
-    if (back >= 0) {
-        ahci_use_disk((size_t)back);
-    }
-    return m;
+    return (drive < ahci_disk_count()) ? ahci_model(drive) : "?";
 }
 
 int disk_system_drive(void)
