@@ -137,13 +137,38 @@ bool disk_sync(void);
 
 bool disk_unmount(void);
 
-size_t   disk_drive_count(void);
-uint64_t disk_drive_sectors(unsigned drive);
-const char *disk_drive_model(unsigned drive);
+/*
+ * the drives, and the partitions their tables name, as block devices:
+ * every drive first, in the order its port is, then every partition in
+ * the order the scan found it. each is known by its number, major 8 and
+ * minor drive * 16 + partition, which is how a program names one, and a
+ * partition past the fifteenth has no number and is not one
+ */
+#define DISK_BLOCK_MAJOR    8
+#define DISK_BLOCK_NAME_MAX 8
 
-bool disk_raw_read(unsigned drive, uint64_t lba, uint32_t count, void *buf);
-bool disk_raw_write(unsigned drive, uint64_t lba, uint32_t count,
-                    const void *buf);
+struct disk_block {
+    char     arr_name[DISK_BLOCK_NAME_MAX];     /* sda, or sda1 */
+    uint32_t u_rdev;                            /* major << 8 | minor */
+    unsigned u_drive;
+    uint64_t u_first, u_sectors;
+};
+
+/* how many, which is which, or NULL past the end or for no such number */
+size_t disk_block_count(void);
+const struct disk_block *disk_block_at(size_t sz_index);
+const struct disk_block *disk_block_find(uint32_t u_rdev);
+
+/*
+ * bytes of one, from u_offset on, through the block cache, so what a
+ * program reads is what a filesystem on it last wrote and what it writes
+ * is what that filesystem reads next: how many, 0 for a read at the end,
+ * -ENOSPC for a write that starts there, or -EIO
+ */
+int64_t disk_block_read(const struct disk_block *p_block, uint64_t u_offset,
+                        void *p_buf, uint64_t u_len);
+int64_t disk_block_write(const struct disk_block *p_block, uint64_t u_offset,
+                         const void *p_buf, uint64_t u_len);
 
 int disk_mounted_drive(void);
 

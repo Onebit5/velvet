@@ -16,6 +16,7 @@
 #include <velvet/bcache.h>
 #include <velvet/part.h>
 #include <velvet/boot.h>
+#include <uapi/velvet/errno.h>
 
 /*
  * the filesystem keeps one sector of scratch and every path through
@@ -143,6 +144,9 @@ static size_t table_count;
 
 /* which drive carries the boot table, found during the scan above. */
 static int system_drive = -1;
+
+/* the drives and partitions as block devices, listed once the scan is done */
+static void list_blocks(void);
 
 /*
  * the view a filesystem has of its own partition: every read and write
@@ -296,6 +300,8 @@ bool disk_mount(void)
             e->fs = "";
         }
     }
+
+    list_blocks();
 
     /* and now the first one with something on it. */
     struct mount *root = at(DISK_ROOT);
@@ -763,12 +769,11 @@ bool disk_symlink(size_t which, const char *path, const char *target,
 bool disk_sync(void)
 {
     /*
-     * one cache under both mounts, so this is one question however many
-     * filesystems are hanging off it
+     * one cache under every drive, so this is one question however many
+     * filesystems are hanging off it, and whether any is: a program
+     * writing a drive by the byte leaves its blocks there too. a cache
+     * nothing was ever put in has nothing to write
      */
-    if (!mounts[DISK_ROOT].ready) {
-        return true;    /* nothing to lose */
-    }
     uint64_t flags = enter();
     bool ok = bcache_sync();
     leave(flags);
@@ -792,9 +797,6 @@ bool disk_sync(void)
  */
 bool disk_unmount(void)
 {
-    if (!mounts[DISK_ROOT].ready) {
-        return true;
-    }
     uint64_t flags = enter();
     bool ok = true;
     /*
@@ -896,9 +898,6 @@ uint64_t disk_ceiling(size_t which)
 
 bool disk_dirty(void)
 {
-    if (!mounts[DISK_ROOT].ready) {
-        return false;
-    }
     uint64_t flags = enter();
     bool any = bcache_dirty();
     leave(flags);
@@ -907,10 +906,6 @@ bool disk_dirty(void)
 
 void disk_cache_stats(struct bcache_stats *out)
 {
-    memset(out, 0, sizeof *out);
-    if (!mounts[DISK_ROOT].ready) {
-        return;
-    }
     uint64_t flags = enter();
     bcache_get_stats(out);
     leave(flags);
@@ -988,46 +983,164 @@ bool disk_usage(size_t which, uint64_t *used_bytes, uint64_t *total_bytes)
 }
 
 
-/* the cache is deliberately not involved. */
+/* a minor has four bits for the partition, and 0 is the whole drive */
+#define BLOCK_PARTS_MAX 15
 
-size_t disk_drive_count(void)
-{
-    return ahci_disk_count();
-}
+/* every drive and every partition, listed once, when the drives are found */
+#define DISK_BLOCKS_MAX (AHCI_MAX_DISKS + DISK_PARTS_MAX)
 
-static bool with_drive(unsigned drive, bool writing, uint64_t lba,
-                       uint32_t count, void *buf)
+static struct disk_block s_arr_blocks[DISK_BLOCKS_MAX];
+static size_t s_sz_blocks;
+
+/* sda for a drive, sda1 for the first partition on it */
+static void block_name(char *str_out, unsigned u_drive, unsigned u_part)
 {
-    if (drive >= ahci_disk_count()) {
-        return false;
+    size_t sz_at = 0;
+    str_out[sz_at++] = 's';
+    str_out[sz_at++] = 'd';
+    str_out[sz_at++] = (char)('a' + u_drive);
+    if (u_part >= 10) {
+        str_out[sz_at++] = (char)('0' + u_part / 10);
     }
-    uint64_t flags = enter();
-    bool ok = writing ? ahci_write(ahci_drive(drive), lba, count, buf)
-                      : ahci_read(ahci_drive(drive), lba, count, buf);
-    leave(flags);
-    return ok;
+    if (u_part > 0) {
+        str_out[sz_at++] = (char)('0' + u_part % 10);
+    }
+    str_out[sz_at] = '\0';
 }
 
-bool disk_raw_read(unsigned drive, uint64_t lba, uint32_t count, void *buf)
+static void add_block(unsigned u_drive, unsigned u_part, uint64_t u_first,
+                      uint64_t u_sectors)
 {
-    return with_drive(drive, false, lba, count, buf);
+    if (s_sz_blocks == DISK_BLOCKS_MAX) {
+        return;
+    }
+    struct disk_block *p_out = &s_arr_blocks[s_sz_blocks++];
+    memset(p_out, 0, sizeof *p_out);
+    block_name(p_out->arr_name, u_drive, u_part);
+    p_out->u_rdev = (uint32_t)DISK_BLOCK_MAJOR << 8 | (u_drive * 16 + u_part);
+    p_out->u_drive = u_drive;
+    p_out->u_first = u_first;
+    p_out->u_sectors = u_sectors;
 }
 
-bool disk_raw_write(unsigned drive, uint64_t lba, uint32_t count,
-                    const void *buf)
+/*
+ * the drives, then the partitions. a drive with no table has only
+ * itself, and the entry standing in for it in `table` is not a partition
+ */
+static void list_blocks(void)
 {
-    /* the cast is the one place in this file where const is given up. */
-    return with_drive(drive, true, lba, count, (void *)(uintptr_t)buf);
+    s_sz_blocks = 0;
+    for (size_t sz_at = 0; sz_at < ahci_disk_count(); sz_at++) {
+        add_block((unsigned)sz_at, 0, 0, ahci_sectors(sz_at));
+    }
+    for (size_t sz_at = 0; sz_at < table_count; sz_at++) {
+        const struct partition *p_part = &table[sz_at].p;
+        if (table[sz_at].scheme != PART_NONE && p_part->index > 0
+            && p_part->index <= BLOCK_PARTS_MAX) {
+            add_block(p_part->drive, p_part->index, p_part->first_lba,
+                      p_part->sectors);
+        }
+    }
 }
 
-uint64_t disk_drive_sectors(unsigned drive)
+size_t disk_block_count(void)
 {
-    return ahci_sectors(drive);
+    return s_sz_blocks;
 }
 
-const char *disk_drive_model(unsigned drive)
+const struct disk_block *disk_block_at(size_t sz_index)
 {
-    return (drive < ahci_disk_count()) ? ahci_model(drive) : "?";
+    return (sz_index < s_sz_blocks) ? &s_arr_blocks[sz_index] : NULL;
+}
+
+const struct disk_block *disk_block_find(uint32_t u_rdev)
+{
+    for (size_t sz_at = 0; sz_at < s_sz_blocks; sz_at++) {
+        if (s_arr_blocks[sz_at].u_rdev == u_rdev) {
+            return &s_arr_blocks[sz_at];
+        }
+    }
+    return NULL;
+}
+
+/*
+ * a run of bytes moved between the caller and the cache. whole sectors
+ * go straight through, a block at most at a time and never across a
+ * block's edge, so each step is one block of the cache's and the lock is
+ * let go between them; the sector a run starts or ends inside of is read
+ * whole, and for a write put back whole, which is what a drive that
+ * moves nothing smaller than a sector asks
+ */
+static int64_t block_io(const struct disk_block *p_block, bool b_write,
+                        uint64_t u_offset, uint8_t *p_bytes, uint64_t u_len)
+{
+    uint64_t u_size = p_block->u_sectors * AHCI_SECTOR;
+    if (u_offset >= u_size) {
+        return (b_write && u_len > 0) ? -ENOSPC : 0;
+    }
+    if (u_len > u_size - u_offset) {
+        u_len = u_size - u_offset;
+    }
+
+    void *p_drive = ahci_drive(p_block->u_drive);
+    uint64_t u_done = 0;
+    while (u_done < u_len) {
+        uint64_t u_pos = u_offset + u_done;
+        uint64_t u_lba = p_block->u_first + u_pos / AHCI_SECTOR;
+        uint64_t u_in = u_pos % AHCI_SECTOR;
+        uint64_t u_left = u_len - u_done;
+        uint8_t *p_at = p_bytes + u_done;
+        uint64_t u_step;
+        bool b_ok;
+
+        uint64_t flags = enter();
+        if (u_in == 0 && u_left >= AHCI_SECTOR) {
+            uint64_t u_count = BCACHE_BLOCK_SECTORS
+                             - u_lba % BCACHE_BLOCK_SECTORS;
+            if (u_count > u_left / AHCI_SECTOR) {
+                u_count = u_left / AHCI_SECTOR;
+            }
+            u_step = u_count * AHCI_SECTOR;
+            b_ok = b_write ? bcache_write(p_drive, u_lba, (uint32_t)u_count,
+                                          p_at)
+                           : bcache_read(p_drive, u_lba, (uint32_t)u_count,
+                                         p_at);
+        } else {
+            uint8_t arr_sector[AHCI_SECTOR];
+            u_step = AHCI_SECTOR - u_in;
+            if (u_step > u_left) {
+                u_step = u_left;
+            }
+            b_ok = bcache_read(p_drive, u_lba, 1, arr_sector);
+            if (b_ok && b_write) {
+                memcpy(arr_sector + u_in, p_at, u_step);
+                b_ok = bcache_write(p_drive, u_lba, 1, arr_sector);
+            } else if (b_ok) {
+                memcpy(p_at, arr_sector + u_in, u_step);
+            }
+        }
+        leave(flags);
+
+        if (!b_ok) {
+            return (u_done > 0) ? (int64_t)u_done : -EIO;
+        }
+        u_done += u_step;
+    }
+    return (int64_t)u_done;
+}
+
+int64_t disk_block_read(const struct disk_block *p_block, uint64_t u_offset,
+                        void *p_buf, uint64_t u_len)
+{
+    return block_io(p_block, false, u_offset, p_buf, u_len);
+}
+
+int64_t disk_block_write(const struct disk_block *p_block, uint64_t u_offset,
+                         const void *p_buf, uint64_t u_len)
+{
+    /* a write only reads from the bytes it is given, so the const holds */
+    return block_io(p_block, true, u_offset, (uint8_t *)(uintptr_t)p_buf,
+                    u_len);
 }
 
 int disk_system_drive(void)

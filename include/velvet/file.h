@@ -30,6 +30,7 @@ enum file_type {
     FILE_TYPE_CHAR,             /* a device in /dev */
     FILE_TYPE_DIR,              /* read with getdents64, not read */
     FILE_TYPE_SOCKET,
+    FILE_TYPE_BLOCK,            /* a drive or a partition, by the byte */
 };
 
 struct file;

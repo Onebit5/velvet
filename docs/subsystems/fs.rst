@@ -77,12 +77,31 @@ filesystem is where.
 /dev
 ----
 
-``dev.c`` is a table of character devices, opened by name: ``null``, which
-reads as the end and swallows what is written; ``zero``, which reads as
-zeroes; ``full``, which reads as zeroes and has no room to write;
-``random`` and ``urandom``, the same generator; and ``tty`` and
-``console``, the terminal. each is a file with operations of its own, and
-like /proc nothing under /dev is stored anywhere.
+``dev.c`` is a table of devices, opened by name: ``null``, which reads as
+the end and swallows what is written; ``zero``, which reads as zeroes;
+``full``, which reads as zeroes and has no room to write; ``random`` and
+``urandom``, the same generator; and ``tty`` and ``console``, the
+terminal. each is a file with operations of its own, and like /proc
+nothing under /dev is stored anywhere.
+
+after them come the drives and their partitions, as the disk layer found
+them: ``sda`` for the first drive and ``sda1`` for the first partition
+its table names, block devices numbered major 8 and minor drive * 16 +
+partition. they are root's, mode 0600, because a drive is every file on
+it whoever's those are. ``blockdev.c`` is what one is when open: read and
+written by the byte from the position, the sector a run starts or ends
+inside of read whole and put back whole. ``BLKGETSIZE64`` and
+``BLKGETSIZE`` say how big it is, ``BLKSSZGET`` that a sector is 512
+bytes, and ``BLKFLSBUF``, an ``fsync`` or the last close write out what
+is held for it.
+
+a drive's bytes go through the block cache, the same one a filesystem on
+it goes through, rather than around it. a program reading a partition
+under a mounted filesystem reads what that filesystem last wrote, and one
+writing it changes what the filesystem reads next: there is no second
+copy of any block to disagree with the first. what the filesystem holds
+in memory and has not written yet it does not see, which is what
+``sync`` is for.
 
 the generator is ``drivers/random.c``: a chacha20 keystream whose key
 changes after every request, to the first block the old one makes, which
@@ -542,8 +561,11 @@ file says which of them it means.
 ``bool disk_unmount(void);``
     and the last one: everything out, then the journal closed behind it.
 
-``size_t   disk_drive_count(void);``
-    everything else here goes through the mounted filesystem, which is the right shape for every question except one: writing a drive by its sector numbers, where there may be no filesystem yet. these go straight to the drive and around the block cache, so the bytes are on the drive when the call returns. the cache does not see them either, so a raw write to sectors a mounted filesystem is using leaves the cache holding an older copy, which it goes on answering with and may write back over the new one: keeping clear of a mounted partition is the caller's business. every drive is ready for commands from the moment it is found, so nothing is switched to reach one and nothing is switched back
+``const struct disk_block *disk_block_at(size_t sz_index);``
+    everything else here goes through a mounted filesystem, which is the right shape for every question except one: a drive by its bytes, where there may be no filesystem yet. the drives and the partitions their tables name are listed once, when the drives are found, every drive first and then every partition, each with the number /dev gives it
+
+``int64_t disk_block_read(const struct disk_block *p_block, uint64_t u_offset, void *p_buf, uint64_t u_len);``
+    and its bytes, through the block cache, so a program and a filesystem on the same drive see one copy of every block between them. every drive is ready for commands from the moment it is found, so nothing is switched to reach one and nothing is switched back
 
 ``int disk_mounted_drive(void);``
     which drive the mounted filesystem is on, or -1 if nothing is mounted.

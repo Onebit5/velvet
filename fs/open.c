@@ -344,7 +344,7 @@ int64_t sys_umask(uint32_t u_mask)
 
 int64_t sys_sync(void)
 {
-    if (disk_ready(DISK_ROOT) && disk_dirty()) {
+    if (disk_dirty()) {
         disk_sync();
     }
     return 0;
@@ -361,7 +361,7 @@ int64_t sys_fsync(int i_fd)
         return -EBADF;
     }
     file_put(p_file);
-    if (disk_ready(DISK_ROOT) && disk_dirty() && !disk_sync()) {
+    if (disk_dirty() && !disk_sync()) {
         return -EIO;
     }
     return 0;

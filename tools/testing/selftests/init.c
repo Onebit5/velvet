@@ -3,8 +3,8 @@
  * tools/testing/selftests/init.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
  * the init of the kernel's own image: asks which selftests to run, runs
- * each one as a guest, the way a system runs a program, and powers the
- * machine off. the kernel hands the machine to /init, and this is the
+ * each one as a guest, the way a system runs a program, or as root when
+ * only root may run it, and powers the machine off. the kernel hands the machine to /init, and this is the
  * smallest /init that checks anything.
  */
 
@@ -164,12 +164,27 @@ static bool understand(bool *p_none)
 }
 
 /*
+ * a test only root may run is one the guest could not run at all, so it
+ * runs as root: the file's own permissions say whose it is, and a test
+ * that checks what only root may do is installed so nobody else may
+ * run it
+ */
+static bool is_roots(const char *str_path)
+{
+    struct stat st;
+
+    return stat(str_path, &st) == 0 && (st.st_mode & S_IXOTH) == 0;
+}
+
+/*
  * the child: in a group of its own, with the signals pid 1 ignores back
  * to what a program expects, and in front of the terminal before
  * anything else. a guest only after that, because nothing it does
- * should depend on having been root
+ * should depend on having been root, unless it is a test of what only
+ * root may do
  */
-static __attribute__((noreturn)) void become(const char *str_path)
+static __attribute__((noreturn)) void become(const char *str_path,
+                                             bool b_as_root)
 {
     char *arr_argv[] = { (char *)str_path, NULL };
 
@@ -178,7 +193,7 @@ static __attribute__((noreturn)) void become(const char *str_path)
     while (tcgetpgrp(0) != getpid()) {
         ksft_sleep_ms(1);
     }
-    if (setgid(GUEST_UID) != 0 || setuid(GUEST_UID) != 0) {
+    if (!b_as_root && (setgid(GUEST_UID) != 0 || setuid(GUEST_UID) != 0)) {
         _exit(126);
     }
     execv(str_path, arr_argv);
@@ -210,11 +225,15 @@ static int run(const char *str_name)
     int i_status = 0;
 
     path_of(str_name, arr_path, sizeof arr_path);
+    bool b_as_root = is_roots(arr_path);
+    if (b_as_root) {
+        say("selftests/%s is root's, and runs as root\n", str_name);
+    }
     say("selftests/%s starts\n", str_name);
 
     pid_t i_pid = fork();
     if (i_pid == 0) {
-        become(arr_path);
+        become(arr_path, b_as_root);
     }
     if (i_pid < 0) {
         return 127 << 8;

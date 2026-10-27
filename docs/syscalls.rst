@@ -53,7 +53,7 @@ number  name             where                  notes
 13      rt_sigaction     sched/sigcall.c
 14      rt_sigprocmask   sched/sigcall.c
 15      rt_sigreturn     arch/x86_64/syscall.c  from the frame a handler was entered with
-16      ioctl            fs/fcntl.c             terminals, sockets, ext4 resize
+16      ioctl            fs/fcntl.c             terminals, sockets, drives, ext4 resize
 17      pread64          fs/read_write.c
 18      pwrite64         fs/read_write.c
 19      readv            fs/read_write.c

@@ -2,10 +2,13 @@
 /*
  * fs/dev.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * /dev: nothing, zeroes, a full disk, randomness and the terminals.
+ * /dev: nothing, zeroes, a full disk, randomness, the terminals, and the
+ * drives with their partitions.
  */
 
 #include <velvet/dev.h>
+#include <velvet/blockdev.h>
+#include <velvet/disk.h>
 #include <velvet/file.h>
 #include <velvet/random.h>
 #include <velvet/string.h>
@@ -122,30 +125,54 @@ static const struct dev_entry s_arr_devs[] = {
 
 #define DEV_COUNT (sizeof s_arr_devs / sizeof s_arr_devs[0])
 
+/* and after them, the drives and partitions the disk layer found */
+static const struct disk_block *block_at(size_t sz_index)
+{
+    return (sz_index >= DEV_COUNT) ? disk_block_at(sz_index - DEV_COUNT)
+                                   : NULL;
+}
+
 size_t dev_count(void)
 {
-    return DEV_COUNT;
+    return DEV_COUNT + disk_block_count();
 }
 
 const char *dev_name(size_t sz_index)
 {
+    const struct disk_block *p_block = block_at(sz_index);
+    if (p_block != NULL) {
+        return p_block->arr_name;
+    }
     return (sz_index < DEV_COUNT) ? s_arr_devs[sz_index].str_name : NULL;
 }
 
 uint32_t dev_mode(size_t sz_index)
 {
+    if (block_at(sz_index) != NULL) {
+        return DEV_BLOCK_MODE;
+    }
     return (sz_index < DEV_COUNT) ? s_arr_devs[sz_index].u_mode : 0;
 }
 
 uint32_t dev_rdev(size_t sz_index)
 {
+    const struct disk_block *p_block = block_at(sz_index);
+    if (p_block != NULL) {
+        return p_block->u_rdev;
+    }
     return (sz_index < DEV_COUNT) ? s_arr_devs[sz_index].u_rdev : 0;
+}
+
+bool dev_is_block(size_t sz_index)
+{
+    return block_at(sz_index) != NULL;
 }
 
 bool dev_find(const char *str_name, size_t *p_index)
 {
-    for (size_t sz_at = 0; sz_at < DEV_COUNT; sz_at++) {
-        if (strcmp(s_arr_devs[sz_at].str_name, str_name) == 0) {
+    size_t sz_count = dev_count();
+    for (size_t sz_at = 0; sz_at < sz_count; sz_at++) {
+        if (strcmp(dev_name(sz_at), str_name) == 0) {
             *p_index = sz_at;
             return true;
         }
@@ -155,6 +182,10 @@ bool dev_find(const char *str_name, size_t *p_index)
 
 struct file *dev_open(size_t sz_index, uint32_t u_mode)
 {
+    const struct disk_block *p_block = block_at(sz_index);
+    if (p_block != NULL) {
+        return blockdev_open(p_block->u_rdev, u_mode);
+    }
     if (sz_index >= DEV_COUNT) {
         return NULL;
     }

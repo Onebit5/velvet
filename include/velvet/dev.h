@@ -2,7 +2,7 @@
 /*
  * include/velvet/dev.h
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * /dev: the character devices a program opens by name.
+ * /dev: the devices a program opens by name.
  */
 
 #ifndef VELVET_DEV_H
@@ -14,6 +14,9 @@
 
 #define DEV_AT "/dev"
 
+/* a drive or a partition is root's: a drive is every file on it, whoever's */
+#define DEV_BLOCK_MODE 0600
+
 struct file;
 
 /* how many there are, and the name and permissions of each */
@@ -23,6 +26,9 @@ uint32_t dev_mode(size_t sz_index);
 
 /* and its number, major << 8 | minor, as stat gives it */
 uint32_t dev_rdev(size_t sz_index);
+
+/* a drive or a partition, rather than a device read a character at a time */
+bool dev_is_block(size_t sz_index);
 
 /* which one is called str_name: true and its index, or false */
 bool dev_find(const char *str_name, size_t *p_index);

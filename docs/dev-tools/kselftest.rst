@@ -71,6 +71,14 @@ any logged-in user could, and a promise the kernel keeps to a guest it
 keeps to everybody. before the first test ``/init`` makes ``/tmp`` on the
 disk, mode 1777, as somewhere a guest may make files of its own.
 
+a test of what only root may do, reading a drive by the byte for one, is
+the exception, and the file says so rather than the test: the ones named
+in ``SELFTEST_ROOT`` in the GNUmakefile go on the medium mode 0700, which
+the guest could not run at all, and ``/init`` runs a test nobody else may
+run as root. it says so before the test starts::
+
+   init: selftests/fs/blockdev is root's, and runs as root
+
 the machine has a second drive: a copy of ``disk.img``, the disk ``make
 run`` boots, with the system mounted at ``/`` and a work filesystem at
 ``/work`` that is smaller than its partition. the copy is made fresh for
@@ -145,7 +153,9 @@ in general, the rules for selftests are:
 
 - test what a program can see. a test includes ``kselftest.h`` and the
   libc's headers, and nothing from inside the kernel.
-- do everything as guest. ``/init`` never runs a test as anybody else.
+- do everything as guest, unless what is under test is what only root
+  may do. then name the test in ``SELFTEST_ROOT``, and have it check, by
+  becoming guest in a child, that a guest is refused.
 - don't take long: a few seconds, and never near the 30.
 - leave nothing behind: wait for every child the test forks, and end with
   ``ksft_finished()``.

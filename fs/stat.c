@@ -54,15 +54,17 @@ static void fill_node(const struct vfs_file *p_node, const char *str_path,
                       struct stat *p_st)
 {
     memset(p_st, 0, sizeof *p_st);
+    bool b_dev = p_node->kind == VFS_DEV && !p_node->is_dir;
     uint32_t u_type = p_node->is_dir ? S_IFDIR
                     : p_node->is_symlink ? S_IFLNK
-                    : (p_node->kind == VFS_DEV) ? S_IFCHR
+                    : (b_dev && dev_is_block(p_node->sz_dev)) ? S_IFBLK
+                    : b_dev ? S_IFCHR
                     : S_IFREG;
     p_st->st_dev = dev_of(p_node);
     p_st->st_ino = (p_node->u_ino != 0) ? p_node->u_ino : path_ino(str_path);
     p_st->st_nlink = p_node->is_dir ? 2 : 1;
     p_st->st_mode = u_type | (p_node->mode & 07777);
-    if (p_node->kind == VFS_DEV && !p_node->is_dir) {
+    if (b_dev) {
         p_st->st_rdev = dev_rdev(p_node->sz_dev);
     }
     p_st->st_uid = p_node->uid;
@@ -90,6 +92,11 @@ static void fill_file(const struct file *p_file, struct stat *p_st)
         break;
     case FILE_TYPE_SOCKET:
         p_st->st_mode = S_IFSOCK | 0777;
+        break;
+    case FILE_TYPE_BLOCK:
+        p_st->st_mode = S_IFBLK | DEV_BLOCK_MODE;
+        p_st->st_rdev = p_file->u_rdev;
+        p_st->st_dev = DEVNO(0, 3);
         break;
     default:
         p_st->st_mode = S_IFCHR | 0666;
@@ -160,6 +167,8 @@ static uint8_t type_of(const struct vfs_file *p_node)
 {
     return p_node->is_dir ? DT_DIR
            : p_node->is_symlink ? DT_LNK
+           : (p_node->kind == VFS_DEV && dev_is_block(p_node->sz_dev))
+             ? DT_BLK
            : (p_node->kind == VFS_DEV) ? DT_CHR
            : DT_REG;
 }

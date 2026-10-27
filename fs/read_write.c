@@ -46,9 +46,18 @@ static int64_t restartable(int64_t i_got)
 }
 
 /*
- * up to u_len bytes into ring 3 at u_buf, a chunk at a time. a regular
- * file is read until the caller has what it asked for or the file ends;
- * anything else answers with what it has
+ * a file with a position, a regular one, a drive, a directory, has an end
+ * and is read until it is reached; anything else answers with what it
+ * has, and has no offset to be read at
+ */
+static bool has_position(const struct file *p_file)
+{
+    return p_file->p_ops->seek != NULL;
+}
+
+/*
+ * up to u_len bytes into ring 3 at u_buf, a chunk at a time, until the
+ * caller has what it asked for or a file with a position ends
  */
 static int64_t read_into(struct file *p_file, uint64_t u_buf, uint64_t u_len)
 {
@@ -79,7 +88,7 @@ static int64_t read_into(struct file *p_file, uint64_t u_buf, uint64_t u_len)
             break;
         }
         u_done += (uint64_t)i_got;
-        if (p_file->e_type != FILE_TYPE_REGULAR || (uint64_t)i_got < u_want) {
+        if (!has_position(p_file) || (uint64_t)i_got < u_want) {
             break;
         }
     }
@@ -159,10 +168,7 @@ int64_t sys_write(int i_fd, uint64_t u_buf, uint64_t u_len)
     return i_result;
 }
 
-/*
- * at an offset, and the file's own position left where it was. only a
- * file with positions has one to read at
- */
+/* at an offset, and the file's own position left where it was */
 static int64_t at_offset(int i_fd, uint64_t u_buf, uint64_t u_len,
                          int64_t i_offset, bool b_write)
 {
@@ -173,7 +179,7 @@ static int64_t at_offset(int i_fd, uint64_t u_buf, uint64_t u_len,
         return i_why;
     }
     int64_t i_result;
-    if (p_file->e_type != FILE_TYPE_REGULAR || p_file->p_ops->seek == NULL) {
+    if (!has_position(p_file)) {
         i_result = -ESPIPE;
     } else if (i_offset < 0) {
         i_result = -EINVAL;

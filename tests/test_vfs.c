@@ -30,6 +30,7 @@ void kfree(void *p)
 #include <velvet/vfs.h>
 #include <velvet/disk.h>
 #include <velvet/ramdisk.h>
+#include <velvet/blockdev.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \
@@ -323,6 +324,22 @@ bool disk_symlink(size_t w, const char *p, const char *t, uint32_t u_uid,
 bool disk_rename(size_t w, const char *from, const char *to)
 {
     (void)from; (void)to; last_mount = w; renames++; return disk_ready(w);
+}
+
+/* no drives here: /dev is the devices dev.c has of its own */
+size_t disk_block_count(void)
+{
+    return 0;
+}
+const struct disk_block *disk_block_at(size_t sz_index)
+{
+    (void)sz_index;
+    return NULL;
+}
+struct file *blockdev_open(uint32_t u_rdev, uint32_t u_mode)
+{
+    (void)u_rdev; (void)u_mode;
+    return NULL;
 }
 
 

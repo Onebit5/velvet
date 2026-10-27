@@ -210,7 +210,7 @@ static void flusher_service(void *arg)
     (void)arg;
     for (;;) {
         sleep_ms(FLUSH_EVERY_MS);
-        if (disk_ready(DISK_ROOT) && disk_dirty()) {
+        if (disk_dirty()) {
             (void)disk_sync();
         }
     }
@@ -420,21 +420,19 @@ static void take_the_machine_down(void)
     }
 
     /* and only now, with nothing left that could add to it. */
-    if (disk_ready(DISK_ROOT)) {
-        if (disk_dirty()) {
-            kprintf("init: writing what is still in memory...\n");
-        }
-        /*
-         * and the journal closed behind it, which is the difference
-         * between a disk that was unmounted and one the power was
-         * pulled on. a log left open says "replay the kernel" to whoever mounts
-         * this next, correctly, because nobody could know otherwise.
-         * saying it after a tidy shutdown is a lie the next boot pays
-         * for, and this is the one place that can tell the difference
-         */
-        if (!disk_unmount()) {
-            kprintf("init: the drive refused. something is being lost here\n");
-        }
+    if (disk_dirty()) {
+        kprintf("init: writing what is still in memory...\n");
+    }
+    /*
+     * and the journal closed behind it, which is the difference
+     * between a disk that was unmounted and one the power was
+     * pulled on. a log left open says "replay the kernel" to whoever mounts
+     * this next, correctly, because nobody could know otherwise.
+     * saying it after a tidy shutdown is a lie the next boot pays
+     * for, and this is the one place that can tell the difference
+     */
+    if (!disk_unmount()) {
+        kprintf("init: the drive refused. something is being lost here\n");
     }
 
     say_goodbye(how);

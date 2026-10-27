@@ -268,6 +268,11 @@ SELFTESTS     := $(sort $(patsubst $(SELFTEST_DIR)/%.c,%, \
                            2>/dev/null)))
 SELFTEST_BINS := $(addprefix $(BINDIR)/selftests/,$(SELFTESTS))
 
+# the tests of what only root may do. each goes on the medium so that only
+# root may run it, which is how /init knows to run it as root rather than
+# as its guest; every other test anyone may run
+SELFTEST_ROOT := fs/blockdev
+
 # the image's /init: asks which tests to run, runs each as a guest and
 # powers the machine off. built the way a test is, since it is a program
 # that sees the kernel only from where they do
@@ -321,6 +326,8 @@ $(SELFTEST_INIT): $(SELFTEST_DIR)/init.c $(SELFTEST_DIR)/kselftest.h \
 # and a change to that is a change make cannot otherwise see
 $(RAMDISK): $(SELFTEST_INIT) $(SELFTEST_BINS) $(SELFTEST_LIST) GNUmakefile
 	@mkdir -p $(@D)
+	@chmod 0755 $(SELFTEST_BINS)
+	@chmod 0700 $(addprefix $(BINDIR)/selftests/,$(SELFTEST_ROOT))
 	tar --format=ustar --sort=name --owner=0 --group=0 --numeric-owner \
 		--mtime=@0 -cf $@ \
 		-C $(abspath $(BINDIR)) --no-recursion $(SELFTEST_TAR)
