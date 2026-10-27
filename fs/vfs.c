@@ -32,90 +32,105 @@ static void copy_name(char *dst, const char *src)
 
 
 
-/* "/boot", "/boot/", "/boot/anything", but not "/bootleg" */
-static bool under(const char *path, const char *point, const char **rest)
+/*
+ * the namespace is a table of mounts: where each one hangs, and what is
+ * there. a name belongs to the mount whose point is the longest one it
+ * starts with, at a slash, and what the filesystem under that mount calls
+ * it is the rest, from that filesystem's own root. that is the whole of
+ * the routing, and it lives here rather than in fs/disk.c on purpose:
+ * deciding that a name belongs to a mount at all is the namespace's job,
+ * and a filesystem's job is to be one once somebody has decided.
+ *
+ * a disk mount with no filesystem behind it is not there at all, so the
+ * names under it are the mount's below. the root is the one exception:
+ * it is always there, and until the archive is the root, a name the root
+ * filesystem does not have is looked for in the archive too
+ */
+#define VFS_MOUNTS_MAX 8
+
+struct mount_point {
+    char arr_at[PATH_MAX];
+    enum vfs_kind e_kind;
+    size_t sz_slot;             /* which disk mount, for VFS_DISK */
+    bool b_union;               /* names it lacks are the archive's */
+};
+
+/* the root first: every name is under it, and it stands in nothing */
+static struct mount_point s_arr_mounts[VFS_MOUNTS_MAX] = {
+    { "/",          VFS_DISK,    DISK_ROOT, true  },
+    { VFS_BOOT,     VFS_RAMDISK, 0,         false },
+    { PROC_AT,      VFS_PROC,    0,         false },
+    { DEV_AT,       VFS_DEV,     0,         false },
+    { DISK_WORK_AT, VFS_DISK,    DISK_WORK, false },
+};
+static size_t s_sz_mounts = 5;
+
+static bool is_present(const struct mount_point *p_mount)
 {
-    size_t n = strlen(point);
-    for (size_t i = 0; i < n; i++) {
-        if (path[i] != point[i]) {
-            return false;
+    return p_mount->b_union || p_mount->e_kind != VFS_DISK
+           || disk_ready(p_mount->sz_slot);
+}
+
+static const char *past_slashes(const char *str_at)
+{
+    while (*str_at == '/') {
+        str_at++;
+    }
+    return str_at;
+}
+
+/* "/boot", "/boot/" and "/boot/x" are under /boot, and "/bootleg" is not */
+static bool is_under(const char *str_path, const char *str_at, size_t sz_len)
+{
+    if (sz_len == 1) {
+        return str_path[0] == '/';
+    }
+    return strncmp(str_path, str_at, sz_len) == 0
+           && (str_path[sz_len] == '\0' || str_path[sz_len] == '/');
+}
+
+/*
+ * the mount an absolute name is under, and the name from that mount's
+ * root, which keeps its leading slash, so every filesystem answers the
+ * same shape of question; the mount point itself is "/"
+ */
+static const struct mount_point *route(const char *str_path,
+                                       const char **p_rest)
+{
+    const struct mount_point *p_best = &s_arr_mounts[0];
+    size_t sz_best = 1;
+    for (size_t sz_at = 1; sz_at < s_sz_mounts; sz_at++) {
+        const struct mount_point *p_mount = &s_arr_mounts[sz_at];
+        size_t sz_len = strlen(p_mount->arr_at);
+        if (sz_len > sz_best && is_present(p_mount)
+            && is_under(str_path, p_mount->arr_at, sz_len)) {
+            p_best = p_mount;
+            sz_best = sz_len;
         }
     }
-    if (path[n] != '\0' && path[n] != '/') {
-        return false;
+    const char *str_rest = (sz_best > 1) ? str_path + sz_best : str_path;
+    *p_rest = (str_rest[0] == '\0') ? "/" : str_rest;
+    return p_best;
+}
+
+/* a name made absolute, a bare one being the root's, into str_out */
+static const char *absolute(const char *str_path, char *str_out)
+{
+    if (str_path[0] == '/') {
+        return str_path;
     }
-
-    const char *tail = path + n;
-    while (*tail == '/') {
-        tail++;
-    }
-    *rest = tail;
-    return true;
+    str_out[0] = '/';
+    copy_name(str_out + 1, str_path);
+    return str_out;
 }
 
-static bool under_boot(const char *path, const char **rest)
+/* a name something is mounted at, and stays mounted at */
+bool vfs_is_mount_point(const char *str_path)
 {
-    return under(path, VFS_BOOT, rest);
-}
-
-/* /proc, which no disk or archive holds: the kernel writes it as it is read. */
-static bool under_proc(const char *path, const char **rest)
-{
-    return under(path, PROC_AT, rest);
-}
-
-/* /dev, which is a table of devices rather than anything stored */
-static bool under_dev(const char *path, const char **rest)
-{
-    return under(path, DEV_AT, rest);
-}
-
-/*
- * a name under /work belongs to the second one and everything else to
- * the root, and that one sentence is the whole of the routing. it lives
- * here rather than in fs/disk.c on purpose: deciding that a name
- * belongs to a mount at all is the namespace's job, and disk.c's job is
- * to be a filesystem once somebody has decided.
- *
- * false means the name is not on a disk at all, it is under /boot, in
- * the ramdisk, which every caller below handles first anyway
- */
-static bool disk_route(const char *path, size_t *which, const char **rest)
-{
-    const char *tail;
-    if (under_boot(path, &tail)) {
-        return false;
-    }
-    if (disk_ready(DISK_WORK) && under(path, DISK_WORK_AT, &tail)) {
-        *which = DISK_WORK;
-        /*
-         * what the second filesystem calls it, which is an absolute
-         * path *on that filesystem*, so it keeps its leading slash
-         * and the mount point itself is that filesystem's root. every
-         * mount answers the same shape of question or the two of them
-         * disagree about what a path is
-         */
-        const char *below = path + strlen(DISK_WORK_AT);
-        *rest = (below[0] == '\0') ? "/" : below;
-        return true;
-    }
-    *which = DISK_ROOT;
-    *rest = path;
-    return true;
-}
-
-/*
- * and the mount points themselves, which stand in the root and are on
- * no filesystem: nothing on the disk is called "work", because /work
- * *is* the other disk
- */
-static bool is_mount_point(const char *path, size_t *which)
-{
-    const char *rest;
-    if (disk_ready(DISK_WORK) && under(path, DISK_WORK_AT, &rest)
-        && rest[0] == '\0') {
-        *which = DISK_WORK;
-        return true;
+    for (size_t sz_at = 0; sz_at < s_sz_mounts; sz_at++) {
+        if (strcmp(s_arr_mounts[sz_at].arr_at, str_path) == 0) {
+            return true;
+        }
     }
     return false;
 }
@@ -160,13 +175,16 @@ static void from_disk(struct vfs_file *out, const struct disk_entry *e,
 }
 
 /* one filesystem's copy of a name, if it is mounted and has one */
-static bool try_disk(size_t which, const char *path, struct vfs_file *out)
+static bool try_disk(size_t which, const char *path, bool b_follow,
+                     struct vfs_file *out)
 {
     if (!disk_ready(which)) {
         return false;
     }
     struct disk_entry e;
-    if (!disk_lookup(which, path, &e)) {
+    bool b_found = b_follow ? disk_lookup(which, path, &e)
+                            : disk_lookup_nofollow(which, path, &e);
+    if (!b_found) {
         return false;
     }
     from_disk(out, &e, which);
@@ -225,58 +243,46 @@ static bool try_ramdisk(const char *path, struct vfs_file *out)
     return true;
 }
 
-bool vfs_open(const char *path, struct vfs_file *out)
+/*
+ * the place a mount hangs from, which is the root of what is mounted
+ * there and on no filesystem of its own, and something has to be able
+ * to say it is a directory or nobody can stand in it. its permissions
+ * are the layer's rather than a filesystem's: anyone may look, nobody
+ * may write to it
+ */
+static void mount_root(const struct mount_point *p_mount,
+                       struct vfs_file *p_out)
 {
-    if (path == NULL || path[0] == '\0') {
-        return false;
-    }
+    const char *str_name = strrchr(p_mount->arr_at, '/') + 1;
 
-    /*
-     * the root belongs to no filesystem either, it is the place the
-     * mounts hang from, and something has to be able to say it is a
-     * directory or nobody can stand in it
-     */
-    if (path[0] == '/' && path[1] == '\0') {
-        memset(out, 0, sizeof *out);
-        out->kind = VFS_DISK;
-        copy_name(out->name, "/");
-        out->is_dir = true;
-        /*
-         * the root is the place mounts hang from rather than a file on
-         * any of them, so its permissions are the layer's rather than a
-         * filesystem's: anyone may look, nobody may write to it
-         */
-        out->mode = 0555;
+    memset(p_out, 0, sizeof *p_out);
+    p_out->kind = p_mount->e_kind;
+    p_out->mount = p_mount->sz_slot;
+    copy_name(p_out->name, (str_name[0] != '\0') ? str_name : "/");
+    p_out->is_dir = true;
+    p_out->mode = 0555;
+}
+
+static bool lookup_in(const struct mount_point *p_mount, const char *str_rest,
+                      bool b_follow, struct vfs_file *p_out)
+{
+    const char *str_name = past_slashes(str_rest);
+    if (str_name[0] == '\0') {
+        mount_root(p_mount, p_out);
         return true;
     }
-
-    const char *rest;
-    if (under_dev(path, &rest)) {
-        memset(out, 0, sizeof *out);
-        out->kind = VFS_DEV;
-        if (rest[0] == '\0') {
-            copy_name(out->name, DEV_AT + 1);
-            out->is_dir = true;
-            out->mode = 0555;
+    switch (p_mount->e_kind) {
+    case VFS_DISK:
+        if (try_disk(p_mount->sz_slot, str_rest, b_follow, p_out)) {
             return true;
         }
-        if (!dev_find(rest, &out->sz_dev)) {
-            return false;
-        }
-        copy_name(out->name, rest);
-        out->mode = dev_mode(out->sz_dev);
-        return true;
-    }
-    if (under_proc(path, &rest)) {
-        memset(out, 0, sizeof *out);
-        out->kind = VFS_PROC;
-        if (rest[0] == '\0') {
-            copy_name(out->name, PROC_AT + 1);
-            out->is_dir = true;
-            out->mode = 0555;
-            return true;
-        }
-        if (!proc_find(rest, &out->sz_proc)) {
+        return p_mount->b_union && try_ramdisk(str_name, p_out);
+    case VFS_RAMDISK:
+        return try_ramdisk(str_name, p_out);
+    case VFS_PROC:
+        memset(p_out, 0, sizeof *p_out);
+        p_out->kind = VFS_PROC;
+        if (!proc_find(str_name, &p_out->sz_proc)) {
             return false;
         }
         /*
@@ -284,66 +290,50 @@ bool vfs_open(const char *path, struct vfs_file *out)
          * reads to the end like any other file. who may read it is the
          * file's own say
          */
-        copy_name(out->name, rest);
-        out->mode = proc_mode(out->sz_proc);
+        copy_name(p_out->name, str_name);
+        p_out->mode = proc_mode(p_out->sz_proc);
         return true;
-    }
-    if (under_boot(path, &rest)) {
-        /* the mount point itself. */
-        if (rest[0] == '\0') {
-            memset(out, 0, sizeof *out);
-            out->kind = VFS_RAMDISK;
-            copy_name(out->name, VFS_BOOT + 1);
-            out->is_dir = true;
-            out->mode = 0555;
-            return true;
-        }
-        return try_ramdisk(rest, out);
-    }
-
-    /*
-     * /work itself, which is on no filesystem for the same reason
-     * /boot is not: it is the place one hangs from
-     */
-    size_t which;
-    if (is_mount_point(path, &which)) {
-        memset(out, 0, sizeof *out);
-        out->kind = VFS_DISK;
-        out->mount = which;
-        copy_name(out->name, DISK_WORK_AT + 1);
-        out->is_dir = true;
-        out->mode = 0555;
-        return true;
-    }
-
-    if (path[0] == '/') {
-        if (!disk_route(path, &which, &rest)) {
+    case VFS_DEV:
+        memset(p_out, 0, sizeof *p_out);
+        p_out->kind = VFS_DEV;
+        if (!dev_find(str_name, &p_out->sz_dev)) {
             return false;
         }
-        if (which != DISK_ROOT) {
-            /* a name under another mount is on that filesystem or it is nowhere. */
-            return try_disk(which, rest, out);
-        }
-
-        /* the disk first, then the ramdisk with the leading slash taken off. */
-        if (try_disk(DISK_ROOT, path, out)) {
-            return true;
-        }
-        return try_ramdisk(path + 1, out);
-    }
-
-    /*
-     * a bare name from inside the kernel, which has no working
-     * directory of its own: the disk first, so a disk can supply a
-     * newer copy of something, then the ramdisk
-     */
-    char absolute[VFS_NAME_MAX + 1];
-    absolute[0] = '/';
-    copy_name(absolute + 1, path);
-    if (try_disk(DISK_ROOT, absolute, out)) {
+        copy_name(p_out->name, str_name);
+        p_out->mode = dev_mode(p_out->sz_dev);
         return true;
+    default:
+        return false;
     }
-    return try_ramdisk(path, out);
+}
+
+static bool open_as(const char *path, bool b_follow, struct vfs_file *out)
+{
+    char arr_absolute[VFS_NAME_MAX + 1];
+
+    if (path == NULL || path[0] == '\0') {
+        return false;
+    }
+    const char *rest;
+    const struct mount_point *p_mount = route(absolute(path, arr_absolute),
+                                              &rest);
+    return lookup_in(p_mount, rest, b_follow, out);
+}
+
+/*
+ * a bare name, from inside the kernel, which has no working directory of
+ * its own, is the root's, so a disk can supply a newer copy of something
+ * the archive also has
+ */
+bool vfs_open(const char *path, struct vfs_file *out)
+{
+    return open_as(path, true, out);
+}
+
+/* the same, with a link at the end the link rather than where it points */
+bool vfs_open_nofollow(const char *path, struct vfs_file *out)
+{
+    return open_as(path, false, out);
 }
 
 
@@ -387,161 +377,162 @@ static bool listed_under(struct vfs_file *v, const char *rest,
 }
 
 /*
- * "/" has the root filesystem in it and also the mount points standing
- * on it, which belong to no filesystem and have to be added by hand.
- *
- * /work is listed only when something is mounted there. a directory in
- * a listing that cannot be entered is worse than one that is not there,
- * because the second is a fact about the machine and the first looks
- * like a fault
+ * entry `index` of what the filesystem under a mount holds in a
+ * directory, or false past the end of it
  */
-static bool root_extra(size_t index, struct vfs_file *out)
+static bool readdir_in(const struct mount_point *p_mount,
+                       const char *str_rest, size_t sz_index,
+                       struct vfs_file *p_out)
 {
-    memset(out, 0, sizeof *out);
-    out->is_dir = true;
-    out->mode = 0555;
+    const char *str_name = past_slashes(str_rest);
+    switch (p_mount->e_kind) {
+    case VFS_DISK: {
+        struct disk_entry e;
+        if (!disk_ready(p_mount->sz_slot)
+            || !disk_readdir(p_mount->sz_slot, str_rest, sz_index, &e)) {
+            return false;
+        }
+        from_disk(p_out, &e, p_mount->sz_slot);
+        return true;
+    }
+    case VFS_RAMDISK: {
+        size_t prefix = strlen(str_name);
+        struct ramdisk_file f;
+        size_t seen = 0;
+        for (size_t i = 0; ramdisk_stat(i, &f); i++) {
+            struct vfs_file v;
+            from_ramdisk(&v, &f);
+            if (!listed_under(&v, str_name, prefix) || seen++ != sz_index) {
+                continue;
+            }
+            *p_out = v;
+            return true;
+        }
+        return false;
+    }
+    case VFS_PROC: {
+        const char *name = proc_name(sz_index);
+        if (str_name[0] != '\0' || name == NULL) {
+            return false;
+        }
+        memset(p_out, 0, sizeof *p_out);
+        p_out->kind = VFS_PROC;
+        p_out->sz_proc = sz_index;
+        p_out->mode = proc_mode(sz_index);
+        copy_name(p_out->name, name);
+        return true;
+    }
+    case VFS_DEV: {
+        const char *name = dev_name(sz_index);
+        if (str_name[0] != '\0' || name == NULL) {
+            return false;
+        }
+        memset(p_out, 0, sizeof *p_out);
+        p_out->kind = VFS_DEV;
+        p_out->sz_dev = sz_index;
+        p_out->mode = dev_mode(sz_index);
+        copy_name(p_out->name, name);
+        return true;
+    }
+    default:
+        return false;
+    }
+}
 
-    if (index == 0) {
-        out->kind = VFS_RAMDISK;
-        copy_name(out->name, VFS_BOOT + 1);     /* past the slash */
-        return true;
+/* the directory a mount point stands in, "/" for one hung from the root */
+static bool stands_in(const struct mount_point *p_mount, const char *str_dir)
+{
+    const char *str_last = strrchr(p_mount->arr_at, '/');
+    size_t sz_parent = (size_t)(str_last - p_mount->arr_at);
+    size_t sz_dir = strlen(str_dir);
+
+    /* "/" and "//" are the root, and a trailing slash changes nothing */
+    while (sz_dir > 1 && str_dir[sz_dir - 1] == '/') {
+        sz_dir--;
     }
-    if (index == 1) {
-        out->kind = VFS_PROC;
-        copy_name(out->name, PROC_AT + 1);
-        return true;
+    if (sz_parent == 0) {
+        return past_slashes(str_dir)[0] == '\0';
     }
-    if (index == 2) {
-        out->kind = VFS_DEV;
-        copy_name(out->name, DEV_AT + 1);
-        return true;
-    }
-    if (index == 3 && disk_ready(DISK_WORK)) {
-        out->kind = VFS_DISK;
-        out->mount = DISK_WORK;
-        copy_name(out->name, DISK_WORK_AT + 1);
-        return true;
+    return sz_dir == sz_parent
+           && strncmp(str_dir, p_mount->arr_at, sz_parent) == 0;
+}
+
+/*
+ * past the end of what a directory holds, the mounts standing in it,
+ * which belong to no filesystem and have to be added by hand. one with
+ * nothing mounted is not listed: a directory in a listing that cannot be
+ * entered is worse than one that is not there, because the second is a
+ * fact about the machine and the first looks like a fault
+ */
+static bool mount_in(const char *str_dir, size_t sz_index,
+                     struct vfs_file *p_out)
+{
+    for (size_t sz_at = 1; sz_at < s_sz_mounts; sz_at++) {
+        const struct mount_point *p_mount = &s_arr_mounts[sz_at];
+        if (!is_present(p_mount) || !stands_in(p_mount, str_dir)) {
+            continue;
+        }
+        if (sz_index-- == 0) {
+            mount_root(p_mount, p_out);
+            return true;
+        }
     }
     return false;
 }
 
 bool vfs_readdir(const char *path, size_t index, struct vfs_file *out)
 {
+    char arr_absolute[VFS_NAME_MAX + 1];
+
     if (path == NULL || path[0] == '\0') {
         path = "/";
     }
-
     /* a relative directory is relative to the root, the same as a relative filename is. */
-    char absolute[VFS_NAME_MAX + 1];
-    if (path[0] != '/') {
-        absolute[0] = '/';
-        copy_name(absolute + 1, path);
-        path = absolute;
-    }
+    path = absolute(path, arr_absolute);
 
     const char *rest;
-    if (under_dev(path, &rest)) {
-        const char *str_name = dev_name(index);
-        if (rest[0] != '\0' || str_name == NULL) {
-            return false;
-        }
-        memset(out, 0, sizeof *out);
-        out->kind = VFS_DEV;
-        out->sz_dev = index;
-        out->mode = dev_mode(index);
-        copy_name(out->name, str_name);
+    const struct mount_point *p_mount = route(path, &rest);
+    if (readdir_in(p_mount, rest, index, out)) {
         return true;
     }
-    if (under_proc(path, &rest)) {
-        const char *name = proc_name(index);
-        if (rest[0] != '\0' || name == NULL) {
-            return false;
-        }
-        memset(out, 0, sizeof *out);
-        out->kind = VFS_PROC;
-        out->sz_proc = index;
-        out->mode = proc_mode(index);
-        copy_name(out->name, name);
-        return true;
+    size_t sz_own = 0;
+    struct vfs_file ignored;
+    while (readdir_in(p_mount, rest, sz_own, &ignored)) {
+        sz_own++;
     }
-    if (under_boot(path, &rest)) {
-        size_t prefix = strlen(rest);
-
-        struct ramdisk_file f;
-        size_t seen = 0;
-        for (size_t i = 0; ramdisk_stat(i, &f); i++) {
-            struct vfs_file v;
-            from_ramdisk(&v, &f);
-            if (!listed_under(&v, rest, prefix) || seen++ != index) {
-                continue;
-            }
-            *out = v;
-            return true;
-        }
-        return false;
-    }
-
-    /*
-     * "/" and "//" and "/////" are all the root, and a trailing slash
-     * never changes which directory is meant
-     */
-    bool is_root = true;
-    for (const char *p = path; *p != '\0'; p++) {
-        if (*p != '/') {
-            is_root = false;
-            break;
-        }
-    }
-
-    size_t which;
-    if (!disk_route(path, &which, &rest)) {
-        return false;
-    }
-    if (is_mount_point(path, &which)) {
-        rest = "/";             /* the other filesystem's own root */
-    }
-
-    if (disk_ready(which)) {
-        struct disk_entry e;
-        if (disk_readdir(which, rest, index, &e)) {
-            from_disk(out, &e, which);
-            return true;
-        }
-        /* past the end of the root filesystem, the mounts standing on it */
-        if (is_root) {
-            size_t count = 0;
-            struct disk_entry ignored;
-            while (disk_readdir(which, rest, count, &ignored)) {
-                count++;
-            }
-            return root_extra(index - count, out);
-        }
-        return false;
-    }
-
-    /* no disk at all: the root holds nothing but the mount points */
-    return is_root && root_extra(index, out);
+    return index >= sz_own && mount_in(path, index - sz_own, out);
 }
 
 
 
-bool vfs_create(const char *path, uint32_t u_mode, uint32_t u_uid,
-                uint32_t u_gid, struct vfs_file *out)
+/*
+ * the disk mount a name is on and what its filesystem calls it, for
+ * everything that changes a filesystem: false for a name on read-only
+ * memory, in /proc or /dev, or under a mount with nothing on it. a bare
+ * name is made absolute in str_buf, which *p_rest points into after
+ */
+static bool on_disk(const char *path, char *str_buf, size_t *p_which,
+                    const char **p_rest)
 {
     if (path == NULL || path[0] == '\0') {
         return false;
     }
-
-    char absolute[VFS_NAME_MAX + 1];
-    if (path[0] != '/') {
-        absolute[0] = '/';
-        copy_name(absolute + 1, path);
-        path = absolute;
+    const struct mount_point *p_mount = route(absolute(path, str_buf),
+                                              p_rest);
+    if (p_mount->e_kind != VFS_DISK || !disk_ready(p_mount->sz_slot)) {
+        return false;
     }
+    *p_which = p_mount->sz_slot;
+    return true;
+}
 
+bool vfs_create(const char *path, uint32_t u_mode, uint32_t u_uid,
+                uint32_t u_gid, struct vfs_file *out)
+{
+    char arr_buf[VFS_NAME_MAX + 1];
     size_t which;
     const char *rest;
-    if (!disk_route(path, &which, &rest) || !disk_ready(which)) {
+    if (!on_disk(path, arr_buf, &which, &rest)) {
         return false;       /* read-only memory. there is nowhere to put it */
     }
 
@@ -558,13 +549,12 @@ bool vfs_create(const char *path, uint32_t u_mode, uint32_t u_uid,
  * name on a filesystem at all, and which, so they ask them the same
  * way. `rest` is what the filesystem underneath calls it
  */
-#define ROUTED(path, which, rest) \
-    ((path) != NULL && (path)[0] != '\0' \
-     && disk_route((path), &(which), &(rest)) && disk_ready(which))
+#define ROUTED(path, which, rest) on_disk((path), arr_buf, &(which), &(rest))
 
 bool vfs_mkdir(const char *path, uint32_t u_mode, uint32_t u_uid,
                uint32_t u_gid)
 {
+    char arr_buf[VFS_NAME_MAX + 1];
     size_t which;
     const char *rest;
     /* read-only memory has no room for a new name */
@@ -574,6 +564,7 @@ bool vfs_mkdir(const char *path, uint32_t u_mode, uint32_t u_uid,
 
 bool vfs_rmdir(const char *path)
 {
+    char arr_buf[VFS_NAME_MAX + 1];
     size_t which;
     const char *rest;
     return ROUTED(path, which, rest) && disk_rmdir(which, rest);
@@ -581,6 +572,7 @@ bool vfs_rmdir(const char *path)
 
 bool vfs_chmod(const char *path, uint32_t mode)
 {
+    char arr_buf[VFS_NAME_MAX + 1];
     size_t which;
     const char *rest;
     /* a tar in read-only memory has no opinions */
@@ -589,6 +581,7 @@ bool vfs_chmod(const char *path, uint32_t mode)
 
 bool vfs_chown(const char *path, uint32_t uid, uint32_t gid)
 {
+    char arr_buf[VFS_NAME_MAX + 1];
     size_t which;
     const char *rest;
     return ROUTED(path, which, rest) && disk_chown(which, rest, uid, gid);
@@ -597,6 +590,7 @@ bool vfs_chown(const char *path, uint32_t uid, uint32_t gid)
 bool vfs_symlink(const char *path, const char *target, uint32_t u_uid,
                  uint32_t u_gid)
 {
+    char arr_buf[VFS_NAME_MAX + 1];
     size_t which;
     const char *rest;
     return target != NULL && ROUTED(path, which, rest)
@@ -605,28 +599,15 @@ bool vfs_symlink(const char *path, const char *target, uint32_t u_uid,
 
 bool vfs_readlink(const char *path, char *out, size_t size)
 {
+    char arr_buf[VFS_NAME_MAX + 1];
     size_t which;
     const char *rest;
     return ROUTED(path, which, rest) && disk_readlink(which, rest, out, size);
 }
 
-bool vfs_open_nofollow(const char *path, struct vfs_file *out)
-{
-    size_t which;
-    const char *rest;
-    if (ROUTED(path, which, rest)) {
-        struct disk_entry e;
-        if (disk_lookup_nofollow(which, rest, &e)) {
-            from_disk(out, &e, which);
-            return true;
-        }
-    }
-    /* not on the disk, or not a disk that has symlinks. */
-    return vfs_open(path, out);
-}
-
 bool vfs_unlink(const char *path)
 {
+    char arr_buf[VFS_NAME_MAX + 1];
     size_t which;
     const char *rest;
     /* the ramdisk is memory the kernel may not write */
@@ -635,9 +616,12 @@ bool vfs_unlink(const char *path)
 
 bool vfs_rename(const char *from, const char *to)
 {
+    char arr_from[VFS_NAME_MAX + 1];
+    char arr_to[VFS_NAME_MAX + 1];
     size_t a, b;
     const char *rest_a, *rest_b;
-    if (!ROUTED(from, a, rest_a) || !ROUTED(to, b, rest_b)) {
+    if (!on_disk(from, arr_from, &a, &rest_a)
+        || !on_disk(to, arr_to, &b, &rest_b)) {
         /*
          * either end under /boot makes this a copy, and a rename that
          * quietly copies is a rename that silently costs a disk's worth

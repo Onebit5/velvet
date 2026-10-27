@@ -16,6 +16,15 @@ the disk was bolted on at ``/disk``, which had it backwards. now:
     /work      a second filesystem, when the drive holds one
     /boot      the ramdisk, always
     /proc      what the kernel says about itself, written as it is read
+    /dev       the devices, and the drives with their partitions
+
+that list is a table of mounts, each a point and what hangs there. a name
+belongs to the mount whose point is the longest one it starts with, at a
+slash, so ``/bootleg`` is the root's and ``/boot/x`` is the archive's, and
+what the filesystem under the mount is asked about is the rest of the
+name, from that filesystem's own root. a disk mount with nothing behind it
+is not in the namespace at all: the names under it are the next mount's
+out, and a listing of the directory it stands in leaves it out.
 
 the ramdisk keeps its own mount point rather than being deleted, because it
 is what makes the machine work when the disk does not. a system's programs,

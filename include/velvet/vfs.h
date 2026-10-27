@@ -56,6 +56,9 @@ struct vfs_file {
 
 bool vfs_open(const char *path, struct vfs_file *out);
 
+/* a name something is mounted at, which stays where it is */
+bool vfs_is_mount_point(const char *str_path);
+
 bool vfs_readdir(const char *path, size_t index, struct vfs_file *out);
 
 /* make a file. only the disk can, and it says so when it cannot */

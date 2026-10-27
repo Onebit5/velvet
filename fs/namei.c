@@ -11,9 +11,6 @@
 #include <velvet/file.h>
 #include <velvet/process.h>
 #include <velvet/string.h>
-#include <velvet/proc.h>
-#include <velvet/dev.h>
-#include <velvet/disk.h>
 #include <asm/uaccess.h>
 #include <uapi/velvet/fcntl.h>
 
@@ -174,21 +171,6 @@ int64_t may_make(const char *str_path, bool b_must_be_new)
     return vfs_writable(&node) ? 0 : -EROFS;
 }
 
-/* a name something else is mounted at, which stays where it is */
-static bool mounted_here(const char *str_path)
-{
-    static const char *const s_arr_mounts[] = {
-        "/", VFS_BOOT, PROC_AT, DEV_AT, DISK_WORK_AT,
-    };
-    for (size_t sz_at = 0;
-         sz_at < sizeof s_arr_mounts / sizeof s_arr_mounts[0]; sz_at++) {
-        if (strcmp(str_path, s_arr_mounts[sz_at]) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
 int64_t sys_mkdirat(int i_dirfd, uint64_t u_path, uint32_t u_mode)
 {
     char arr_path[PATH_MAX];
@@ -221,7 +203,7 @@ int64_t sys_unlinkat(int i_dirfd, uint64_t u_path, int i_flags)
     if (i_why < 0) {
         return i_why;
     }
-    if (mounted_here(arr_path)) {
+    if (vfs_is_mount_point(arr_path)) {
         return -EBUSY;
     }
     i_why = may_make(arr_path, false);
@@ -262,7 +244,7 @@ int64_t sys_renameat2(int i_olddir, uint64_t u_old, int i_newdir,
     if (i_why < 0) {
         return i_why;
     }
-    if (mounted_here(arr_from) || mounted_here(arr_to)) {
+    if (vfs_is_mount_point(arr_from) || vfs_is_mount_point(arr_to)) {
         return -EBUSY;
     }
     bool b_exists = path_lookup(arr_to, false, &to) == 0;
