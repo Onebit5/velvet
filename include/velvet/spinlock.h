@@ -42,7 +42,7 @@ enum lock_rank {
      * scheduler and there is nothing beneath it to reach down to
      */
     LOCK_RANK_PIPE = 1,
-    LOCK_RANK_DEVICE,           /* tty, input, pci, the disk */
+    LOCK_RANK_DEVICE,           /* tty, input, pci, the disk, ramfs */
 
     LOCK_RANK_CLOCK,
     LOCK_RANK_SCHED,            /* the run queue */

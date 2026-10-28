@@ -450,7 +450,7 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/keyboard $(T)/serial \
              $(T)/fat32 $(T)/vfs $(T)/boot \
              $(T)/locks $(T)/path \
-             $(T)/pipe $(T)/bcache \
+             $(T)/pipe $(T)/bcache $(T)/ramfs \
              $(T)/ext4 $(T)/part $(T)/console \
              $(T)/mouse $(T)/init $(T)/mkfs \
              $(T)/net \
@@ -512,6 +512,8 @@ $(T)/locks:    LDLIBS = -pthread
 
 $(T)/path:     tests/test_path.c     fs/path.c
 $(T)/pipe:     tests/test_pipe.c     fs/pipe.c fs/file.c \
+               sched/spinlock.c lib/string.c
+$(T)/ramfs:    tests/test_ramfs.c    fs/ramfs.c \
                sched/spinlock.c lib/string.c
 $(T)/bcache:   tests/test_bcache.c   fs/bcache.c \
                lib/string.c

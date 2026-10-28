@@ -26,8 +26,8 @@ at a glance
     drivers/           serial, console, tty, ps/2 keyboard and mouse, pit,
                        rtc, pci, ahci, e1000, partitions, the font
     net/               ethernet, arp, ip, icmp, udp, tcp, sockets
-    fs/                vfs, disk, bcache, blockdev, ext4, fat32, jbd2, path,
-                       pipe, ramdisk, dev, proc, and the calls on files
+    fs/                vfs, disk, bcache, blockdev, ext4, fat32, jbd2, ramfs,
+                       path, pipe, ramdisk, dev, proc, and the calls on files
     lib/               kprintf, panic, string, hash, epoch, ksyms,
                        backtrace
     mm/                pmm, buddy, slab, kmalloc, vmm, addrspace, pressure

@@ -132,6 +132,29 @@ into the archive.
 
 it is a filesystem in the sense that a filing cabinet is furniture.
 
+ramfs
+-----
+
+``ramfs.c`` is a filesystem kept in memory, written and read like any
+other and forgotten when the machine stops: what the archive can be
+unpacked into so a program may change it, and what a directory nobody
+wants kept can be. it is a tree of nodes, each a file, a directory, a
+link or a device's number, and a file's bytes are a page each, a page
+never written reading as zeroes. there can be several at once, each
+known by a number the way a disk mount is.
+
+every node of all of them is in one table, and is known by a number
+rather than by where it is in memory: the low bits are its place in the
+table and the high bits how many nodes that place has held. an open file
+holds its node's number, and so does a lookup on one core while another
+unlinks the name, so a node that has gone is one whose number finds
+nothing rather than memory already handed to something else. a file
+unlinked while open keeps its bytes, without a name, until the last
+close, and a filesystem with a file open on it cannot be given back.
+
+one lock covers all of it, held for one walk of a path or one page's
+copy at most.
+
 fat32
 -----
 
