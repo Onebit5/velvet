@@ -23,11 +23,10 @@ int main(void)
     ksft_test_result(ksft_contains(arr_text, i_len, "idle0"),
                      "with the kernel's own threads in it\n");
     /*
-     * a program's thread is named after the path it was started by, cut
-     * to 15 characters: /selftests/sche once execve has resolved it, or
-     * selftests/sched as a shell typed it
+     * a program's thread is named after the last part of the path it was
+     * started by, cut to 15 characters, wherever on the medium that is
      */
-    ksft_test_result(ksft_contains(arr_text, i_len, "selftests/sche"),
+    ksft_test_result(ksft_contains(arr_text, i_len, "threads"),
                      "and the program reading it\n");
 
     /* the tests run as guest, and a call trace is root's */

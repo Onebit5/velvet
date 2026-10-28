@@ -571,8 +571,18 @@ int64_t user_exec(const char *str_path, const struct exec_args *p_args,
 
     signal_exec(process_signal_state(p_me->pid));
     process_vfork_done(p_me->pid);
-    process_set_name(p_me->pid, str_path);
-    thread_set_name(p_me, str_path);
+
+    /*
+     * known by the last part of the path it was started by, the way a
+     * program is everywhere, and not by where on the medium it happened
+     * to be: every program under one long directory would otherwise have
+     * that directory's name
+     */
+    const char *str_name = strrchr(str_path, '/');
+    str_name = (str_name != NULL && str_name[1] != '\0') ? str_name + 1
+                                                         : str_path;
+    process_set_name(p_me->pid, str_name);
+    thread_set_name(p_me, str_name);
 
     p_out->u_entry = img.u_entry;
     p_out->u_stack_top = img.u_stack_top;
