@@ -18,6 +18,10 @@ void panic(const char *fmt, ...)
     printf("\n");
     exit(1);
 }
+void kprintf(const char *fmt, ...)
+{
+    va_list ap; va_start(ap, fmt); vprintf(fmt, ap); va_end(ap);
+}
 void *kmalloc(size_t n)
 {
     return malloc(n);
@@ -30,7 +34,11 @@ void kfree(void *p)
 #include <velvet/vfs.h>
 #include <velvet/disk.h>
 #include <velvet/ramdisk.h>
+#include <velvet/ramfs.h>
 #include <velvet/blockdev.h>
+#include <velvet/process.h>
+#include <velvet/epoch.h>
+#include <uapi/velvet/errno.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \
@@ -324,6 +332,33 @@ bool disk_symlink(size_t w, const char *p, const char *t, uint32_t u_uid,
 bool disk_rename(size_t w, const char *from, const char *to)
 {
     (void)from; (void)to; last_mount = w; renames++; return disk_ready(w);
+}
+
+/* nobody has anything open, unless the test says somebody does */
+static bool s_b_open;
+bool process_any_file(bool (*p_test)(const struct file *p_file,
+                                      const void *p_ctx),
+                      const void *p_ctx)
+{
+    (void)p_test;
+    (void)p_ctx;
+    return s_b_open;
+}
+bool process_any_cwd(bool (*p_test)(const char *str_cwd, const void *p_ctx),
+                     const void *p_ctx)
+{
+    (void)p_test;
+    (void)p_ctx;
+    return false;
+}
+uint64_t epoch_now(void)
+{
+    return 0;
+}
+void epoch_to_date(uint64_t u_seconds, struct rtc_time *p_out)
+{
+    (void)u_seconds;
+    memset(p_out, 0, sizeof *p_out);
 }
 
 /* no drives here: /dev is the devices dev.c has of its own */
@@ -787,6 +822,83 @@ int main(void)
         have_work = true;
     }
 
+    /*
+     * a filesystem in memory mounted over one of the disk's directories:
+     * the names under it are the new one's, and the disk's are back when
+     * it is taken down
+     */
+    {
+        struct vfs_file r;
+        struct vfs_file q;
+        char arr_got[16];
+        enum vfs_kind e_kind = VFS_NOWHERE;
+        size_t sz_slot = 99;
+
+        int i_fs = ramfs_new(01777);
+        CHECK(i_fs >= 0
+              && vfs_mount_add("/deep", VFS_RAMFS, (size_t)i_fs, "none") == 0,
+              "a ramfs is mounted over a directory of the disk's");
+        CHECK(vfs_mount_add("/deep", VFS_RAMFS, (size_t)i_fs, "none")
+              == -EBUSY, "and nothing else can be mounted there now");
+        CHECK(!vfs_open("/deep/x.txt", &r),
+              "the disk's file under it is out of sight");
+        CHECK(vfs_open("/deep", &r) && r.is_dir && r.kind == VFS_RAMFS
+              && r.mode == 01777 && strcmp(r.name, "deep") == 0,
+              "and the mount point is the new filesystem's root, with the "
+              "mode it was made with");
+        CHECK(vfs_create("/deep/made", 0644, 1000, 1000, &r)
+              && r.kind == VFS_RAMFS && r.uid == 1000,
+              "a file made there is made in memory");
+        CHECK(vfs_write(&r, 0, "in memory", 9) == 9, "and takes a write");
+        CHECK(vfs_open("/deep/made", &q)
+              && vfs_read(&q, 0, arr_got, sizeof arr_got) == 9
+              && memcmp(arr_got, "in memory", 9) == 0,
+              "which reads back by its name");
+        CHECK(vfs_mkdir("/deep/sub", 0755, 0, 0)
+              && vfs_readdir("/deep", 1, &q) && strcmp(q.name, "sub") == 0
+              && !vfs_readdir("/deep", 2, &q),
+              "directories are made there too, and listed in order");
+        CHECK(vfs_rename("/deep/made", "/deep/sub/made")
+              && vfs_open("/deep/sub/made", &q),
+              "a rename inside it moves the name");
+        CHECK(!vfs_rename("/deep/sub/made", "/notes.txt"),
+              "and one out of it, onto the disk, is refused");
+
+        int i_deeps = 0;
+        for (size_t sz_at = 0; vfs_readdir("/", sz_at, &q); sz_at++) {
+            i_deeps += strcmp(q.name, "deep") == 0;
+        }
+        CHECK(i_deeps == 1, "the root lists it once: a mount over a "
+              "directory it has is that directory");
+        char arr_at[64];
+        CHECK(vfs_where(VFS_RAMFS, (size_t)i_fs, arr_at, sizeof arr_at)
+              && strcmp(arr_at, "/deep") == 0,
+              "and it can be asked where it is");
+
+        /* nothing may stand on it, or have a file open on it, when it goes */
+        CHECK(ramfs_new(0755) >= 0, "a second ramfs");
+        CHECK(vfs_mount_add("/deep/sub", VFS_RAMFS, 1, "inner") == 0
+              && vfs_mount_remove("/deep", &e_kind, &sz_slot) == -EBUSY,
+              "with another mounted inside it, it cannot be taken down");
+        CHECK(vfs_mount_remove("/deep/sub", &e_kind, &sz_slot) == 0
+              && e_kind == VFS_RAMFS && sz_slot == 1 && ramfs_free(1),
+              "until that one is");
+        s_b_open = true;
+        CHECK(vfs_mount_remove("/deep", &e_kind, &sz_slot) == -EBUSY,
+              "nor with a file open on it");
+        s_b_open = false;
+        CHECK(vfs_mount_remove("/deep", &e_kind, &sz_slot) == 0
+              && e_kind == VFS_RAMFS && sz_slot == (size_t)i_fs
+              && ramfs_free(sz_slot),
+              "and then it comes down, saying what it was");
+        CHECK(vfs_open("/deep/x.txt", &q) && q.kind == VFS_DISK,
+              "and the disk's file is back where it was");
+        CHECK(vfs_mount_remove("/deep", &e_kind, &sz_slot) == -EINVAL,
+              "a second time nothing is mounted there");
+        CHECK(vfs_mount_remove("/", &e_kind, &sz_slot) == -EBUSY,
+              "and the root never comes down");
+    }
+
     have_disk = false;
     have_work = false;
 
@@ -835,18 +947,30 @@ int main(void)
 
 
 
-    struct vfs_mount m;
-    CHECK(vfs_mount_at(0, &m) && strcmp(m.at, "/") == 0, "/ is a mount");
-    CHECK(!m.present, "and says so when there is no disk behind it");
-    CHECK(vfs_mount_at(1, &m) && strcmp(m.at, DISK_WORK_AT) == 0,
-          "/work is one, listed whether or not anything is on it");
-    CHECK(!m.present,
-          "and says plainly when there is nowhere to put work that is not "
-          "the system, which is worth being told rather than discovering "
-          "by filling the disk");
-    CHECK(vfs_mount_at(2, &m) && strcmp(m.at, VFS_BOOT) == 0, "/boot is one");
-    CHECK(m.present && !m.writable, "always there, never writable");
-    CHECK(!vfs_mount_at(3, &m), "and there are only the three");
+    {
+        struct vfs_mount m;
+        bool b_root = false;
+        bool b_work = false;
+        bool b_boot = false;
+        size_t sz_rows = 0;
+        for (size_t sz_at = 0; vfs_mount_at(sz_at, &m); sz_at++) {
+            sz_rows++;
+            b_root |= strcmp(m.arr_at, "/") == 0 && !m.present;
+            b_work |= strcmp(m.arr_at, DISK_WORK_AT) == 0 && !m.present;
+            b_boot |= strcmp(m.arr_at, VFS_BOOT) == 0 && m.present
+                      && !m.writable;
+        }
+        CHECK(b_root, "/ is a mount, and says so when there is no disk "
+              "behind it");
+        CHECK(b_work, "/work is one, listed whether or not anything is on "
+              "it, and says plainly when there is nowhere to put work that "
+              "is not the system, which is worth being told rather than "
+              "discovering by filling the disk");
+        CHECK(b_boot, "/boot is one, always there, never writable");
+        CHECK(sz_rows == 5 && sz_rows == vfs_mount_count(),
+              "and the table is the five the kernel makes at boot, /proc "
+              "and /dev with them");
+    }
 
     /*
      * a file opened from a node: one position, moved by reads and by

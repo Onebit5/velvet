@@ -672,6 +672,17 @@ bool ramfs_truncate(uint32_t u_ino, uint64_t u_size)
     return b_ok;
 }
 
+bool ramfs_size(uint32_t u_ino, uint64_t *p_size)
+{
+    uint64_t u_flags = spin_lock_irq(&s_lock);
+    const struct node *p_node = by_ino(u_ino);
+    if (p_node != NULL) {
+        *p_size = p_node->u_size;
+    }
+    spin_unlock_irq(&s_lock, u_flags);
+    return p_node != NULL;
+}
+
 void ramfs_hold(uint32_t u_ino)
 {
     uint64_t u_flags = spin_lock_irq(&s_lock);
@@ -691,6 +702,17 @@ void ramfs_let_go(uint32_t u_ino)
         node_free(p_node);
     }
     spin_unlock_irq(&s_lock, u_flags);
+}
+
+uint64_t ramfs_room(void)
+{
+    uint64_t u_free = 0;
+    uint64_t u_flags = spin_lock_irq(&s_lock);
+    for (size_t sz_at = 1; sz_at < NODES_MAX; sz_at++) {
+        u_free += (s_arr_nodes[sz_at] == NULL) ? 1 : 0;
+    }
+    spin_unlock_irq(&s_lock, u_flags);
+    return u_free;
 }
 
 void ramfs_usage(size_t sz_fs, uint64_t *p_bytes, uint64_t *p_nodes)

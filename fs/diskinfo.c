@@ -17,7 +17,10 @@
 /* one filesystem: where, on which partition, of what kind, how full. */
 static void say_mount(size_t which)
 {
-    kprintf("\n%-10s %s\n", "mounted at", disk_mount_point(which));
+    char arr_at[PATH_MAX];
+
+    vfs_where(VFS_DISK, which, arr_at, sizeof arr_at);
+    kprintf("\n%-10s %s\n", "mounted at", arr_at);
 
     /*
      * which partition, rather than which drive answered first,
@@ -76,19 +79,11 @@ void disk_show(void)
     kprintf("capacity   %lu MiB (%lu sectors)\n",
             disk_bytes() / (1024 * 1024), disk_bytes() / AHCI_SECTOR);
 
-    /* every filesystem hanging off this drive, rather than the one. */
+    /* every filesystem hanging off the drives, rather than the one. */
     for (size_t i = 0; i < DISK_MOUNTS; i++) {
         if (disk_ready(i)) {
             say_mount(i);
         }
-    }
-    if (!disk_ready(DISK_WORK)) {
-        kprintf("\nnothing is mounted at %s, this drive holds one "
-                "filesystem, so the\n", DISK_WORK_AT);
-        kprintf("system and whatever you do with it share the space. "
-                "`parts` lists what\n");
-        kprintf("else is on the drive, and `mount work <n>` hangs one "
-                "there.\n");
     }
 
     struct bcache_stats c;
@@ -124,9 +119,7 @@ void disk_show_partitions(void)
         const char *scheme = (e.scheme == PART_GPT) ? "gpt"
                            : (e.scheme == PART_MBR) ? "mbr" : "-";
 
-        kprintf("%s%2lu  %5u  %-6s  %-11lu  %-11lu  %s",
-                (int)i == disk_mounted_part(DISK_ROOT) ? " *"
-                    : (int)i == disk_mounted_part(DISK_WORK) ? " w" : "  ",
+        kprintf("  %2lu  %5u  %-6s  %-11lu  %-11lu  %s",
                 (uint64_t)i, e.p.drive, scheme,
                 e.p.first_lba, e.p.sectors, e.p.kind);
         if (e.p.name[0] != '\0') {
@@ -135,11 +128,16 @@ void disk_show_partitions(void)
         if (e.fs[0] != '\0') {
             kprintf("  [%s]", e.fs);
         }
+        /* and where it is mounted, if it is */
+        for (size_t sz_slot = 0; sz_slot < DISK_MOUNTS; sz_slot++) {
+            char arr_at[PATH_MAX];
+            if (disk_ready(sz_slot) && disk_mounted_part(sz_slot) == (int)i
+                && vfs_where(VFS_DISK, sz_slot, arr_at, sizeof arr_at)) {
+                kprintf("  at %s", arr_at);
+            }
+        }
         kprintf("\n");
     }
-    kprintf("\na * is the one at /, a w the one at %s. `mount <number>` "
-            "moves the\nfirst and `mount work <number>` the second\n",
-            DISK_WORK_AT);
 }
 
 void vfs_show_mounts(void)
@@ -148,8 +146,8 @@ void vfs_show_mounts(void)
 
     struct vfs_mount m;
     for (size_t i = 0; vfs_mount_at(i, &m); i++) {
-        kprintf("%-10s %-7s %-5s %s%s\n", m.at, m.what,
-                m.writable ? "yes" : "no", m.where,
+        kprintf("%-10s %-7s %-5s %s%s\n", m.arr_at, m.what,
+                m.writable ? "yes" : "no", m.arr_where,
                 m.present ? "" : "   (absent)");
     }
 }

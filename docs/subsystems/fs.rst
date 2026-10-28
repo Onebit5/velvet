@@ -26,6 +26,18 @@ name, from that filesystem's own root. a disk mount with nothing behind it
 is not in the namespace at all: the names under it are the next mount's
 out, and a listing of the directory it stands in leaves it out.
 
+``mount`` adds to the table and ``umount2`` takes from it, root's both
+(``fs/namespace.c``). what can be mounted is ext2, ext3 and ext4, one
+driver, and vfat, each off a drive or a partition named in /dev; ramfs,
+also called tmpfs, with ``mode=`` for its root; and /proc and /dev in a
+second place. it hangs over a directory that is there, which goes out of
+sight until the mount comes down. a mount comes down only when nothing
+stands on it, no file is open on it and no working directory is in it,
+and a call in the middle of a name under one counts it, so it cannot go
+out from under that call on another core. ``statfs`` says what kind of
+filesystem a name is on, by the number every program knows that kind by,
+and how full it is.
+
 the ramdisk keeps its own mount point rather than being deleted, because it
 is what makes the machine work when the disk does not. a system's programs,
 and its accounts, live on it. a kernel whose only filesystem needs a sata
@@ -534,13 +546,12 @@ the disk interface
 ------------------------
 
 the disk, mounted. one place owns the sata controller and the filesystems
-on it, so nothing above has to know which is which, and one disk can hold
-two: the system on one and the work on another, which is what keeps a full
-work filesystem from taking the machine with it. every call that touches a
-file says which of them it means.
-
-``const char *disk_mount_point(size_t which);``
-    where a mount hangs in the namespace above: "/" or "/work"
+on it, so nothing above has to know which is which. a filesystem is
+mounted in a slot of its own, eight of them, and every call that touches a
+file says which slot it means. the first two are the ones the kernel
+mounts at boot, the system and the work beside it, which is what keeps a
+full work filesystem from taking the machine with it; the rest are
+mount's. where each hangs in the namespace is the namespace's to say.
 
 ``uint64_t entry_sector;``
     where the 32-byte record describing this file sits on the disk.
@@ -552,10 +563,13 @@ file says which of them it means.
     which filesystem answered.
 
 ``int disk_mounted_part(size_t which);``
-    which partition is at this mount point, or -1
+    which partition is in this slot, or -1
 
-``bool disk_mount_part(size_t which, size_t index);``
-    mount a particular partition at one of the two places.
+``int disk_mount_block(const struct disk_block *p_block, enum disk_kind e_want);``
+    the filesystem on a drive or a partition, of the kind wanted or of either kind, mounted in a free slot: which one, or -EBUSY when its sectors are mounted already, since two mounts of one filesystem are two copies of its state disagreeing about the same disk
+
+``bool disk_unmount_slot(size_t sz_which);``
+    a slot's filesystem written out, its log closed, and the slot free
 
 ``bool disk_mount(void);``
     find a controller, mount what is on it.
@@ -623,16 +637,15 @@ the disk and the namespace, described. each call writes with kprintf, and
 ``/proc`` catches what it writes in the reader's buffer.
 
 ``void disk_show(void);``
-    the drive, every filesystem on it, and the block cache: what ``disk``
-    prints, and ``/proc/disk``
+    the drive, every filesystem on it, and the block cache:
+    ``/proc/disk``
 
 ``void disk_show_partitions(void);``
-    what each drive's partition table says it holds: ``parts``, and
-    ``/proc/partitions``
+    what each drive's partition table says it holds, and where each one
+    mounted is: ``/proc/partitions``
 
 ``void vfs_show_mounts(void);``
-    which filesystem is where: ``mount`` with nothing after it, and
-    ``/proc/mounts``
+    which filesystem is where: ``/proc/mounts``
 
 ``void fs_proc_init(void);``
     registers those three, for anyone to read
@@ -757,8 +770,14 @@ while a machine with no disk carries on with the one it booted with.
 ``bool vfs_writable(const struct vfs_file *f);``
     may anyone write here at all? the ramdisk is read-only memory
 
-``struct vfs_mount { const char *at;``
-    the mount table, for `mount` to print
+``struct vfs_mount { char arr_at[PATH_MAX];``
+    one mount, copied out of the table, for /proc/mounts to print
+
+``int64_t vfs_mount_add(const char *str_at, enum vfs_kind e_kind, size_t sz_slot, const char *str_source);``
+    a filesystem hung at a point: -EBUSY when something hangs there already. that there is a directory there is the caller's to see to
+
+``int64_t vfs_mount_remove(const char *str_at, enum vfs_kind *p_kind, size_t *p_slot);``
+    a mount taken down, saying what was there so the caller can let it go: -EBUSY for the root, or for one something else stands on, a file is open on, a working directory is in, or a call is in the middle of a name under
 
 
 the bcache interface

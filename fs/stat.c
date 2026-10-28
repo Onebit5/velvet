@@ -35,6 +35,7 @@ static uint64_t dev_of(const struct vfs_file *p_node)
     case VFS_RAMDISK: return DEVNO(0, 1);
     case VFS_PROC:    return DEVNO(0, 2);
     case VFS_DEV:     return DEVNO(0, 3);
+    case VFS_RAMFS:   return DEVNO(0, 16 + p_node->mount);
     default:          return 0;
     }
 }
@@ -82,7 +83,9 @@ static void fill_file(const struct file *p_file, struct stat *p_st)
 {
     if (p_file->e_type == FILE_TYPE_REGULAR
         || p_file->e_type == FILE_TYPE_DIR) {
-        fill_node(&p_file->node, p_file->arr_path, p_st);
+        struct vfs_file node = p_file->node;
+        vfs_refresh(&node);
+        fill_node(&node, p_file->arr_path, p_st);
         return;
     }
     memset(p_st, 0, sizeof *p_st);

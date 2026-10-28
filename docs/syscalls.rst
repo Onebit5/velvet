@@ -146,11 +146,15 @@ number  name             where                  notes
 128     rt_sigtimedwait  sched/sigcall.c
 130     rt_sigsuspend    sched/sigcall.c
 131     sigaltstack      sched/sigcall.c
+137     statfs           fs/namespace.c
+138     fstatfs          fs/namespace.c
 157     prctl            sched/sys.c            PR_SET_NAME, PR_GET_NAME
 158     arch_prctl       arch/x86_64/syscall.c  ARCH_SET_FS and ARCH_GET_FS
 160     setrlimit        sched/sys.c
 162     sync             fs/open.c
 164     settimeofday     sched/time.c
+165     mount            fs/namespace.c         root; ext2/3/4, vfat, ramfs, proc
+166     umount2          fs/namespace.c         root; UMOUNT_NOFOLLOW only
 169     reboot           sched/sys.c            root; restart or power off
 170     sethostname      sched/sys.c            root; uname tells it
 171     setdomainname    sched/sys.c            root, likewise

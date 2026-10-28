@@ -271,7 +271,7 @@ SELFTEST_BINS := $(addprefix $(BINDIR)/selftests/,$(SELFTESTS))
 # the tests of what only root may do. each goes on the medium so that only
 # root may run it, which is how /init knows to run it as root rather than
 # as its guest; every other test anyone may run
-SELFTEST_ROOT := fs/blockdev
+SELFTEST_ROOT := fs/blockdev fs/mount
 
 # the image's /init: asks which tests to run, runs each as a guest and
 # powers the machine off. built the way a test is, since it is a program
@@ -642,7 +642,7 @@ $(T)/epoch:    tests/test_epoch.c    lib/epoch.c lib/clock.c
 # structure, and its interesting cases are all at the edges
 $(T)/pressure: tests/test_pressure.c mm/pressure.c
 $(T)/vfs:      tests/test_vfs.c      fs/vfs.c fs/file.c fs/dev.c \
-               fs/ramdisk.c \
+               fs/ramdisk.c fs/ramfs.c sched/spinlock.c \
                lib/string.c
 # the protocol as the kernel declares it against the loader's own header,
 # field by field, since the two describe the same bytes and neither can

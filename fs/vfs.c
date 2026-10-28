@@ -2,19 +2,24 @@
 /*
  * fs/vfs.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * the virtual filesystem: names, descriptors, and two disks.
+ * the virtual filesystem: names, descriptors, and the mounts under them.
  */
 
 #include <velvet/vfs.h>
 #include <velvet/file.h>
 #include <uapi/velvet/errno.h>
 #include <uapi/velvet/fcntl.h>
+#include <uapi/velvet/stat.h>
 
 #include <velvet/ramdisk.h>
+#include <velvet/ramfs.h>
 #include <velvet/disk.h>
+#include <velvet/epoch.h>
 #include <velvet/kmalloc.h>
+#include <velvet/process.h>
 #include <velvet/proc.h>
 #include <velvet/dev.h>
+#include <velvet/spinlock.h>
 #include <velvet/string.h>
 
 /* what a file on the disk is allowed to be. */
@@ -46,29 +51,46 @@ static void copy_name(char *dst, const char *src)
  * it is always there, and until the archive is the root, a name the root
  * filesystem does not have is looked for in the archive too
  */
-#define VFS_MOUNTS_MAX 8
+#define VFS_MOUNTS_MAX 16
 
 struct mount_point {
     char arr_at[PATH_MAX];
+    char arr_source[VFS_SOURCE_MAX];    /* what mount was told it is */
     enum vfs_kind e_kind;
-    size_t sz_slot;             /* which disk mount, for VFS_DISK */
+    size_t sz_slot;             /* which disk mount or ramfs, for those */
+    bool b_used;
     bool b_union;               /* names it lacks are the archive's */
+    uint32_t u_busy;            /* calls in the middle of a name under it */
 };
 
-/* the root first: every name is under it, and it stands in nothing */
+/*
+ * the root first: every name is under it, it stands in nothing, and it
+ * is never taken down. the others the kernel mounts at boot follow it,
+ * and mount adds to them in the first place free
+ */
 static struct mount_point s_arr_mounts[VFS_MOUNTS_MAX] = {
-    { "/",          VFS_DISK,    DISK_ROOT, true  },
-    { VFS_BOOT,     VFS_RAMDISK, 0,         false },
-    { PROC_AT,      VFS_PROC,    0,         false },
-    { DEV_AT,       VFS_DEV,     0,         false },
-    { DISK_WORK_AT, VFS_DISK,    DISK_WORK, false },
+    { .arr_at = "/", .e_kind = VFS_DISK, .sz_slot = DISK_ROOT,
+      .b_used = true, .b_union = true },
+    { .arr_at = VFS_BOOT, .e_kind = VFS_RAMDISK, .b_used = true },
+    { .arr_at = PROC_AT, .e_kind = VFS_PROC, .b_used = true },
+    { .arr_at = DEV_AT, .e_kind = VFS_DEV, .b_used = true },
+    { .arr_at = DISK_WORK_AT, .e_kind = VFS_DISK, .sz_slot = DISK_WORK,
+      .b_used = true },
 };
-static size_t s_sz_mounts = 5;
+
+/*
+ * the table changes while names are being looked up on other cores, so
+ * it is read and written under this, and a mount in use by a call that
+ * has let go of the lock is counted in u_busy, so it is not taken down
+ * underneath that call
+ */
+static struct spinlock s_lock = SPINLOCK("mounts", LOCK_RANK_MOUNT);
 
 static bool is_present(const struct mount_point *p_mount)
 {
-    return p_mount->b_union || p_mount->e_kind != VFS_DISK
-           || disk_ready(p_mount->sz_slot);
+    return p_mount->b_used
+           && (p_mount->b_union || p_mount->e_kind != VFS_DISK
+               || disk_ready(p_mount->sz_slot));
 }
 
 static const char *past_slashes(const char *str_at)
@@ -94,13 +116,12 @@ static bool is_under(const char *str_path, const char *str_at, size_t sz_len)
  * root, which keeps its leading slash, so every filesystem answers the
  * same shape of question; the mount point itself is "/"
  */
-static const struct mount_point *route(const char *str_path,
-                                       const char **p_rest)
+static struct mount_point *route(const char *str_path, const char **p_rest)
 {
-    const struct mount_point *p_best = &s_arr_mounts[0];
+    struct mount_point *p_best = &s_arr_mounts[0];
     size_t sz_best = 1;
-    for (size_t sz_at = 1; sz_at < s_sz_mounts; sz_at++) {
-        const struct mount_point *p_mount = &s_arr_mounts[sz_at];
+    for (size_t sz_at = 1; sz_at < VFS_MOUNTS_MAX; sz_at++) {
+        struct mount_point *p_mount = &s_arr_mounts[sz_at];
         size_t sz_len = strlen(p_mount->arr_at);
         if (sz_len > sz_best && is_present(p_mount)
             && is_under(str_path, p_mount->arr_at, sz_len)) {
@@ -111,6 +132,27 @@ static const struct mount_point *route(const char *str_path,
     const char *str_rest = (sz_best > 1) ? str_path + sz_best : str_path;
     *p_rest = (str_rest[0] == '\0') ? "/" : str_rest;
     return p_best;
+}
+
+/* the mount an absolute name is under, kept until mount_leave */
+static struct mount_point *mount_enter(const char *str_path,
+                                       const char **p_rest)
+{
+    uint64_t u_flags = spin_lock_irq(&s_lock);
+    struct mount_point *p_mount = route(str_path, p_rest);
+    p_mount->u_busy++;
+    spin_unlock_irq(&s_lock, u_flags);
+    return p_mount;
+}
+
+static void mount_leave(struct mount_point *p_mount)
+{
+    if (p_mount == NULL) {
+        return;
+    }
+    uint64_t u_flags = spin_lock_irq(&s_lock);
+    p_mount->u_busy--;
+    spin_unlock_irq(&s_lock, u_flags);
 }
 
 /* a name made absolute, a bare one being the root's, into str_out */
@@ -124,15 +166,24 @@ static const char *absolute(const char *str_path, char *str_out)
     return str_out;
 }
 
+static struct mount_point *mounted_at(const char *str_path)
+{
+    for (size_t sz_at = 0; sz_at < VFS_MOUNTS_MAX; sz_at++) {
+        struct mount_point *p_mount = &s_arr_mounts[sz_at];
+        if (p_mount->b_used && strcmp(p_mount->arr_at, str_path) == 0) {
+            return p_mount;
+        }
+    }
+    return NULL;
+}
+
 /* a name something is mounted at, and stays mounted at */
 bool vfs_is_mount_point(const char *str_path)
 {
-    for (size_t sz_at = 0; sz_at < s_sz_mounts; sz_at++) {
-        if (strcmp(s_arr_mounts[sz_at].arr_at, str_path) == 0) {
-            return true;
-        }
-    }
-    return false;
+    uint64_t u_flags = spin_lock_irq(&s_lock);
+    bool b_is = mounted_at(str_path) != NULL;
+    spin_unlock_irq(&s_lock, u_flags);
+    return b_is;
 }
 
 static void from_ramdisk(struct vfs_file *out, const struct ramdisk_file *f)
@@ -172,6 +223,46 @@ static void from_disk(struct vfs_file *out, const struct disk_entry *e,
     out->gid = e->gid;
     out->is_symlink = e->is_symlink;
     out->u_ino = e->ino;
+}
+
+/*
+ * a ramfs node as the namespace describes one. the time goes the way a
+ * fat one would, broken down, because that is what a node carries
+ */
+static void from_ramfs(struct vfs_file *p_out, const struct ramfs_entry *p_e,
+                       size_t sz_fs)
+{
+    struct rtc_time when;
+
+    memset(p_out, 0, sizeof *p_out);
+    p_out->kind = VFS_RAMFS;
+    p_out->mount = sz_fs;
+    copy_name(p_out->name, p_e->arr_name);
+    p_out->size = p_e->u_size;
+    p_out->is_dir = (p_e->u_mode & S_IFMT) == S_IFDIR;
+    p_out->is_symlink = (p_e->u_mode & S_IFMT) == S_IFLNK;
+    p_out->mode = p_e->u_mode & 07777;
+    p_out->uid = p_e->u_uid;
+    p_out->gid = p_e->u_gid;
+    p_out->u_ino = p_e->u_ino;
+    epoch_to_date(p_e->u_mtime, &when);
+    p_out->written.year = when.year;
+    p_out->written.month = when.month;
+    p_out->written.day = when.day;
+    p_out->written.hour = when.hour;
+    p_out->written.minute = when.minute;
+    p_out->written.second = when.second;
+}
+
+static bool try_ramfs(size_t sz_fs, const char *str_path, bool b_follow,
+                      struct vfs_file *p_out)
+{
+    struct ramfs_entry e;
+    if (!ramfs_lookup(sz_fs, str_path, b_follow, &e)) {
+        return false;
+    }
+    from_ramfs(p_out, &e, sz_fs);
+    return true;
 }
 
 /* one filesystem's copy of a name, if it is mounted and has one */
@@ -258,27 +349,27 @@ static void mount_root(const struct mount_point *p_mount,
     memset(p_out, 0, sizeof *p_out);
     p_out->kind = p_mount->e_kind;
     p_out->mount = p_mount->sz_slot;
-    copy_name(p_out->name, (str_name[0] != '\0') ? str_name : "/");
     p_out->is_dir = true;
     p_out->mode = 0555;
+    /* one whose root is a node of its own says what that node is */
+    if (p_mount->e_kind == VFS_RAMFS) {
+        try_ramfs(p_mount->sz_slot, "/", true, p_out);
+    }
+    copy_name(p_out->name, (str_name[0] != '\0') ? str_name : "/");
 }
 
-static bool lookup_in(const struct mount_point *p_mount, const char *str_rest,
-                      bool b_follow, struct vfs_file *p_out)
+/* a name on the filesystem a mount holds, and nowhere else */
+static bool lookup_own(const struct mount_point *p_mount, const char *str_rest,
+                       bool b_follow, struct vfs_file *p_out)
 {
     const char *str_name = past_slashes(str_rest);
-    if (str_name[0] == '\0') {
-        mount_root(p_mount, p_out);
-        return true;
-    }
     switch (p_mount->e_kind) {
     case VFS_DISK:
-        if (try_disk(p_mount->sz_slot, str_rest, b_follow, p_out)) {
-            return true;
-        }
-        return p_mount->b_union && try_ramdisk(str_name, p_out);
+        return try_disk(p_mount->sz_slot, str_rest, b_follow, p_out);
     case VFS_RAMDISK:
         return try_ramdisk(str_name, p_out);
+    case VFS_RAMFS:
+        return try_ramfs(p_mount->sz_slot, str_rest, b_follow, p_out);
     case VFS_PROC:
         memset(p_out, 0, sizeof *p_out);
         p_out->kind = VFS_PROC;
@@ -307,6 +398,20 @@ static bool lookup_in(const struct mount_point *p_mount, const char *str_rest,
     }
 }
 
+static bool lookup_in(const struct mount_point *p_mount, const char *str_rest,
+                      bool b_follow, struct vfs_file *p_out)
+{
+    const char *str_name = past_slashes(str_rest);
+    if (str_name[0] == '\0') {
+        mount_root(p_mount, p_out);
+        return true;
+    }
+    if (lookup_own(p_mount, str_rest, b_follow, p_out)) {
+        return true;
+    }
+    return p_mount->b_union && try_ramdisk(str_name, p_out);
+}
+
 static bool open_as(const char *path, bool b_follow, struct vfs_file *out)
 {
     char arr_absolute[VFS_NAME_MAX + 1];
@@ -315,9 +420,11 @@ static bool open_as(const char *path, bool b_follow, struct vfs_file *out)
         return false;
     }
     const char *rest;
-    const struct mount_point *p_mount = route(absolute(path, arr_absolute),
+    struct mount_point *p_mount = mount_enter(absolute(path, arr_absolute),
                                               &rest);
-    return lookup_in(p_mount, rest, b_follow, out);
+    bool b_found = lookup_in(p_mount, rest, b_follow, out);
+    mount_leave(p_mount);
+    return b_found;
 }
 
 /*
@@ -395,6 +502,14 @@ static bool readdir_in(const struct mount_point *p_mount,
         from_disk(p_out, &e, p_mount->sz_slot);
         return true;
     }
+    case VFS_RAMFS: {
+        struct ramfs_entry e;
+        if (!ramfs_readdir(p_mount->sz_slot, str_rest, sz_index, &e)) {
+            return false;
+        }
+        from_ramfs(p_out, &e, p_mount->sz_slot);
+        return true;
+    }
     case VFS_RAMDISK: {
         size_t prefix = strlen(str_name);
         struct ramdisk_file f;
@@ -457,23 +572,54 @@ static bool stands_in(const struct mount_point *p_mount, const char *str_dir)
            && strncmp(str_dir, p_mount->arr_at, sz_parent) == 0;
 }
 
+/* the root of the nth mount standing in a directory, into p_out */
+static bool nth_standing(const char *str_dir, size_t sz_nth,
+                         struct vfs_file *p_out)
+{
+    bool b_found = false;
+    uint64_t u_flags = spin_lock_irq(&s_lock);
+    for (size_t sz_at = 1; sz_at < VFS_MOUNTS_MAX && !b_found; sz_at++) {
+        const struct mount_point *p_mount = &s_arr_mounts[sz_at];
+        if (is_present(p_mount) && stands_in(p_mount, str_dir)
+            && sz_nth-- == 0) {
+            mount_root(p_mount, p_out);
+            b_found = true;
+        }
+    }
+    spin_unlock_irq(&s_lock, u_flags);
+    return b_found;
+}
+
 /*
- * past the end of what a directory holds, the mounts standing in it,
- * which belong to no filesystem and have to be added by hand. one with
- * nothing mounted is not listed: a directory in a listing that cannot be
- * entered is worse than one that is not there, because the second is a
- * fact about the machine and the first looks like a fault
+ * past the end of what a directory holds, the mounts standing in it that
+ * it does not hold a directory for, which belong to no filesystem and
+ * have to be added by hand; one hung over a directory the filesystem has
+ * is listed already, as that directory. one with nothing mounted is not
+ * listed: a directory in a listing that cannot be entered is worse than
+ * one that is not there, because the second is a fact about the machine
+ * and the first looks like a fault
  */
-static bool mount_in(const char *str_dir, size_t sz_index,
+static bool mount_in(const struct mount_point *p_dir, const char *str_rest,
+                     const char *str_dir, size_t sz_index,
                      struct vfs_file *p_out)
 {
-    for (size_t sz_at = 1; sz_at < s_sz_mounts; sz_at++) {
-        const struct mount_point *p_mount = &s_arr_mounts[sz_at];
-        if (!is_present(p_mount) || !stands_in(p_mount, str_dir)) {
+    struct vfs_file root;
+    struct vfs_file there;
+    char arr_name[PATH_MAX];
+
+    for (size_t sz_nth = 0; nth_standing(str_dir, sz_nth, &root); sz_nth++) {
+        size_t sz_len = strlen(str_rest);
+        if (sz_len + 1 + strlen(root.name) >= sizeof arr_name) {
+            continue;
+        }
+        memcpy(arr_name, str_rest, sz_len);
+        arr_name[sz_len] = '/';
+        copy_name(arr_name + sz_len + 1, root.name);
+        if (lookup_own(p_dir, arr_name, false, &there)) {
             continue;
         }
         if (sz_index-- == 0) {
-            mount_root(p_mount, p_out);
+            *p_out = root;
             return true;
         }
     }
@@ -491,154 +637,249 @@ bool vfs_readdir(const char *path, size_t index, struct vfs_file *out)
     path = absolute(path, arr_absolute);
 
     const char *rest;
-    const struct mount_point *p_mount = route(path, &rest);
-    if (readdir_in(p_mount, rest, index, out)) {
-        return true;
+    struct mount_point *p_mount = mount_enter(path, &rest);
+    bool b_found = readdir_in(p_mount, rest, index, out);
+    if (!b_found) {
+        size_t sz_own = 0;
+        struct vfs_file ignored;
+        while (readdir_in(p_mount, rest, sz_own, &ignored)) {
+            sz_own++;
+        }
+        b_found = index >= sz_own
+                  && mount_in(p_mount, rest, path, index - sz_own, out);
     }
-    size_t sz_own = 0;
-    struct vfs_file ignored;
-    while (readdir_in(p_mount, rest, sz_own, &ignored)) {
-        sz_own++;
-    }
-    return index >= sz_own && mount_in(path, index - sz_own, out);
+    mount_leave(p_mount);
+    return b_found;
 }
 
 
 
 /*
- * the disk mount a name is on and what its filesystem calls it, for
- * everything that changes a filesystem: false for a name on read-only
- * memory, in /proc or /dev, or under a mount with nothing on it. a bare
- * name is made absolute in str_buf, which *p_rest points into after
+ * what can be done to a filesystem that keeps names of its own, a disk's
+ * or one in memory. read-only memory, /proc and /dev keep none
  */
-static bool on_disk(const char *path, char *str_buf, size_t *p_which,
-                    const char **p_rest)
-{
-    if (path == NULL || path[0] == '\0') {
-        return false;
-    }
-    const struct mount_point *p_mount = route(absolute(path, str_buf),
-                                              p_rest);
-    if (p_mount->e_kind != VFS_DISK || !disk_ready(p_mount->sz_slot)) {
-        return false;
-    }
-    *p_which = p_mount->sz_slot;
-    return true;
-}
+struct store_ops {
+    bool (*create)(size_t which, const char *path, uint32_t u_mode,
+                   uint32_t u_uid, uint32_t u_gid, struct vfs_file *out);
+    bool (*mkdir)(size_t which, const char *path, uint32_t u_mode,
+                  uint32_t u_uid, uint32_t u_gid);
+    bool (*rmdir)(size_t which, const char *path);
+    bool (*unlink)(size_t which, const char *path);
+    bool (*rename)(size_t which, const char *from, const char *to);
+    bool (*chmod)(size_t which, const char *path, uint32_t mode);
+    bool (*chown)(size_t which, const char *path, uint32_t uid,
+                  uint32_t gid);
+    bool (*symlink)(size_t which, const char *path, const char *target,
+                    uint32_t u_uid, uint32_t u_gid);
+    bool (*readlink)(size_t which, const char *path, char *out,
+                     size_t size);
+};
 
-bool vfs_create(const char *path, uint32_t u_mode, uint32_t u_uid,
-                uint32_t u_gid, struct vfs_file *out)
+static bool disk_create_node(size_t which, const char *path, uint32_t u_mode,
+                             uint32_t u_uid, uint32_t u_gid,
+                             struct vfs_file *out)
 {
-    char arr_buf[VFS_NAME_MAX + 1];
-    size_t which;
-    const char *rest;
-    if (!on_disk(path, arr_buf, &which, &rest)) {
-        return false;       /* read-only memory. there is nowhere to put it */
-    }
-
     struct disk_entry e;
-    if (!disk_create(which, rest, u_mode, u_uid, u_gid, &e)) {
+    if (!disk_create(which, path, u_mode, u_uid, u_gid, &e)) {
         return false;
     }
     from_disk(out, &e, which);
     return true;
 }
 
+static bool ramfs_create_node(size_t sz_fs, const char *str_path,
+                              uint32_t u_mode, uint32_t u_uid, uint32_t u_gid,
+                              struct vfs_file *p_out)
+{
+    struct ramfs_entry e;
+    if (!ramfs_make(sz_fs, str_path, S_IFREG | (u_mode & 07777), u_uid,
+                    u_gid, 0, NULL, &e)) {
+        return false;
+    }
+    from_ramfs(p_out, &e, sz_fs);
+    return true;
+}
+
+static bool ramfs_mkdir_node(size_t sz_fs, const char *str_path,
+                             uint32_t u_mode, uint32_t u_uid, uint32_t u_gid)
+{
+    return ramfs_make(sz_fs, str_path, S_IFDIR | (u_mode & 07777), u_uid,
+                      u_gid, 0, NULL, NULL);
+}
+
+static bool ramfs_symlink_node(size_t sz_fs, const char *str_path,
+                               const char *str_target, uint32_t u_uid,
+                               uint32_t u_gid)
+{
+    return ramfs_make(sz_fs, str_path, S_IFLNK | 0777, u_uid, u_gid, 0,
+                      str_target, NULL);
+}
+
+static const struct store_ops s_disk_ops = {
+    disk_create_node, disk_mkdir, disk_rmdir, disk_unlink, disk_rename,
+    disk_chmod, disk_chown, disk_symlink, disk_readlink,
+};
+
+static const struct store_ops s_ramfs_ops = {
+    ramfs_create_node, ramfs_mkdir_node, ramfs_rmdir, ramfs_unlink,
+    ramfs_rename, ramfs_chmod, ramfs_chown, ramfs_symlink_node,
+    ramfs_readlink,
+};
+
 /*
- * the three-line ones all ask the same two questions first, is this
- * name on a filesystem at all, and which, so they ask them the same
- * way. `rest` is what the filesystem underneath calls it
+ * the mount a name is under, kept until mount_leave, when what is there
+ * keeps names, with its operations in *pp_ops: NULL for a name on
+ * read-only memory, in /proc or /dev, or under a mount with nothing on
+ * it. a bare name is made absolute in str_buf, which *p_rest points
+ * into after
  */
-#define ROUTED(path, which, rest) on_disk((path), arr_buf, &(which), &(rest))
+static struct mount_point *on_store(const char *path, char *str_buf,
+                                    const char **p_rest,
+                                    const struct store_ops **pp_ops)
+{
+    if (path == NULL || path[0] == '\0') {
+        return NULL;
+    }
+    struct mount_point *p_mount = mount_enter(absolute(path, str_buf),
+                                              p_rest);
+    *pp_ops = (p_mount->e_kind == VFS_RAMFS) ? &s_ramfs_ops
+            : (p_mount->e_kind == VFS_DISK && disk_ready(p_mount->sz_slot))
+              ? &s_disk_ops
+            : NULL;
+    if (*pp_ops == NULL) {
+        mount_leave(p_mount);
+        return NULL;
+    }
+    return p_mount;
+}
+
+bool vfs_create(const char *path, uint32_t u_mode, uint32_t u_uid,
+                uint32_t u_gid, struct vfs_file *out)
+{
+    char arr_buf[VFS_NAME_MAX + 1];
+    const char *rest;
+    const struct store_ops *p_ops;
+    struct mount_point *p_mount = on_store(path, arr_buf, &rest, &p_ops);
+    /* read-only memory. there is nowhere to put it */
+    bool b_ok = p_mount != NULL
+                && p_ops->create(p_mount->sz_slot, rest, u_mode, u_uid, u_gid,
+                                 out);
+    mount_leave(p_mount);
+    return b_ok;
+}
 
 bool vfs_mkdir(const char *path, uint32_t u_mode, uint32_t u_uid,
                uint32_t u_gid)
 {
     char arr_buf[VFS_NAME_MAX + 1];
-    size_t which;
     const char *rest;
+    const struct store_ops *p_ops;
+    struct mount_point *p_mount = on_store(path, arr_buf, &rest, &p_ops);
     /* read-only memory has no room for a new name */
-    return ROUTED(path, which, rest)
-           && disk_mkdir(which, rest, u_mode, u_uid, u_gid);
+    bool b_ok = p_mount != NULL
+                && p_ops->mkdir(p_mount->sz_slot, rest, u_mode, u_uid, u_gid);
+    mount_leave(p_mount);
+    return b_ok;
 }
 
 bool vfs_rmdir(const char *path)
 {
     char arr_buf[VFS_NAME_MAX + 1];
-    size_t which;
     const char *rest;
-    return ROUTED(path, which, rest) && disk_rmdir(which, rest);
+    const struct store_ops *p_ops;
+    struct mount_point *p_mount = on_store(path, arr_buf, &rest, &p_ops);
+    bool b_ok = p_mount != NULL && p_ops->rmdir(p_mount->sz_slot, rest);
+    mount_leave(p_mount);
+    return b_ok;
 }
 
 bool vfs_chmod(const char *path, uint32_t mode)
 {
     char arr_buf[VFS_NAME_MAX + 1];
-    size_t which;
     const char *rest;
+    const struct store_ops *p_ops;
+    struct mount_point *p_mount = on_store(path, arr_buf, &rest, &p_ops);
     /* a tar in read-only memory has no opinions */
-    return ROUTED(path, which, rest) && disk_chmod(which, rest, mode);
+    bool b_ok = p_mount != NULL && p_ops->chmod(p_mount->sz_slot, rest, mode);
+    mount_leave(p_mount);
+    return b_ok;
 }
 
 bool vfs_chown(const char *path, uint32_t uid, uint32_t gid)
 {
     char arr_buf[VFS_NAME_MAX + 1];
-    size_t which;
     const char *rest;
-    return ROUTED(path, which, rest) && disk_chown(which, rest, uid, gid);
+    const struct store_ops *p_ops;
+    struct mount_point *p_mount = on_store(path, arr_buf, &rest, &p_ops);
+    bool b_ok = p_mount != NULL
+                && p_ops->chown(p_mount->sz_slot, rest, uid, gid);
+    mount_leave(p_mount);
+    return b_ok;
 }
 
 bool vfs_symlink(const char *path, const char *target, uint32_t u_uid,
                  uint32_t u_gid)
 {
     char arr_buf[VFS_NAME_MAX + 1];
-    size_t which;
     const char *rest;
-    return target != NULL && ROUTED(path, which, rest)
-        && disk_symlink(which, rest, target, u_uid, u_gid);
+    const struct store_ops *p_ops;
+    if (target == NULL) {
+        return false;
+    }
+    struct mount_point *p_mount = on_store(path, arr_buf, &rest, &p_ops);
+    bool b_ok = p_mount != NULL
+                && p_ops->symlink(p_mount->sz_slot, rest, target, u_uid,
+                                  u_gid);
+    mount_leave(p_mount);
+    return b_ok;
 }
 
 bool vfs_readlink(const char *path, char *out, size_t size)
 {
     char arr_buf[VFS_NAME_MAX + 1];
-    size_t which;
     const char *rest;
-    return ROUTED(path, which, rest) && disk_readlink(which, rest, out, size);
+    const struct store_ops *p_ops;
+    struct mount_point *p_mount = on_store(path, arr_buf, &rest, &p_ops);
+    bool b_ok = p_mount != NULL
+                && p_ops->readlink(p_mount->sz_slot, rest, out, size);
+    mount_leave(p_mount);
+    return b_ok;
 }
 
 bool vfs_unlink(const char *path)
 {
     char arr_buf[VFS_NAME_MAX + 1];
-    size_t which;
     const char *rest;
+    const struct store_ops *p_ops;
+    struct mount_point *p_mount = on_store(path, arr_buf, &rest, &p_ops);
     /* the ramdisk is memory the kernel may not write */
-    return ROUTED(path, which, rest) && disk_unlink(which, rest);
+    bool b_ok = p_mount != NULL && p_ops->unlink(p_mount->sz_slot, rest);
+    mount_leave(p_mount);
+    return b_ok;
 }
 
 bool vfs_rename(const char *from, const char *to)
 {
     char arr_from[VFS_NAME_MAX + 1];
     char arr_to[VFS_NAME_MAX + 1];
-    size_t a, b;
     const char *rest_a, *rest_b;
-    if (!on_disk(from, arr_from, &a, &rest_a)
-        || !on_disk(to, arr_to, &b, &rest_b)) {
-        /*
-         * either end under /boot makes this a copy, and a rename that
-         * quietly copies is a rename that silently costs a disk's worth
-         * of time on a big file. so: no
-         */
-        return false;
-    }
-    if (a != b) {
-        /*
-         * and the same again across two filesystems: a rename moves a
-         * name and nothing else, which is a sentence that only means
-         * anything inside one filesystem. between two it would be a
-         * copy and a delete wearing a rename's name
-         */
-        return false;
-    }
-    return disk_rename(a, rest_a, rest_b);
+    const struct store_ops *p_ops;
+    const struct store_ops *p_ops_b;
+    struct mount_point *p_a = on_store(from, arr_from, &rest_a, &p_ops);
+    struct mount_point *p_b = on_store(to, arr_to, &rest_b, &p_ops_b);
+    /*
+     * either end under /boot makes this a copy, and a rename that
+     * quietly copies is a rename that silently costs a disk's worth of
+     * time on a big file. so: no. and the same again across two
+     * filesystems: a rename moves a name and nothing else, which is a
+     * sentence that only means anything inside one filesystem. between
+     * two it would be a copy and a delete wearing a rename's name
+     */
+    bool b_ok = p_a != NULL && p_a == p_b
+                && p_ops->rename(p_a->sz_slot, rest_a, rest_b);
+    mount_leave(p_a);
+    mount_leave(p_b);
+    return b_ok;
 }
 
 int64_t vfs_read(const struct vfs_file *f, uint64_t offset, void *buf,
@@ -649,6 +890,10 @@ int64_t vfs_read(const struct vfs_file *f, uint64_t offset, void *buf,
     }
     if (f->kind == VFS_PROC) {
         return proc_read(f->sz_proc, offset, buf, len);
+    }
+    /* a file in memory knows its own size, whoever else has it open */
+    if (f->kind == VFS_RAMFS) {
+        return ramfs_read(f->u_ino, offset, buf, len);
     }
     if (offset >= f->size) {
         return 0;
@@ -670,6 +915,13 @@ int64_t vfs_read(const struct vfs_file *f, uint64_t offset, void *buf,
 int64_t vfs_write(struct vfs_file *f, uint64_t offset, const void *buf,
                   uint64_t len)
 {
+    if (f->kind == VFS_RAMFS && !f->is_dir) {
+        int64_t i_put = ramfs_write(f->u_ino, offset, buf, len);
+        if (i_put > 0 && offset + (uint64_t)i_put > f->size) {
+            f->size = offset + (uint64_t)i_put;
+        }
+        return (i_put < 0) ? -1 : i_put;
+    }
     if (f->kind != VFS_DISK || f->is_dir) {
         return -1;
     }
@@ -692,6 +944,13 @@ int64_t vfs_write(struct vfs_file *f, uint64_t offset, const void *buf,
 
 bool vfs_truncate(struct vfs_file *p_node, uint64_t u_size)
 {
+    if (p_node->kind == VFS_RAMFS && !p_node->is_dir) {
+        bool b_ok = ramfs_truncate(p_node->u_ino, u_size);
+        if (b_ok) {
+            p_node->size = u_size;
+        }
+        return b_ok;
+    }
     if (p_node->kind != VFS_DISK || p_node->is_dir) {
         return false;
     }
@@ -724,7 +983,15 @@ bool vfs_may_read(const struct vfs_file *f, int uid)
 
 bool vfs_writable(const struct vfs_file *f)
 {
-    return f->kind == VFS_DISK;
+    return f->kind == VFS_DISK || f->kind == VFS_RAMFS;
+}
+
+void vfs_refresh(struct vfs_file *p_node)
+{
+    uint64_t u_size;
+    if (p_node->kind == VFS_RAMFS && ramfs_size(p_node->u_ino, &u_size)) {
+        p_node->size = u_size;
+    }
 }
 
 
@@ -772,43 +1039,186 @@ void vfs_release(const void *data, bool owned)
 
 
 
+/* what kind of filesystem hangs at a mount, by the name mount knows it by */
+static const char *type_of(const struct mount_point *p_mount)
+{
+    switch (p_mount->e_kind) {
+    case VFS_DISK:    return disk_kind_name(p_mount->sz_slot);
+    case VFS_RAMDISK: return "ustar";
+    case VFS_RAMFS:   return "ramfs";
+    case VFS_PROC:    return "proc";
+    case VFS_DEV:     return "devtmpfs";
+    default:          return "none";
+    }
+}
+
+/* and what it is, when mount was not told */
+static const char *source_of(const struct mount_point *p_mount)
+{
+    if (p_mount->arr_source[0] != '\0') {
+        return p_mount->arr_source;
+    }
+    switch (p_mount->e_kind) {
+    case VFS_DISK:
+        return disk_ready(p_mount->sz_slot) ? disk_model() : "nothing";
+    case VFS_RAMDISK: return "a module the bootloader handed the kernel";
+    case VFS_PROC:    return "the kernel, as it is read";
+    case VFS_DEV:     return "the kernel's devices";
+    default:          return "memory";
+    }
+}
+
 size_t vfs_mount_count(void)
 {
-    return 4;
+    size_t sz_count = 0;
+    uint64_t u_flags = spin_lock_irq(&s_lock);
+    for (size_t sz_at = 0; sz_at < VFS_MOUNTS_MAX; sz_at++) {
+        sz_count += s_arr_mounts[sz_at].b_used ? 1 : 0;
+    }
+    spin_unlock_irq(&s_lock, u_flags);
+    return sz_count;
 }
 
 bool vfs_mount_at(size_t index, struct vfs_mount *out)
 {
-    if (index == 0) {
-        out->at = "/";
-        /* whichever one answered. */
-        out->what = disk_kind_name(DISK_ROOT);
-        out->where = disk_ready(DISK_ROOT) ? disk_model()
-                                           : "nothing, no disk found";
-        out->writable = true;
-        out->present = disk_ready(DISK_ROOT);
-        return true;
+    bool b_found = false;
+    uint64_t u_flags = spin_lock_irq(&s_lock);
+    for (size_t sz_at = 0; sz_at < VFS_MOUNTS_MAX && !b_found; sz_at++) {
+        const struct mount_point *p_mount = &s_arr_mounts[sz_at];
+        if (!p_mount->b_used || index-- != 0) {
+            continue;
+        }
+        memset(out, 0, sizeof *out);
+        strncpy(out->arr_at, p_mount->arr_at, sizeof out->arr_at - 1);
+        strncpy(out->arr_where, source_of(p_mount), sizeof out->arr_where - 1);
+        out->what = type_of(p_mount);
+        out->writable = p_mount->e_kind == VFS_DISK
+                        || p_mount->e_kind == VFS_RAMFS;
+        /* the root is always there to route through, and empty without a disk */
+        out->present = p_mount->e_kind != VFS_DISK
+                       || disk_ready(p_mount->sz_slot);
+        out->e_kind = p_mount->e_kind;
+        out->sz_slot = p_mount->sz_slot;
+        b_found = true;
     }
-    if (index == 1) {
-        /* the second filesystem, when the drive holds one. */
-        out->at = DISK_WORK_AT;
-        out->what = disk_kind_name(DISK_WORK);
-        out->where = disk_ready(DISK_WORK)
-                   ? disk_model()
-                   : "nothing, the drive holds one filesystem";
-        out->writable = true;
-        out->present = disk_ready(DISK_WORK);
-        return true;
+    spin_unlock_irq(&s_lock, u_flags);
+    return b_found;
+}
+
+bool vfs_where(enum vfs_kind e_kind, size_t sz_slot, char *str_out,
+               size_t sz_size)
+{
+    bool b_found = false;
+    uint64_t u_flags = spin_lock_irq(&s_lock);
+    for (size_t sz_at = 0; sz_at < VFS_MOUNTS_MAX && !b_found; sz_at++) {
+        const struct mount_point *p_mount = &s_arr_mounts[sz_at];
+        if (is_present(p_mount) && p_mount->e_kind == e_kind
+            && p_mount->sz_slot == sz_slot) {
+            strncpy(str_out, p_mount->arr_at, sz_size - 1);
+            str_out[sz_size - 1] = '\0';
+            b_found = true;
+        }
     }
-    if (index == 2) {
-        out->at = VFS_BOOT;
-        out->what = "ustar";
-        out->where = "a module the bootloader handed the kernel";
-        out->writable = false;
-        out->present = ramdisk_present();
-        return true;
+    spin_unlock_irq(&s_lock, u_flags);
+    if (!b_found && sz_size > 0) {
+        strncpy(str_out, "?", sz_size);
     }
-    return false;
+    return b_found;
+}
+
+int64_t vfs_mount_add(const char *str_at, enum vfs_kind e_kind,
+                      size_t sz_slot, const char *str_source)
+{
+    if (strlen(str_at) >= PATH_MAX) {
+        return -ENAMETOOLONG;
+    }
+    int64_t i_why = -ENOMEM;
+    uint64_t u_flags = spin_lock_irq(&s_lock);
+    if (mounted_at(str_at) != NULL) {
+        i_why = -EBUSY;
+    }
+    for (size_t sz_at = 1; sz_at < VFS_MOUNTS_MAX && i_why == -ENOMEM;
+         sz_at++) {
+        struct mount_point *p_mount = &s_arr_mounts[sz_at];
+        if (p_mount->b_used) {
+            continue;
+        }
+        memset(p_mount, 0, sizeof *p_mount);
+        strcpy(p_mount->arr_at, str_at);
+        strncpy(p_mount->arr_source, (str_source != NULL) ? str_source : "",
+                sizeof p_mount->arr_source - 1);
+        p_mount->e_kind = e_kind;
+        p_mount->sz_slot = sz_slot;
+        p_mount->b_used = true;
+        i_why = 0;
+    }
+    spin_unlock_irq(&s_lock, u_flags);
+    return i_why;
+}
+
+/*
+ * what keeps a mount up: a file open on what is there, which a regular
+ * file and a directory are, the ones opened by a name on it
+ */
+struct mount_ref {
+    enum vfs_kind e_kind;
+    size_t sz_slot;
+    const char *str_at;
+};
+
+static const struct file_operations node_ops;
+static const struct file_operations dir_ops;
+
+static bool holds_file(const struct file *p_file, const void *p_ctx)
+{
+    const struct mount_ref *p_ref = p_ctx;
+    return (p_file->p_ops == &node_ops || p_file->p_ops == &dir_ops)
+           && p_file->node.kind == p_ref->e_kind
+           && p_file->node.mount == p_ref->sz_slot;
+}
+
+/* and a working directory on it or below */
+static bool holds_cwd(const char *str_cwd, const void *p_ctx)
+{
+    const struct mount_ref *p_ref = p_ctx;
+    return is_under(str_cwd, p_ref->str_at, strlen(p_ref->str_at));
+}
+
+int64_t vfs_mount_remove(const char *str_at, enum vfs_kind *p_kind,
+                         size_t *p_slot)
+{
+    int64_t i_why = 0;
+    uint64_t u_flags = spin_lock_irq(&s_lock);
+    struct mount_point *p_mount = mounted_at(str_at);
+    if (p_mount == NULL) {
+        i_why = -EINVAL;
+    } else if (p_mount == &s_arr_mounts[0] || p_mount->u_busy > 0) {
+        i_why = -EBUSY;
+    }
+    /* nothing else may stand on it, and nobody may be in it */
+    for (size_t sz_at = 1; sz_at < VFS_MOUNTS_MAX && i_why == 0; sz_at++) {
+        const struct mount_point *p_other = &s_arr_mounts[sz_at];
+        if (p_other != p_mount && p_other->b_used
+            && strlen(p_other->arr_at) > strlen(str_at)
+            && is_under(p_other->arr_at, str_at, strlen(str_at))) {
+            i_why = -EBUSY;
+        }
+    }
+    if (i_why == 0) {
+        struct mount_ref ref = { p_mount->e_kind, p_mount->sz_slot,
+                                 p_mount->arr_at };
+        if (process_any_file(holds_file, &ref)
+            || process_any_cwd(holds_cwd, &ref)) {
+            i_why = -EBUSY;
+        }
+    }
+    if (i_why == 0) {
+        *p_kind = p_mount->e_kind;
+        *p_slot = p_mount->sz_slot;
+        p_mount->b_used = false;
+    }
+    spin_unlock_irq(&s_lock, u_flags);
+    return i_why;
 }
 
 /*
@@ -837,9 +1247,10 @@ static int64_t node_read(struct file *p_file, void *p_buf, size_t sz_len)
 static int64_t node_write(struct file *p_file, const void *p_buf,
                           size_t sz_len)
 {
-    if (p_file->node.kind != VFS_DISK) {
+    if (!vfs_writable(&p_file->node)) {
         return -EROFS;
     }
+    vfs_refresh(&p_file->node);
     if (p_file->u_flags & O_APPEND) {
         p_file->u_pos = p_file->node.size;
     }
@@ -869,6 +1280,7 @@ static int64_t node_seek(struct file *p_file, int64_t i_offset, int i_whence)
     if (p_file->node.kind == VFS_PROC) {
         return -ESPIPE;
     }
+    vfs_refresh(&p_file->node);
     int64_t i_from = (i_whence == SEEK_SET) ? 0
                    : (i_whence == SEEK_CUR) ? (int64_t)p_file->u_pos
                    : (i_whence == SEEK_END) ? (int64_t)p_file->node.size
@@ -884,10 +1296,19 @@ static int64_t node_seek(struct file *p_file, int64_t i_offset, int i_whence)
     return i_to;
 }
 
+/* a file in memory stays, unlinked or not, while it is open */
+static void node_release(struct file *p_file)
+{
+    if (p_file->node.kind == VFS_RAMFS) {
+        ramfs_let_go(p_file->node.u_ino);
+    }
+}
+
 static const struct file_operations node_ops = {
     .read = node_read,
     .write = node_write,
     .seek = node_seek,
+    .release = node_release,
 };
 
 /*
@@ -933,6 +1354,9 @@ struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode)
     struct file *p_file = file_alloc(&node_ops, u_mode, FILE_TYPE_REGULAR);
     if (p_file != NULL) {
         p_file->node = *p_node;
+        if (p_node->kind == VFS_RAMFS) {
+            ramfs_hold(p_node->u_ino);
+        }
     }
     return p_file;
 }

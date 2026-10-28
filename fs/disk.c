@@ -38,12 +38,11 @@ struct mount {
     void    *p_drive;
 
     int          part;          /* which entry of `table`, or -1 */
-    const char  *at;            /* where the vfs hangs it */
 };
 
+/* where each hangs is the namespace's to say, and it says it in fs/vfs.c */
 static struct mount mounts[DISK_MOUNTS] = {
-    [DISK_ROOT] = { .part = -1, .at = "/" },
-    [DISK_WORK] = { .part = -1, .at = DISK_WORK_AT },
+    [0 ... DISK_MOUNTS - 1] = { .part = -1 },
 };
 
 /* the one every call that did not say which one means */
@@ -110,11 +109,6 @@ static void disk_now(struct fat32_time *out)
 bool disk_ready(size_t which)
 {
     return at(which)->ready;
-}
-
-const char *disk_mount_point(size_t which)
-{
-    return at(which)->at;
 }
 
 enum disk_kind disk_which(size_t which)
@@ -198,17 +192,23 @@ static bool ext_sync(void *ctx)
     return bcache_sync();
 }
 
-/* try to put a filesystem on one of them, at one of the two places a filesystem can hang. */
-static bool try_mount(struct mount *m, size_t index)
+/*
+ * a filesystem of the kind wanted, or of either kind for DISK_NONE, put
+ * on a run of a drive's sectors. `part` is which entry of `table` that
+ * run is, so it can be told what was found on it, or -1 for a run that
+ * is no entry's, a drive with a table mounted whole
+ */
+static bool try_mount(struct mount *m, unsigned drive, uint64_t first,
+                      uint64_t sectors, int part, enum disk_kind want)
 {
-    struct disk_part *e = &table[index];
+    struct disk_part *e = (part >= 0) ? &table[part] : NULL;
 
-    m->first = e->p.first_lba;
-    m->sectors = e->p.sectors;
-    m->p_drive = ahci_drive(e->p.drive);
+    m->first = first;
+    m->sectors = sectors;
+    m->p_drive = ahci_drive(drive);
 
     /* the filesystem is handed the view rather than the drive. */
-    if (ext4_mount(&m->ext, view_read, view_write, m)) {
+    if (want != DISK_FAT32 && ext4_mount(&m->ext, view_read, view_write, m)) {
         ext4_set_clock(&m->ext, ext4_now);
 
         /* and if it has a journal, replay it and start writing through it. */
@@ -217,18 +217,23 @@ static bool try_mount(struct mount *m, size_t index)
 
         m->kind = DISK_EXT4;
         m->ready = true;
-        m->part = (int)index;
-        e->mountable = true;
-        e->fs = (m->ext.incompat & EXT4_INCOMPAT_EXTENTS) ? "ext4" : "ext2";
+        m->part = part;
+        if (e != NULL) {
+            e->mountable = true;
+            e->fs = (m->ext.incompat & EXT4_INCOMPAT_EXTENTS) ? "ext4"
+                                                               : "ext2";
+        }
         return true;
     }
-    if (fat32_mount(&m->fat, view_read, view_write, m)) {
+    if (want != DISK_EXT4 && fat32_mount(&m->fat, view_read, view_write, m)) {
         fat32_set_clock(&m->fat, disk_now);
         m->kind = DISK_FAT32;
         m->ready = true;
-        m->part = (int)index;
-        e->mountable = true;
-        e->fs = "fat32";
+        m->part = part;
+        if (e != NULL) {
+            e->mountable = true;
+            e->fs = "fat32";
+        }
         return true;
     }
     m->ready = false;
@@ -236,13 +241,19 @@ static bool try_mount(struct mount *m, size_t index)
     return false;
 }
 
+/* a table entry's sectors, mounted in a slot */
+static bool try_mount_part(struct mount *m, size_t index)
+{
+    const struct partition *p = &table[index].p;
+    return try_mount(m, p->drive, p->first_lba, p->sectors, (int)index,
+                     DISK_NONE);
+}
+
 bool disk_mount(void)
 {
     for (size_t i = 0; i < DISK_MOUNTS; i++) {
-        const char *where = mounts[i].at;
         memset(&mounts[i], 0, sizeof mounts[i]);
         mounts[i].part = -1;
-        mounts[i].at = where;
     }
     table_count = 0;
     system_drive = -1;
@@ -306,7 +317,7 @@ bool disk_mount(void)
     /* and now the first one with something on it. */
     struct mount *root = at(DISK_ROOT);
     for (size_t i = 0; i < table_count; i++) {
-        if (!try_mount(root, i)) {
+        if (!try_mount_part(root, i)) {
             continue;
         }
 
@@ -316,7 +327,7 @@ bool disk_mount(void)
             if (table[k].p.drive != table[i].p.drive) {
                 continue;
             }
-            if (try_mount(work, k)) {
+            if (try_mount_part(work, k)) {
                 break;
             }
         }
@@ -346,30 +357,67 @@ int disk_mounted_part(size_t which)
     return at(which)->part;
 }
 
-bool disk_mount_part(size_t which, size_t index)
+/* which entry of the table a run of a drive's sectors is, or -1 */
+static int part_of(unsigned drive, uint64_t first, uint64_t sectors)
 {
-    if (index >= table_count || which >= DISK_MOUNTS) {
-        return false;
-    }
-    /*
-     * not the one that is already somewhere else, because two mounts of
-     * one filesystem are two copies of its state disagreeing about the
-     * same disk
-     */
-    for (size_t i = 0; i < DISK_MOUNTS; i++) {
-        if (i != which && mounts[i].ready && mounts[i].part == (int)index) {
-            return false;
+    for (size_t i = 0; i < table_count; i++) {
+        const struct partition *p = &table[i].p;
+        if (p->drive == drive && p->first_lba == first
+            && p->sectors == sectors) {
+            return (int)i;
         }
     }
+    return -1;
+}
 
+int disk_mount_block(const struct disk_block *p_block, enum disk_kind e_want)
+{
     uint64_t flags = enter();
-    struct mount *m = at(which);
-    struct mount was = *m;
-    m->ready = false;           /* nothing may reach the old one now */
-    bool ok = try_mount(m, index);
-    if (!ok) {
-        *m = was;               /* put it back; nothing was disturbed */
+    int i_slot = -ENOMEM;
+    /*
+     * not one whose sectors are mounted already, because two mounts of
+     * one filesystem are two copies of its state disagreeing about the
+     * same disk; and not into the slots the kernel mounts at boot
+     */
+    void *p_drive = ahci_drive(p_block->u_drive);
+    for (size_t i = 0; i < DISK_MOUNTS; i++) {
+        const struct mount *m = &mounts[i];
+        if (m->ready && m->p_drive == p_drive
+            && m->first < p_block->u_first + p_block->u_sectors
+            && p_block->u_first < m->first + m->sectors) {
+            i_slot = -EBUSY;
+        }
     }
+    for (size_t i = DISK_WORK + 1; i < DISK_MOUNTS && i_slot == -ENOMEM;
+         i++) {
+        struct mount *m = &mounts[i];
+        if (m->ready) {
+            continue;
+        }
+        int part = part_of(p_block->u_drive, p_block->u_first,
+                           p_block->u_sectors);
+        i_slot = try_mount(m, p_block->u_drive, p_block->u_first,
+                           p_block->u_sectors, part, e_want)
+                 ? (int)i : -EINVAL;
+    }
+    leave(flags);
+    return i_slot;
+}
+
+bool disk_unmount_slot(size_t which)
+{
+    if (which >= DISK_MOUNTS) {
+        return false;
+    }
+    uint64_t flags = enter();
+    struct mount *m = &mounts[which];
+    bool ok = m->ready;
+    if (ok && m->kind == DISK_EXT4 && m->ext.journal.ready) {
+        ok = ext4_stop_journal(&m->ext);
+    }
+    ok = bcache_sync() && ok;
+    m->ready = false;
+    m->part = -1;
     leave(flags);
     return ok;
 }
@@ -982,6 +1030,20 @@ bool disk_usage(size_t which, uint64_t *used_bytes, uint64_t *total_bytes)
     return ok;
 }
 
+bool disk_files(size_t which, uint64_t *p_files, uint64_t *p_free)
+{
+    struct mount *m = at(which);
+    if (!m->ready) {
+        return false;
+    }
+    uint64_t flags = enter();
+    /* fat keeps no inodes, so it has no count of them to give */
+    bool b_ext = m->kind == DISK_EXT4;
+    *p_files = b_ext ? m->ext.inodes_count : 0;
+    *p_free = b_ext ? m->ext.free_inodes : 0;
+    leave(flags);
+    return true;
+}
 
 /* a minor has four bits for the partition, and 0 is the whole drive */
 #define BLOCK_PARTS_MAX 15

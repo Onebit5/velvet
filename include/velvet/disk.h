@@ -35,13 +35,16 @@
 
 #define DISK_NAME_MAX   128
 
-/* a disk is not a filesystem, and the machine got a partition table. */
-#define DISK_MOUNTS     2
+/*
+ * a disk is not a filesystem, and the machine got a partition table:
+ * a filesystem is mounted in a slot of its own, numbered. the first two
+ * are the ones the kernel mounts at boot, the system at / and a second
+ * filesystem on the same drive at /work, and the rest are mount's
+ */
+#define DISK_MOUNTS     8
 #define DISK_ROOT       0
 #define DISK_WORK       1
 #define DISK_WORK_AT    "/work"
-
-const char *disk_mount_point(size_t which);
 
 struct disk_entry {
     char     name[DISK_NAME_MAX];
@@ -90,8 +93,6 @@ size_t disk_part_count(void);
 bool   disk_part_at(size_t index, struct disk_part *out);
 
 int disk_mounted_part(size_t which);
-
-bool disk_mount_part(size_t which, size_t index);
 
 bool disk_mount(void);
 
@@ -170,6 +171,17 @@ int64_t disk_block_read(const struct disk_block *p_block, uint64_t u_offset,
 int64_t disk_block_write(const struct disk_block *p_block, uint64_t u_offset,
                          const void *p_buf, uint64_t u_len);
 
+/*
+ * the filesystem on a drive or a partition, mounted in a slot of its own:
+ * which slot, -EBUSY when its sectors are mounted already, -EINVAL when it
+ * holds no filesystem of the kind wanted, or -ENOMEM with every slot
+ * taken. e_want is DISK_EXT4, DISK_FAT32, or DISK_NONE for whichever
+ */
+int disk_mount_block(const struct disk_block *p_block, enum disk_kind e_want);
+
+/* a slot's filesystem written out, its log closed, and the slot free */
+bool disk_unmount_slot(size_t sz_which);
+
 int disk_mounted_drive(void);
 
 int disk_system_drive(void);
@@ -197,6 +209,8 @@ uint64_t    disk_bytes(void);
 bool        disk_usage(size_t which, uint64_t *used_bytes,
                        uint64_t *total_bytes);
 uint32_t    disk_cluster_bytes(size_t which);
+/* how many files it has room for, and how many more, 0 for none kept */
+bool        disk_files(size_t which, uint64_t *p_files, uint64_t *p_free);
 bool        disk_journalled(size_t which);
 
 #endif

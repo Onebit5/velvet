@@ -191,8 +191,9 @@ static int64_t resize_fs(const struct file *p_file, uint64_t u_arg)
     struct ext4_resize result;
     const char *str_why = NULL;
     if (!disk_resize(sz_which, u_blocks, &result, &str_why)) {
-        kprintf("[ext4] %s: not resized: %s\n",
-                disk_mount_point(sz_which),
+        char arr_at[PATH_MAX];
+        vfs_where(VFS_DISK, sz_which, arr_at, sizeof arr_at);
+        kprintf("[ext4] %s: not resized: %s\n", arr_at,
                 (str_why != NULL) ? str_why : "it would not resize");
         return -EINVAL;
     }

@@ -15,6 +15,7 @@
 #include <stdbool.h>
 
 #include <velvet/disk.h>
+#include <velvet/path.h>
 
 #define VFS_NAME_MAX 128
 #define VFS_BOOT     "/boot"
@@ -26,7 +27,11 @@ enum vfs_kind {
     VFS_DISK,
     VFS_PROC,       /* written by the kernel when read, see fs/proc.c */
     VFS_DEV,        /* a device, opened through fs/dev.c */
+    VFS_RAMFS,      /* a filesystem kept in memory, see fs/ramfs.c */
 };
+
+/* what mount is told a filesystem is, kept to show in /proc/mounts */
+#define VFS_SOURCE_MAX 64
 
 struct vfs_file {
     enum vfs_kind kind;
@@ -104,6 +109,12 @@ bool vfs_may_read(const struct vfs_file *f, int uid);
 bool vfs_writable(const struct vfs_file *f);
 
 /*
+ * a node's size brought up to date, for one that may have been written
+ * through another open file since it was looked up
+ */
+void vfs_refresh(struct vfs_file *p_node);
+
+/*
  * the whole of a file in one piece, for the things that need it all at
  * once, loading a program, reading passwd. a file already in memory
  * is handed over where it lies and `owned` comes back false; one on the
@@ -122,15 +133,42 @@ struct file;
  */
 struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode);
 
+/* one mount, as the table has it, copied out */
 struct vfs_mount {
-    const char *at;
+    char        arr_at[PATH_MAX];
+    char        arr_where[VFS_SOURCE_MAX];
     const char *what;
-    const char *where;
     bool        writable;
     bool        present;
+    enum vfs_kind e_kind;
+    size_t      sz_slot;
 };
 
 size_t vfs_mount_count(void);
 bool   vfs_mount_at(size_t index, struct vfs_mount *out);
+
+/*
+ * where the filesystem of e_kind numbered sz_slot is mounted, into
+ * str_out: true, or false and "?"
+ */
+bool vfs_where(enum vfs_kind e_kind, size_t sz_slot, char *str_out,
+               size_t sz_size);
+
+/*
+ * a filesystem hung at str_at, an absolute path, recorded as str_source:
+ * 0, -EBUSY when something hangs there already, or -ENOMEM with the
+ * table full. whether there is a directory there is the caller's to ask
+ */
+int64_t vfs_mount_add(const char *str_at, enum vfs_kind e_kind,
+                      size_t sz_slot, const char *str_source);
+
+/*
+ * the mount at str_at taken down, with what was there in *p_kind and
+ * *p_slot for the caller to let go of: 0, -EINVAL when nothing is
+ * mounted there, or -EBUSY for the root, or one something stands on, is
+ * open on, or works in
+ */
+int64_t vfs_mount_remove(const char *str_at, enum vfs_kind *p_kind,
+                         size_t *p_slot);
 
 #endif

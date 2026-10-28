@@ -120,6 +120,17 @@ int main(void)
           "and grown again reads as zeroes past the cut, not as what it "
           "held");
 
+    {
+        uint64_t u_size = 0;
+        uint64_t u_room = ramfs_room();
+        CHECK(ramfs_size(e.u_ino, &u_size) && u_size == 4200,
+              "its size can be asked by its number");
+        CHECK(make_file(fs, "/counted", &f) && ramfs_room() == u_room - 1
+              && ramfs_unlink(fs, "/counted") && ramfs_room() == u_room,
+              "and every name takes one place of the room there is, and "
+              "gives it back");
+    }
+
     /* directories, and names in them */
     CHECK(make_dir(fs, "/etc") && make_dir(fs, "/etc/deep"),
           "directories are made, one in another");

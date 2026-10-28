@@ -311,6 +311,17 @@ void process_fds_exec(int i_pid);
 
 size_t process_fd_count(int pid);
 
+/*
+ * whether any process has a file open, or a working directory, that
+ * p_test says yes to. p_test is called with the process table locked,
+ * and may take nothing of its own
+ */
+bool process_any_file(bool (*p_test)(const struct file *p_file,
+                                      const void *p_ctx),
+                      const void *p_ctx);
+bool process_any_cwd(bool (*p_test)(const char *str_cwd, const void *p_ctx),
+                     const void *p_ctx);
+
 const struct process *process_at(size_t index);
 size_t process_count(void);
 

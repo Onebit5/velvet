@@ -101,11 +101,17 @@ int64_t ramfs_write(uint32_t u_ino, uint64_t u_offset, const void *p_buf,
 /* a file made u_size long: zeroes past the old end */
 bool ramfs_truncate(uint32_t u_ino, uint64_t u_size);
 
+/* how long a file is now, by its number, whoever has made it so */
+bool ramfs_size(uint32_t u_ino, uint64_t *p_size);
+
 /* one more open file on it, and one fewer */
 void ramfs_hold(uint32_t u_ino);
 void ramfs_let_go(uint32_t u_ino);
 
 /* how many bytes its files hold, and how many names it has */
 void ramfs_usage(size_t sz_fs, uint64_t *p_bytes, uint64_t *p_nodes);
+
+/* how many more names all of them together have room for */
+uint64_t ramfs_room(void);
 
 #endif

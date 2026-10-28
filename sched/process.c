@@ -1069,6 +1069,40 @@ void process_fds_exec(int i_pid)
     }
 }
 
+bool process_any_file(bool (*p_test)(const struct file *p_file,
+                                      const void *p_ctx),
+                      const void *p_ctx)
+{
+    bool b_any = false;
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    for (size_t i = 0; i < MAX_PROCESSES && !b_any; i++) {
+        if (table[i].pid == 0) {
+            continue;
+        }
+        for (int i_fd = 0; i_fd < MAX_FDS && !b_any; i_fd++) {
+            const struct file *p_file = table[i].fds[i_fd];
+            b_any = p_file != NULL && p_test(p_file, p_ctx);
+        }
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    return b_any;
+}
+
+bool process_any_cwd(bool (*p_test)(const char *str_cwd, const void *p_ctx),
+                     const void *p_ctx)
+{
+    bool b_any = false;
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    for (size_t i = 0; i < MAX_PROCESSES && !b_any; i++) {
+        if (table[i].pid != 0) {
+            b_any = p_test((table[i].cwd[0] != '\0') ? table[i].cwd : "/",
+                           p_ctx);
+        }
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    return b_any;
+}
+
 size_t process_fd_count(int pid)
 {
     size_t n = 0;
