@@ -144,6 +144,8 @@ int64_t sys_mount(uint64_t u_source, uint64_t u_target, uint64_t u_type,
 int64_t sys_umount2(uint64_t u_target, int i_flags);
 int64_t sys_statfs(uint64_t u_path, uint64_t u_buf);
 int64_t sys_fstatfs(int i_fd, uint64_t u_buf);
+int64_t sys_pivot_root(uint64_t u_new, uint64_t u_old);
+int64_t sys_chroot(uint64_t u_path);
 int64_t sys_syslog(int i_type, uint64_t u_buf, int i_len);
 int64_t sys_getrandom(uint64_t u_buf, uint64_t u_len, uint32_t u_flags);
 int64_t sys_prctl(int i_option, uint64_t u_arg2, uint64_t u_arg3,

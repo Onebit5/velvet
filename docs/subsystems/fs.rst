@@ -7,16 +7,25 @@ layers that let a program not care which one answered.
 the namespace
 -------------
 
-``vfs.c`` is the router. until 0.2.15 the ramdisk was the whole world and
-the disk was bolted on at ``/disk``, which had it backwards. now:
+``vfs.c`` is the router. the kernel hands /init a root and nothing else:
 
 ::
 
-    /          the system disk, when there is one
-    /work      a second filesystem, when the drive holds one
-    /boot      the ramdisk, always
-    /proc      what the kernel says about itself, written as it is read
+    /          the archive the loader handed over, unpacked into memory
     /dev       the devices, and the drives with their partitions
+
+and which disk is the system, where it hangs and what else is mounted is
+the system's to say. a system's /init mounts its disk, moves /dev onto it
+and makes it the root with ``pivot_root``, the archive going somewhere
+under it; the kernel's own image does that, and ends up with
+
+::
+
+    /          the system disk
+    /boot      the archive, in memory
+    /dev       the devices, moved here from the archive
+    /proc      what the kernel says about itself, mounted by /init
+    /work      a second filesystem, when the drive holds one
 
 that list is a table of mounts, each a point and what hangs there. a name
 belongs to the mount whose point is the longest one it starts with, at a
@@ -38,14 +47,24 @@ out from under that call on another core. ``statfs`` says what kind of
 filesystem a name is on, by the number every program knows that kind by,
 and how full it is.
 
-the ramdisk keeps its own mount point rather than being deleted, because it
-is what makes the machine work when the disk does not. a system's programs,
-and its accounts, live on it. a kernel whose only filesystem needs a sata
-controller to bring up is one that a missing cable turns into a brick.
+``MS_MOVE`` moves a mount, with every mount standing on it, and
+``pivot_root`` makes one mount the root and puts the old root under it,
+taking every mount that was not under the new root along. the table is a
+list of paths, so both are a rewrite of the paths in it, and of every path
+a process holds: its working directory, its root, and the name each open
+file was opened by, each file once however many descriptors share it, so
+whatever anybody named before names the same thing after. a process
+standing in the old root is moved to the new one, which is what lets
+/init carry on after pivoting with its working directory at the disk's
+root. ``chroot`` gives a process a root of its own: a name it hands over
+is resolved inside that root, where ``..`` stops, and ``getcwd`` answers
+from inside it.
 
-a name with no leading slash is looked for on the disk first and the ramdisk
-second, which is what lets a disk supply a newer ``bin/ls`` while a machine
-with no disk carries on with the one it booted with.
+the root being the archive in memory is what makes the machine work when
+the disk does not: a kernel whose only filesystem needs a sata controller
+to bring up is one that a missing cable turns into a brick, and one whose
+root is read-only memory is one a program cannot make a directory in to
+mount anything over.
 
 a ``struct vfs_file`` remembers **which filesystem it came from**. a
 descriptor that remembered a file but not which of two disks it was on would
@@ -136,13 +155,15 @@ vector by ``test_chacha20``.
 the ramdisk
 -----------
 
-``ramdisk.c`` is a read-only ustar tar that the loader loaded at boot. a 512
-byte header of ascii fields, the file's bytes rounded up to 512, repeat, and
-two blocks of zeroes to finish. there is no writing, no directories to speak
-of, and no allocation. ``ramdisk_open()`` hands back a pointer straight
-into the archive.
+``ramdisk.c`` reads the ustar tar that the loader loaded at boot. a 512
+byte header of ascii fields, the file's bytes rounded up to 512, repeat,
+and two blocks of zeroes to finish. a header whose size would run off the
+end of the archive stops the walk, so nothing past the end is ever read,
+and a long name is the header's prefix, a slash and its name.
 
-it is a filesystem in the sense that a filing cabinet is furniture.
+it is not a filesystem: it is unpacked, once, into a ramfs that is the
+root, every file with its bytes, mode and owner, every directory a name
+needs made on the way, links and device nodes made as what they are.
 
 ramfs
 -----
@@ -366,8 +387,9 @@ what its parent wrote. the file goes when the last descriptor on it, in
 any process, closes, and not before.
 
 what can be done to a file is in its ``struct file_operations``, filled in
-by whoever opened it: ``vfs_open_file`` for a file on the ramdisk, a disk
-or in /proc, ``pipe_open`` for a pipe's two ends, and the console's own in
+by whoever opened it: ``vfs_open_file`` for a file on a disk, in memory
+or in /proc, ``blockdev_open`` for a drive, ``pipe_open`` for a pipe's
+two ends, and the console's own in
 ``tty.c``. each takes the kernel's memory, never ring 3's, and answers with
 a count or minus an errno.
 
@@ -443,8 +465,7 @@ in the kernel's log.
 elf
 ---
 
-``elf.c`` loads a program, with the ramdisk and the disk as its image
-sources. the programs themselves are not in this tree.
+``elf.c`` loads a program, from whatever filesystem it is on. the programs themselves are not in this tree.
 
 the ext4 interface
 --------------------
@@ -548,10 +569,10 @@ the disk interface
 the disk, mounted. one place owns the sata controller and the filesystems
 on it, so nothing above has to know which is which. a filesystem is
 mounted in a slot of its own, eight of them, and every call that touches a
-file says which slot it means. the first two are the ones the kernel
-mounts at boot, the system and the work beside it, which is what keeps a
-full work filesystem from taking the machine with it; the rest are
-mount's. where each hangs in the namespace is the namespace's to say.
+file says which slot it means. the kernel mounts none of them: ``mount``
+does, and a system that puts its work on a second filesystem beside the
+system keeps a full work filesystem from taking the machine with it.
+where each hangs in the namespace is the namespace's to say.
 
 ``uint64_t entry_sector;``
     where the 32-byte record describing this file sits on the disk.
@@ -571,7 +592,7 @@ mount's. where each hangs in the namespace is the namespace's to say.
 ``bool disk_unmount_slot(size_t sz_which);``
     a slot's filesystem written out, its log closed, and the slot free
 
-``bool disk_mount(void);``
+``bool disk_scan(void);``
     find a controller, mount what is on it.
 
 ``bool disk_lookup(size_t which, const char *path, struct disk_entry *out);``
@@ -721,12 +742,9 @@ disk at all.
 the vfs interface
 -------------------
 
-one namespace, several filesystems underneath it. the disk gets the root
-because it is the bigger, writable, persistent thing; ``/work`` is a second
-filesystem when the drive holds one; ``/boot`` is the ramdisk, which is
-always there. a name with no leading slash is looked for on the disk first
-and the ramdisk second, which is what lets a disk supply a newer ``bin/ls``
-while a machine with no disk carries on with the one it booted with.
+one namespace, several filesystems underneath it, mounted where a table
+of mounts says. a name with no leading slash, from inside the kernel,
+which has no working directory, is the root's.
 
 ``#define VFS_NAME_MAX 128``
     one namespace, several filesystems underneath it.
@@ -735,7 +753,7 @@ while a machine with no disk carries on with the one it booted with.
     which filesystem it came from, when it came from one.
 
 ``uint32_t mode;``
-    the tar header's mode for the ramdisk, and the inode's for a disk that has one.
+    the node's mode in memory, and the inode's for a disk that has one.
 
 ``const void *data;``
     where the bytes are: already in memory, or out on the disk
@@ -744,22 +762,22 @@ while a machine with no disk carries on with the one it booted with.
     when it was last written.
 
 ``bool vfs_open(const char *path, struct vfs_file *out);``
-    resolve a path. absolute names go where they point; relative ones are tried on the disk and then the ramdisk
+    resolve a path, through the mount it is under, to what the filesystem there has
 
 ``bool vfs_readdir(const char *path, size_t index, struct vfs_file *out);``
     the nth thing in a directory.
 
 ``bool vfs_mkdir(const char *path);``
-    and directories. the ramdisk is a tar in read-only memory, so `/boot` refuses both, there is nowhere for a new name to go
+    and directories. /proc and /dev keep no names of their own, so they refuse both, there is nowhere for a new name to go
 
 ``bool vfs_unlink(const char *path);``
     remove a file. directories go through vfs_rmdir, which will not remove one that still has anything in it
 
 ``bool vfs_truncate(struct vfs_file *f, uint64_t size);``
-    a file on a disk made any length. the ramdisk and /proc refuse, and so does a directory
+    a file on a disk or in memory made any length. /proc refuses, and so does a directory
 
 ``bool vfs_chmod(const char *path, uint32_t mode);``
-    every one of these answers false on the ramdisk, and on a fat disk.
+    every one of these answers false in /proc and /dev, and on a fat disk.
 
 ``bool vfs_readlink(const char *path, char *out, size_t size);``
     where a symlink points, and finding one without following it, which is what `ls -l` and `rm` want
@@ -768,7 +786,7 @@ while a machine with no disk carries on with the one it booted with.
     may a process running as `uid` read this?
 
 ``bool vfs_writable(const struct vfs_file *f);``
-    may anyone write here at all? the ramdisk is read-only memory
+    may anyone write here at all? /proc and /dev are the kernel's
 
 ``struct vfs_mount { char arr_at[PATH_MAX];``
     one mount, copied out of the table, for /proc/mounts to print
@@ -946,18 +964,11 @@ rather than filling a buffer that will never drain.
 the ramdisk interface
 -----------------------
 
-the tar the loader put in memory at boot: read-only, always there, and
-gone when the power goes. it is what makes the machine work when the disk
-does not, and a system's programs, and its accounts, live on it.
+the tar the loader put in memory at boot, read where it lies and
+unpacked into the root.
 
-``struct ramdisk_file { const char *name;``
-    a read-only filesystem that is just a tar file the loader handed the kernel at boot.
-
-``uint32_t    mode;``
-    the unix mode tar recorded.
-
-``bool ramdisk_may_read(const struct ramdisk_file *f, int uid);``
-    may a process running as `uid` read this file?
+``struct ramdisk_file { char arr_name[RAMDISK_NAME_MAX];``
+    one entry: its whole name, prefix and all, its bytes where they lie, its type, mode, owner, and a link's target or a device's number
 
 ``void ramdisk_init(void);``
     take the archive the loader loaded.
@@ -966,10 +977,10 @@ does not, and a system's programs, and its accounts, live on it.
     point at an archive directly. the guts, so tests can hand it bytes
 
 ``bool ramdisk_stat(size_t index, struct ramdisk_file *out);``
-    walk the archive. index from 0 until it returns false
+    walk the archive. index from 0 until it returns false, which it does at the end, at a header that is not ustar's, and at one whose size runs off the end
 
-``bool ramdisk_open(const char *name, struct ramdisk_file *out);``
-    find one by name. returns false if it isnt there
+``size_t ramdisk_unpack(size_t sz_fs);``
+    every entry made in the ramfs numbered sz_fs, with the directories each needs on the way
 
 
 the ustar interface

@@ -80,7 +80,7 @@ int main(void)
     ksft_test_result(b_was && size_at("/work", arr_now)
                      && ksft_streq(arr_was, arr_now),
                      "and it is the size it was\n");
-    int i_tests = open("/selftests", O_RDONLY | O_DIRECTORY);
+    int i_tests = open("/proc", O_RDONLY | O_DIRECTORY);
     ksft_test_result(ioctl(i_tests, EXT4_IOC_RESIZE_FS, &u_blocks) == -1
                      && errno == ENOTTY,
                      "one that is not ext4 does not know the request\n");

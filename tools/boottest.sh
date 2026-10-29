@@ -7,11 +7,11 @@
 # has no programs on it but init and the selftests, so the one thing typed
 # at the machine is the answer /init asks for: `none`, which runs no
 # selftests and powers the machine off. what is checked is the kernel and
-# nothing else: the boot, /init, the memory, the scheduler, the disks and
-# the journal, a shutdown that closes them, and filesystems a checker that
-# is not the driver calls clean afterwards. ring 3 is checked by the
-# selftests, `make kselftest`, and by whatever system ships this kernel
-# with programs on it.
+# nothing else: the boot, the root it hands /init, the disk /init mounts
+# and moves into, the memory, the scheduler, the journal, a shutdown that
+# closes them, and filesystems a checker that is not the driver calls
+# clean afterwards. ring 3 is checked by the selftests, `make kselftest`,
+# and by whatever system ships this kernel with programs on it.
 #
 #   usage: tools/boottest.sh [velvet.img]
 
@@ -97,13 +97,16 @@ check 'own page tables'    "cr3 is the kernel's"
 check 'W^X applied'        'W^X on .text'
 check 'tss loaded'         'tss loaded'
 check 'ramdisk mounted'    'ramdisk    :'
+check 'root is the archive' 'root       : the archive'
 # the disk the machine boots has a log on it, and mounting it is
 # supposed to replay that log and then write through it. a machine that
 # quietly fell back to mounting read-only would pass every check that
-# reads and fail only the ones that write
-check 'disk at the root'   'ext4 "velvet" mounted at /'
+# reads and fail only the ones that write. it is /init that mounts it
+# and moves into it, from the archive the kernel made the root
+check 'disk mounted'       'mount      : ext4 "velvet" on'
 check 'journal started'    'journalled: every change is written down'
-check 'work mounted'       '"work" at /work'
+check '/init pivots'       'init: the disk is the root now'
+check 'work mounted'       'is mounted at /work'
 check 'boot thread left'   '[boot] hath returned'
 check 'memory reclaimed'   'reclaimed'
 check 'scheduler started'  'the wheel turns'

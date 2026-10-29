@@ -67,17 +67,26 @@ static void say_mount(size_t which)
 
 void disk_show(void)
 {
-    if (!disk_ready(DISK_ROOT)) {
-        kprintf("no disk. this machine has only the ramdisk, which is a tar\n");
-        kprintf("file the loader handed the kernel, and which forgets "
-                "everything\non reboot.\n");
+    if (disk_block_count() == 0) {
+        kprintf("no disk. this machine has only what the loader handed the "
+                "kernel,\nkept in memory, which forgets everything on "
+                "reboot.\n");
         kprintf("give qemu a drive and there will be somewhere to write.\n");
         return;
     }
 
-    kprintf("drive      %s\n", disk_model());
-    kprintf("capacity   %lu MiB (%lu sectors)\n",
-            disk_bytes() / (1024 * 1024), disk_bytes() / AHCI_SECTOR);
+    /* every drive, a block device with no partition number */
+    const struct disk_block *p_block;
+    for (size_t sz_at = 0; (p_block = disk_block_at(sz_at)) != NULL;
+         sz_at++) {
+        if ((p_block->u_rdev & 0xf) != 0) {
+            continue;
+        }
+        kprintf("drive      %s, %s, %lu MiB (%lu sectors)\n",
+                p_block->arr_name, ahci_model(p_block->u_drive),
+                p_block->u_sectors * AHCI_SECTOR / (1024 * 1024),
+                p_block->u_sectors);
+    }
 
     /* every filesystem hanging off the drives, rather than the one. */
     for (size_t i = 0; i < DISK_MOUNTS; i++) {

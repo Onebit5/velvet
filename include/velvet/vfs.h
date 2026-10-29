@@ -18,12 +18,10 @@
 #include <velvet/path.h>
 
 #define VFS_NAME_MAX 128
-#define VFS_BOOT     "/boot"
 
 
 enum vfs_kind {
     VFS_NOWHERE = 0,
-    VFS_RAMDISK,
     VFS_DISK,
     VFS_PROC,       /* written by the kernel when read, see fs/proc.c */
     VFS_DEV,        /* a device, opened through fs/dev.c */
@@ -170,5 +168,30 @@ int64_t vfs_mount_add(const char *str_at, enum vfs_kind e_kind,
  */
 int64_t vfs_mount_remove(const char *str_at, enum vfs_kind *p_kind,
                          size_t *p_slot);
+
+/*
+ * the root at boot: a filesystem in memory with the archive the loader
+ * handed over unpacked into it, and /dev on it. how many of the
+ * archive's entries it holds in *p_files: false with no memory for it
+ */
+bool vfs_root_init(size_t *p_files);
+
+/*
+ * a mount, and every mount on it, moved from str_from to str_to, and
+ * every path anybody holds under it moved with it: 0, -EINVAL when
+ * nothing is mounted at str_from, it is the root, or str_to is under it,
+ * or -EBUSY when something is mounted at str_to or a call is in the
+ * middle of a name under str_from
+ */
+int64_t vfs_mount_move(const char *str_from, const char *str_to);
+
+/*
+ * the mount at str_new made the root, and the old root put at str_old,
+ * which is under str_new, with every mount not under str_new going with
+ * it: 0, -EINVAL when nothing is mounted at str_new, it is the root
+ * already, or str_old is not under it, or -EBUSY when something is
+ * mounted at str_old or a call is in the middle of a name
+ */
+int64_t vfs_pivot(const char *str_new, const char *str_old);
 
 #endif

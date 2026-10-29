@@ -79,7 +79,7 @@ int main(int i_argc, char **pp_argv)
                      && errno == ENOENT,
                      "a path with nothing there is ENOENT, and the caller "
                      "carries on\n");
-    ksft_test_result(execv("/selftests", arr_none) == -1 && errno == EACCES,
+    ksft_test_result(execv("/", arr_none) == -1 && errno == EACCES,
                      "a directory is not a program\n");
     ksft_test_result(execv(pp_argv[0], (char *const *)0xffff800000000000ull)
                      == -1 && errno == EFAULT,

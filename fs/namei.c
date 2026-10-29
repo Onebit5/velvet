@@ -67,6 +67,52 @@ uint64_t path_ino(const char *str_path)
     return (u_hash & 0x7fffffffull) | 0x80000000ull;
 }
 
+void path_seen_from(const char *str_root, const char *str_path,
+                    char *str_out)
+{
+    size_t sz_root = strlen(str_root);
+    const char *str_below = str_path + sz_root;
+
+    if (sz_root == 1) {
+        str_below = str_path;
+    } else if (strncmp(str_path, str_root, sz_root) != 0
+               || (*str_below != '\0' && *str_below != '/')) {
+        str_below = "/";
+    } else if (*str_below == '\0') {
+        str_below = "/";
+    }
+    strncpy(str_out, str_below, PATH_MAX - 1);
+    str_out[PATH_MAX - 1] = '\0';
+}
+
+/*
+ * a name as the caller sees it, resolved inside its root so .. stops
+ * there, and then put under that root, which is what it names in the
+ * namespace
+ */
+static int64_t under_root(const char *str_root, const char *str_base,
+                          const char *str_raw, char *str_out)
+{
+    char arr_view[PATH_MAX];
+    char arr_inside[PATH_MAX];
+
+    path_seen_from(str_root, str_base, arr_view);
+    if (!path_resolve(arr_view, str_raw, arr_inside, PATH_MAX)) {
+        return -ENAMETOOLONG;
+    }
+    /* a root's own "/" is the root itself, with nothing after it */
+    size_t sz_root = (strcmp(str_root, "/") == 0) ? 0 : strlen(str_root);
+    const char *str_tail = (sz_root > 0 && strcmp(arr_inside, "/") == 0)
+                           ? "" : arr_inside;
+    size_t sz_tail = strlen(str_tail);
+    if (sz_root + sz_tail + 1 > PATH_MAX) {
+        return -ENAMETOOLONG;
+    }
+    memcpy(str_out, str_root, sz_root);
+    memcpy(str_out + sz_root, str_tail, sz_tail + 1);
+    return 0;
+}
+
 int64_t path_at(int i_dirfd, uint64_t u_path, char *str_out)
 {
     char arr_raw[PATH_MAX];
@@ -98,8 +144,8 @@ int64_t path_at(int i_dirfd, uint64_t u_path, char *str_out)
             str_base = arr_base;
         }
     }
-    return path_resolve(str_base, arr_raw, str_out, PATH_MAX)
-           ? 0 : -ENAMETOOLONG;
+    return under_root(process_root(current_pid()), str_base, arr_raw,
+                      str_out);
 }
 
 /*

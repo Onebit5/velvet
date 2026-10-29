@@ -182,12 +182,14 @@ int64_t sys_fchdir(int i_fd)
 
 int64_t sys_getcwd(uint64_t u_buf, uint64_t u_size)
 {
-    const char *str_here = process_cwd(current_pid());
-    uint64_t u_len = strlen(str_here) + 1;
+    char arr_here[PATH_MAX];
+    path_seen_from(process_root(current_pid()), process_cwd(current_pid()),
+                   arr_here);
+    uint64_t u_len = strlen(arr_here) + 1;
     if (u_size < u_len) {
         return -ERANGE;
     }
-    return (copy_to_user(u_buf, str_here, u_len) == 0) ? (int64_t)u_len
+    return (copy_to_user(u_buf, arr_here, u_len) == 0) ? (int64_t)u_len
                                                        : -EFAULT;
 }
 

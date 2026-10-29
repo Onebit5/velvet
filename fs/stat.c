@@ -24,15 +24,15 @@
 #define DEVNO(major, minor) ((uint64_t)(major) << 8 | (minor))
 
 /*
- * which filesystem a file is on: the disks as the first drive's
- * partitions are numbered, and the three kept in memory as anonymous
- * ones, the way a filesystem with no drive under it is numbered
+ * which filesystem a file is on: a disk's by the number of the drive or
+ * partition it was mounted from, the one /dev gives that device, and
+ * the ones kept in memory as anonymous ones, the way a filesystem with
+ * no drive under it is numbered
  */
 static uint64_t dev_of(const struct vfs_file *p_node)
 {
     switch (p_node->kind) {
-    case VFS_DISK:    return DEVNO(8, p_node->mount + 1);
-    case VFS_RAMDISK: return DEVNO(0, 1);
+    case VFS_DISK:    return disk_dev(p_node->mount);
     case VFS_PROC:    return DEVNO(0, 2);
     case VFS_DEV:     return DEVNO(0, 3);
     case VFS_RAMFS:   return DEVNO(0, 16 + p_node->mount);

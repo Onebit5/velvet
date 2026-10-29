@@ -16,6 +16,7 @@
 #include <velvet/bcache.h>
 #include <velvet/part.h>
 #include <velvet/boot.h>
+#include <velvet/kprintf.h>
 #include <uapi/velvet/errno.h>
 
 /*
@@ -45,10 +46,12 @@ static struct mount mounts[DISK_MOUNTS] = {
     [0 ... DISK_MOUNTS - 1] = { .part = -1 },
 };
 
-/* the one every call that did not say which one means */
+/* a slot that is no slot is one that is never ready, rather than another's */
+static struct mount s_none = { .part = -1 };
+
 static struct mount *at(size_t which)
 {
-    return which < DISK_MOUNTS ? &mounts[which] : &mounts[DISK_ROOT];
+    return which < DISK_MOUNTS ? &mounts[which] : &s_none;
 }
 
 /* ext2 keeps seconds since 1970; fat keeps a broken-down date. */
@@ -241,15 +244,7 @@ static bool try_mount(struct mount *m, unsigned drive, uint64_t first,
     return false;
 }
 
-/* a table entry's sectors, mounted in a slot */
-static bool try_mount_part(struct mount *m, size_t index)
-{
-    const struct partition *p = &table[index].p;
-    return try_mount(m, p->drive, p->first_lba, p->sectors, (int)index,
-                     DISK_NONE);
-}
-
-bool disk_mount(void)
+bool disk_scan(void)
 {
     for (size_t i = 0; i < DISK_MOUNTS; i++) {
         memset(&mounts[i], 0, sizeof mounts[i]);
@@ -312,28 +307,9 @@ bool disk_mount(void)
         }
     }
 
+    /* what is mounted where is for whoever starts the system to say */
     list_blocks();
-
-    /* and now the first one with something on it. */
-    struct mount *root = at(DISK_ROOT);
-    for (size_t i = 0; i < table_count; i++) {
-        if (!try_mount_part(root, i)) {
-            continue;
-        }
-
-        /* and then somewhere to work: the next partition on the *same drive* holding a filesystem. */
-        struct mount *work = at(DISK_WORK);
-        for (size_t k = i + 1; k < table_count; k++) {
-            if (table[k].p.drive != table[i].p.drive) {
-                continue;
-            }
-            if (try_mount_part(work, k)) {
-                break;
-            }
-        }
-        return true;
-    }
-    return false;
+    return true;
 }
 
 
@@ -377,7 +353,7 @@ int disk_mount_block(const struct disk_block *p_block, enum disk_kind e_want)
     /*
      * not one whose sectors are mounted already, because two mounts of
      * one filesystem are two copies of its state disagreeing about the
-     * same disk; and not into the slots the kernel mounts at boot
+     * same disk
      */
     void *p_drive = ahci_drive(p_block->u_drive);
     for (size_t i = 0; i < DISK_MOUNTS; i++) {
@@ -388,8 +364,7 @@ int disk_mount_block(const struct disk_block *p_block, enum disk_kind e_want)
             i_slot = -EBUSY;
         }
     }
-    for (size_t i = DISK_WORK + 1; i < DISK_MOUNTS && i_slot == -ENOMEM;
-         i++) {
+    for (size_t i = 0; i < DISK_MOUNTS && i_slot == -ENOMEM; i++) {
         struct mount *m = &mounts[i];
         if (m->ready) {
             continue;
@@ -401,6 +376,15 @@ int disk_mount_block(const struct disk_block *p_block, enum disk_kind e_want)
                  ? (int)i : -EINVAL;
     }
     leave(flags);
+
+    if (i_slot >= 0) {
+        kprintf("mount      : %s \"%s\" on %s%s\n",
+                disk_kind_name((size_t)i_slot), disk_label((size_t)i_slot),
+                p_block->arr_name,
+                disk_journalled((size_t)i_slot)
+                ? ", journalled: every change is written down before it "
+                  "is made" : "");
+    }
     return i_slot;
 }
 
@@ -970,28 +954,11 @@ const char *disk_label(size_t which)
     return (m->kind == DISK_EXT4) ? m->ext.label : m->fat.label;
 }
 
-/* the drive the root filesystem is on, or the first there is */
-static size_t main_drive(void)
-{
-    int i_drive = disk_mounted_drive();
-    return (i_drive >= 0) ? (size_t)i_drive : 0;
-}
-
-const char *disk_model(void)
-{
-    return ahci_model(main_drive());
-}
-
 /* is the mounted filesystem writing through a log? */
 bool disk_journalled(size_t which)
 {
     struct mount *m = at(which);
     return m->ready && m->kind == DISK_EXT4 && m->ext.journal.ready;
-}
-
-uint64_t disk_bytes(void)
-{
-    return ahci_sectors(main_drive()) * AHCI_SECTOR;
 }
 
 /* ext2 calls them blocks and fat calls them clusters. */
@@ -1205,13 +1172,21 @@ int64_t disk_block_write(const struct disk_block *p_block, uint64_t u_offset,
                     u_len);
 }
 
+uint32_t disk_dev(size_t which)
+{
+    const struct mount *m = at(which);
+    for (size_t sz_at = 0; m->ready && sz_at < s_sz_blocks; sz_at++) {
+        const struct disk_block *p_block = &s_arr_blocks[sz_at];
+        if (ahci_drive(p_block->u_drive) == m->p_drive
+            && p_block->u_first == m->first
+            && p_block->u_sectors == m->sectors) {
+            return p_block->u_rdev;
+        }
+    }
+    return 0;
+}
+
 int disk_system_drive(void)
 {
     return system_drive;
-}
-
-int disk_mounted_drive(void)
-{
-    int root = mounts[DISK_ROOT].part;
-    return (root >= 0) ? (int)table[root].p.drive : -1;
 }

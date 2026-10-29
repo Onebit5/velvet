@@ -49,6 +49,23 @@ const char *process_cwd(int pid)
     return (p != NULL && p->cwd[0] != '\0') ? p->cwd : "/";
 }
 
+const char *process_root(int i_pid)
+{
+    struct process *p = slot_for(i_pid);
+    return (p != NULL && p->arr_root[0] != '\0') ? p->arr_root : "/";
+}
+
+void process_set_root(int i_pid, const char *str_path)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    if (p != NULL) {
+        strncpy(p->arr_root, str_path, PATH_MAX - 1);
+        p->arr_root[PATH_MAX - 1] = '\0';
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+}
+
 void process_set_cwd(int pid, const char *path)
 {
     uint64_t flags = spin_lock_irq(&process_lock);
@@ -128,7 +145,7 @@ int process_create(const char *name, int parent, int uid, bool announce,
         p->u_cloexec = 0;
 
 
-        /* wherever the parent was standing. */
+        /* wherever the parent was standing, under whatever root it had. */
         const char *from = process_cwd(parent);
         size_t c = 0;
         while (from[c] != '\0' && c < PATH_MAX - 1) {
@@ -136,6 +153,9 @@ int process_create(const char *name, int parent, int uid, bool announce,
             c++;
         }
         p->cwd[c] = '\0';
+        if (p_parent != NULL) {
+            memcpy(p->arr_root, p_parent->arr_root, sizeof p->arr_root);
+        }
 
         size_t n = 0;
         while (name[n] != '\0' && n < PROC_NAME_MAX - 1) {
@@ -1101,6 +1121,39 @@ bool process_any_cwd(bool (*p_test)(const char *str_cwd, const void *p_ctx),
     }
     spin_unlock_irq(&process_lock, u_flags);
     return b_any;
+}
+
+void process_map_paths(void (*p_map)(char *str_path, bool b_place,
+                                     const void *p_ctx),
+                       const void *p_ctx)
+{
+    /* a file shared by many descriptors is marked, so it is done once */
+    static uint32_t s_u_pass;
+
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    s_u_pass++;
+    for (size_t i = 0; i < MAX_PROCESSES; i++) {
+        struct process *p = &table[i];
+        if (p->pid == 0) {
+            continue;
+        }
+        if (p->cwd[0] != '\0') {
+            p_map(p->cwd, true, p_ctx);
+        }
+        if (p->arr_root[0] != '\0') {
+            p_map(p->arr_root, true, p_ctx);
+        }
+        for (int i_fd = 0; i_fd < MAX_FDS; i_fd++) {
+            struct file *p_file = p->fds[i_fd];
+            if (p_file != NULL && p_file->u_pass != s_u_pass) {
+                p_file->u_pass = s_u_pass;
+                if (p_file->arr_path[0] != '\0') {
+                    p_map(p_file->arr_path, false, p_ctx);
+                }
+            }
+        }
+    }
+    spin_unlock_irq(&process_lock, u_flags);
 }
 
 size_t process_fd_count(int pid)

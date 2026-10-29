@@ -15,6 +15,7 @@
  */
 #define MS_NOATIME      1024
 #define MS_NODIRATIME   2048
+#define MS_MOVE         8192        /* a mount, and those on it, moved */
 #define MS_SILENT       32768
 #define MS_RELATIME     (1 << 21)
 #define MS_STRICTATIME  (1 << 24)

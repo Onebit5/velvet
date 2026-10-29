@@ -125,9 +125,11 @@
 #define __NR_sigaltstack       131
 #define __NR_statfs            137
 #define __NR_fstatfs           138
+#define __NR_pivot_root        155
 #define __NR_prctl             157
 #define __NR_arch_prctl        158
 #define __NR_setrlimit         160
+#define __NR_chroot            161
 #define __NR_sync              162
 #define __NR_settimeofday      164
 #define __NR_mount             165

@@ -70,6 +70,7 @@ struct file {
 
     struct vfs_file node;       /* a file on a filesystem: where it lives */
     char arr_path[PATH_MAX];    /* the name it was opened by, made absolute */
+    uint32_t u_pass;            /* the last time its name was rewritten */
     void *p_private;            /* the pipe, for a pipe's end */
 };
 

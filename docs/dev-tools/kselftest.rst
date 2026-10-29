@@ -80,11 +80,15 @@ run as root. it says so before the test starts::
    init: selftests/fs/blockdev is root's, and runs as root
 
 the machine has a second drive: a copy of ``disk.img``, the disk ``make
-run`` boots, with the system mounted at ``/`` and a work filesystem at
-``/work`` that is smaller than its partition. the copy is made fresh for
-each run and thrown away after it, so a test that writes leaves nothing
-for the next run to trip on, and a call about filesystems has real ones
-to answer about.
+run`` boots, made fresh for each run and thrown away after it, so a test
+that writes leaves nothing for the next run to trip on, and a call about
+filesystems has real ones to answer about. before it asks anything,
+``/init`` does what a system's does: it mounts ``/proc``, mounts the
+drive's first filesystem, moves ``/dev`` and ``/proc`` onto it and makes
+it the root with ``pivot_root``, the archive it came from going to
+``/boot``, and mounts the work filesystem, which is smaller than its
+partition, at ``/work``. the tests are then under ``/boot/selftests``,
+and with no disk they stay where they were, under ``/selftests``.
 
 running a subset of selftests
 -----------------------------

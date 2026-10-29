@@ -145,7 +145,7 @@ int64_t sys_mount(uint64_t u_source, uint64_t u_target, uint64_t u_type,
     if ((u_flags & MS_MGC_MSK) == MS_MGC_VAL) {
         u_flags &= ~(uint64_t)MS_MGC_MSK;
     }
-    if (u_flags & ~(uint64_t)MS_HARMLESS) {
+    if (u_flags & ~(uint64_t)(MS_HARMLESS | MS_MOVE)) {
         return -EINVAL;
     }
     int64_t i_why = path_at(AT_FDCWD, u_target, arr_target);
@@ -154,6 +154,12 @@ int64_t sys_mount(uint64_t u_source, uint64_t u_target, uint64_t u_type,
     }
     if (i_why == 0 && !node.is_dir) {
         i_why = -ENOTDIR;
+    }
+    /* a move takes the source as a mount point, and nothing else */
+    if (i_why == 0 && (u_flags & MS_MOVE)) {
+        char arr_from[PATH_MAX];
+        i_why = path_at(AT_FDCWD, u_source, arr_from);
+        return (i_why < 0) ? i_why : vfs_mount_move(arr_from, arr_target);
     }
     if (i_why == 0) {
         i_why = string_from(u_type, arr_type, sizeof arr_type);
@@ -252,6 +258,64 @@ int64_t sys_umount2(uint64_t u_target, int i_flags)
 
 
 
+/* a directory named by ring 3, as the namespace has it, into str_out */
+static int64_t dir_named(uint64_t u_path, char *str_out)
+{
+    struct vfs_file node;
+    int64_t i_why = path_at(AT_FDCWD, u_path, str_out);
+    if (i_why == 0) {
+        i_why = path_lookup(str_out, true, &node);
+    }
+    if (i_why == 0 && !node.is_dir) {
+        i_why = -ENOTDIR;
+    }
+    if (i_why == 0 && !may_access(&node, X_OK)) {
+        i_why = -EACCES;
+    }
+    return i_why;
+}
+
+/*
+ * the filesystem mounted at new_root made the root, and the old root
+ * moved to put_old, under it, with everything else that was not under
+ * new_root. a process standing in the old root, or rooted at it, is
+ * moved to the new one; every other path anybody holds still names what
+ * it named. a caller with a root of its own has no namespace root to
+ * exchange
+ */
+int64_t sys_pivot_root(uint64_t u_new, uint64_t u_old)
+{
+    char arr_new[PATH_MAX];
+    char arr_old[PATH_MAX];
+
+    if (process_uid(current_pid()) != 0) {
+        return -EPERM;
+    }
+    if (strcmp(process_root(current_pid()), "/") != 0) {
+        return -EINVAL;
+    }
+    int64_t i_why = dir_named(u_new, arr_new);
+    if (i_why == 0) {
+        i_why = dir_named(u_old, arr_old);
+    }
+    return (i_why < 0) ? i_why : vfs_pivot(arr_new, arr_old);
+}
+
+/* "/" for the caller and its children, somewhere under its own */
+int64_t sys_chroot(uint64_t u_path)
+{
+    char arr_path[PATH_MAX];
+
+    if (process_uid(current_pid()) != 0) {
+        return -EPERM;
+    }
+    int64_t i_why = dir_named(u_path, arr_path);
+    if (i_why == 0) {
+        process_set_root(current_pid(), arr_path);
+    }
+    return i_why;
+}
+
 /* how much room the filesystem a node is on has, as statfs says it */
 static void space_of(const struct vfs_file *p_node, struct statfs *p_st)
 {
@@ -291,10 +355,6 @@ static void space_of(const struct vfs_file *p_node, struct statfs *p_st)
         p_st->f_namelen = RAMFS_NAME_MAX - 1;
         break;
     }
-    case VFS_RAMDISK:
-        p_st->f_type = RAMFS_MAGIC;
-        p_st->f_flags = ST_RDONLY;
-        break;
     case VFS_PROC:
         p_st->f_type = PROC_SUPER_MAGIC;
         break;

@@ -138,7 +138,8 @@ boot image, when a run fails.
 
 what it checks is what the kernel can show with no system on its medium,
 from its log: the boot itself, the memory map and the allocators, the
-page tables, the ramdisk and both disks mounted, the journal started,
+page tables, the archive made the root, the disk mounted and moved into
+by ``/init`` and the work filesystem beside it, the journal started,
 ``/init`` asking, and the shutdown. then that the machine powered off by
 itself rather than being stopped, and last, from the host, that both
 filesystems it ran on are clean by ``fsckext4`` and ``readext4.py``: a

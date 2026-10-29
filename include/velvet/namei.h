@@ -24,6 +24,14 @@
 int64_t path_at(int i_dirfd, uint64_t u_path, char *str_out);
 
 /*
+ * a path in the namespace as a process whose "/" is str_root sees it,
+ * into PATH_MAX of str_out: what is under the root without it, and "/"
+ * for anything that is not, which it has no name for
+ */
+void path_seen_from(const char *str_root, const char *str_path,
+                    char *str_out);
+
+/*
  * what is at an absolute path, following a link at the end or not: 0,
  * -ENOENT, -ENOTDIR when a directory on the way is not one, or -EACCES
  * when one on the way may not be searched by the caller

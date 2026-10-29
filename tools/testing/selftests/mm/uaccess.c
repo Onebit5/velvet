@@ -23,8 +23,9 @@ static bool efault(long i_result)
     return i_result == -1 && errno == EFAULT;
 }
 
-int main(void)
+int main(int i_argc, char **pp_argv)
 {
+    (void)i_argc;
     int arr_fds[2];
     char arr_cwd[8];
 
@@ -62,7 +63,7 @@ int main(void)
                      "refused whole\n");
 
     char *arr_bad[] = { (char *)UNMAPPED, NULL };
-    ksft_test_result(efault(execv("/selftests/mm/uaccess", arr_bad))
+    ksft_test_result(efault(execv(pp_argv[0], arr_bad))
                      && efault(syscall(SYS_execve, UNMAPPED, NULL, NULL)),
                      "exec refuses arguments it cannot read\n");
 

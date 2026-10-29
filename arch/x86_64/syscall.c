@@ -203,6 +203,8 @@ CALL5(mount, u64, u64, u64, u64, u64)
 CALL2(umount2, u64, int)
 CALL2(statfs, u64, u64)
 CALL2(fstatfs, int, u64)
+CALL2(pivot_root, u64, u64)
+CALL1(chroot, u64)
 CALL4(reboot, u32, u32, u32, u64)
 CALL2(sethostname, u64, u64)
 CALL2(setdomainname, u64, u64)
@@ -899,7 +901,7 @@ static const syscall_fn s_arr_table[NR_SYSCALLS] = {
     ENTRY(getresuid), ENTRY(setresgid), ENTRY(getresgid), ENTRY(getpgid),
     ENTRY(getsid), ENTRY(rt_sigpending), ENTRY(rt_sigtimedwait),
     ENTRY(rt_sigsuspend), ENTRY(sigaltstack), ENTRY(prctl),
-    ENTRY(statfs), ENTRY(fstatfs),
+    ENTRY(statfs), ENTRY(fstatfs), ENTRY(pivot_root), ENTRY(chroot),
     ENTRY(arch_prctl), ENTRY(setrlimit), ENTRY(sync), ENTRY(settimeofday),
     ENTRY(mount), ENTRY(umount2),
     ENTRY(reboot), ENTRY(sethostname), ENTRY(setdomainname), ENTRY(gettid),

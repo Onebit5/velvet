@@ -2,18 +2,22 @@
 /*
  * tools/testing/selftests/init.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * the init of the kernel's own image: asks which selftests to run, runs
- * each one as a guest, the way a system runs a program, or as root when
- * only root may run it, and powers the machine off. the kernel hands the machine to /init, and this is the
- * smallest /init that checks anything.
+ * the init of the kernel's own image: does first what a system's /init
+ * does, mounts the disk and makes it the root, then asks which selftests
+ * to run, runs each one as a guest, the way a system runs a program, or
+ * as root when only root may run it, and powers the machine off. the
+ * kernel hands the machine to /init, and this is the smallest /init that
+ * checks anything.
  */
 
 #include "kselftest.h"
 
 #include <dirent.h>
 #include <sys/ioctl.h>
+#include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 
 #define GUEST_UID    1000       /* the account the kernel does least for */
 #define ANSWER_MAX   2048
@@ -23,6 +27,14 @@
 #define POLL_MS      20
 #define TIMED_OUT    (-1)
 #define LOST         (-2)
+#define DEV_MAX      24
+
+/*
+ * the disk is mounted here before it is the root, and the archive this
+ * runs from goes to /boot on it, which is where the tests are then
+ */
+#define NEW_ROOT     "/root"
+#define OLD_ROOT     "/boot"
 
 /*
  * what ends or stops a program, which pid 1 ignores and a test is given
@@ -38,6 +50,7 @@ static char s_arr_found[TESTS_MAX][NAME_MAX];
 static const char *s_arr_tests[TESTS_MAX];
 static int s_i_tests;
 static long s_i_timeout_s = TIMEOUT_S;
+static const char *s_str_tests = "/selftests";
 
 static __attribute__((format(printf, 1, 2))) void say(const char *str_fmt, ...)
 {
@@ -65,10 +78,10 @@ static long uptime_ms(void)
     return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
-/* `/selftests/` and the name, which is where a test is on the medium */
+/* where the tests are, and the name, which is where a test is */
 static bool path_of(const char *str_name, char *str_path, size_t sz_size)
 {
-    int i_len = snprintf(str_path, sz_size, "/selftests/%s", str_name);
+    int i_len = snprintf(str_path, sz_size, "%s/%s", s_str_tests, str_name);
 
     return i_len > 0 && (size_t)i_len < sz_size;
 }
@@ -77,7 +90,7 @@ static bool path_of(const char *str_name, char *str_path, size_t sz_size)
 static void find_all(void)
 {
     char arr_dir[NAME_MAX * 2];
-    DIR *p_top = opendir("/selftests");
+    DIR *p_top = opendir(s_str_tests);
 
     s_i_tests = 0;
     for (struct dirent *p_sub; p_top != NULL
@@ -270,6 +283,103 @@ static int run(const char *str_name)
     return i_status;
 }
 
+/*
+ * a drive or a partition mounted at str_at, as ext4 or, failing that,
+ * as fat, the two kinds a disk this boots from holds
+ */
+static bool mount_any(const char *str_dev, const char *str_at)
+{
+    return mount(str_dev, str_at, "ext4", 0, NULL) == 0
+           || mount(str_dev, str_at, "vfat", 0, NULL) == 0;
+}
+
+static bool exists(const char *str_path)
+{
+    struct stat st;
+
+    return stat(str_path, &st) == 0;
+}
+
+/*
+ * the system's disk: the first partition, in the order the drives are,
+ * that holds a filesystem, or a whole drive with no table that does,
+ * mounted at NEW_ROOT, with its name in str_root, its drive's letter in
+ * *p_drive and which partition it is in *p_part, 0 for a whole drive
+ */
+static bool find_disk(char *str_root, char *p_drive, int *p_part)
+{
+    for (char c_drive = 'a'; c_drive <= 'h'; c_drive++) {
+        snprintf(str_root, DEV_MAX, "/dev/sd%c", c_drive);
+        if (!exists(str_root)) {
+            continue;
+        }
+        *p_drive = c_drive;
+        snprintf(str_root, DEV_MAX, "/dev/sd%c1", c_drive);
+        bool b_table = exists(str_root);
+        for (int i_part = 1; b_table && i_part <= 15; i_part++) {
+            snprintf(str_root, DEV_MAX, "/dev/sd%c%d", c_drive, i_part);
+            if (exists(str_root) && mount_any(str_root, NEW_ROOT)) {
+                *p_part = i_part;
+                return true;
+            }
+        }
+        snprintf(str_root, DEV_MAX, "/dev/sd%c", c_drive);
+        if (!b_table && mount_any(str_root, NEW_ROOT)) {
+            *p_part = 0;
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ * what a system's /init does first: /proc, and the disk that holds the
+ * system made the root, with /dev and /proc moved onto it and the
+ * archive this came from put under it at /boot, and then the next
+ * partition on that drive that holds a filesystem at /work. with no
+ * disk the archive stays the root
+ */
+static void start_system(void)
+{
+    char arr_dev[DEV_MAX];
+    char c_drive = 'a';
+    int i_part = 0;
+
+    mkdir("/proc", 0555);
+    if (mount("proc", "/proc", "proc", 0, NULL) != 0) {
+        say("/proc would not mount: %s\n", strerror(errno));
+    }
+    mkdir(NEW_ROOT, 0755);
+    if (!find_disk(arr_dev, &c_drive, &i_part)) {
+        say("no disk with a filesystem on it. the archive is the root\n");
+        return;
+    }
+    say("%s is mounted at " NEW_ROOT "\n", arr_dev);
+
+    /* the places it moves into, which a disk made elsewhere may lack */
+    mkdir(NEW_ROOT OLD_ROOT, 0755);
+    mkdir(NEW_ROOT "/dev", 0755);
+    mkdir(NEW_ROOT "/proc", 0555);
+    if (mount("/dev", NEW_ROOT "/dev", NULL, MS_MOVE, NULL) != 0
+        || mount("/proc", NEW_ROOT "/proc", NULL, MS_MOVE, NULL) != 0
+        || syscall(SYS_pivot_root, NEW_ROOT, NEW_ROOT OLD_ROOT) != 0) {
+        say("the disk would not be the root: %s\n", strerror(errno));
+        return;
+    }
+    chdir("/");
+    s_str_tests = OLD_ROOT "/selftests";
+    say("the disk is the root now, and the archive is at " OLD_ROOT "\n");
+
+    mkdir("/work", 0755);
+    for (int i_next = i_part + 1; i_part > 0 && i_next <= 15; i_next++) {
+        snprintf(arr_dev, sizeof arr_dev, "/dev/sd%c%d", c_drive, i_next);
+        if (exists(arr_dev) && mount_any(arr_dev, "/work")) {
+            say("%s is mounted at /work\n", arr_dev);
+            break;
+        }
+    }
+}
+
 /* pid 1 has nothing left to do but collect orphans */
 static __attribute__((noreturn)) void idle(void)
 {
@@ -303,6 +413,7 @@ int main(void)
      */
     set_signals(SIG_IGN);
     ioctl(0, TIOCSCTTY, 0);
+    start_system();
 
     /*
      * somewhere anyone may make things, as a system has. it is on the

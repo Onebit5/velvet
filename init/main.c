@@ -162,61 +162,46 @@ void kmain(const struct boot_handoff *handoff)
     machine_bring_up_late();
 
     /*
-     * the first time anything is done with a device the kernel found rather
-     * than merely counted. a machine with no disk carries on exactly as
-     * it did before there was any of this
+     * the first time anything is done with a device the kernel found
+     * rather than merely counted: the drives, and what their tables say
+     * they hold, named in /dev. which of them is mounted where is for
+     * /init to say, and a machine with no disk is one with nothing to
+     * mount
      */
-    if (disk_mount()) {
-        uint64_t used = 0, total = 0;
-        disk_usage(DISK_ROOT, &used, &total);
-        /* which filesystem, asked rather than assumed. */
-        kprintf("disk       : %s, %lu MiB, %s \"%s\" mounted at /\n",
-                disk_model(), disk_bytes() / (1024 * 1024),
-                disk_kind_name(DISK_ROOT), disk_label(DISK_ROOT));
-        kprintf("             %lu KiB used of %lu MiB, ramdisk at %s\n",
-                used / 1024, total / (1024 * 1024), VFS_BOOT);
-        /*
-         * and whether the writes are going through a log, which is the
-         * difference between a crash costing a walk of the disk and one
-         * costing a replay of the last few changes
-         */
-        if (disk_journalled(DISK_ROOT)) {
-            kprintf("             journalled: every change is written down "
-                    "before it is made\n");
-        }
-        /* and the second filesystem, when the drive holds one. */
-        if (disk_ready(DISK_WORK)) {
-            uint64_t wused = 0, wtotal = 0;
-            disk_usage(DISK_WORK, &wused, &wtotal);
-            kprintf("             %s \"%s\" at %s, %lu KiB used of "
-                    "%lu MiB\n",
-                    disk_kind_name(DISK_WORK), disk_label(DISK_WORK),
-                    DISK_WORK_AT, wused / 1024, wtotal / (1024 * 1024));
-        }
+    if (disk_scan()) {
+        kprintf("disk       : %zu drives and partitions, in /dev\n",
+                disk_block_count());
     } else {
-        kprintf("disk       : none found. %s is all there is, "
-                "which is enough\n", VFS_BOOT);
+        kprintf("disk       : none found. the archive is all there is, "
+                "which is enough\n");
+    }
+
+    /* a drive carrying the boot table at sector 32 is a boot medium */
+    {
+        int i_home = disk_system_drive();
+        if (i_home < 0) {
+            kprintf("boot       : no boot medium found. this kernel was "
+                    "started by something else\n");
+        } else {
+            kprintf("boot       : from sd%c, which carries the boot "
+                    "table\n", 'a' + i_home);
+        }
     }
 
     /*
-     * live, or installed. a drive carrying the boot table at sector 32
-     * is a boot medium
+     * the root is the archive the loader handed over, unpacked into
+     * memory so a program may write to it, with the devices on it. a
+     * system's /init mounts its disk and moves into it from there
      */
-    {
-        int home = disk_system_drive();
-        if (home < 0) {
-            kprintf("mode       : no boot medium found. this kernel was "
-                    "started by something else\n");
-        } else if (home == disk_mounted_drive()) {
-            kprintf("mode       : installed, drive %d both starts this "
-                    "machine and holds it\n", home);
-        } else {
-            kprintf("mode       : live, from drive %d, which carries "
-                    "this system without being its home\n", home);
-        }
-    }
-
     ramdisk_init();
+    {
+        size_t sz_files = 0;
+        if (!vfs_root_init(&sz_files)) {
+            panic("no memory for a root to stand in");
+        }
+        kprintf("root       : the archive, %zu entries, in memory, with "
+                "the devices at /dev\n", sz_files);
+    }
 
     proc_init();
     mm_proc_init();

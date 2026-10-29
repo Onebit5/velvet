@@ -271,7 +271,7 @@ SELFTEST_BINS := $(addprefix $(BINDIR)/selftests/,$(SELFTESTS))
 # the tests of what only root may do. each goes on the medium so that only
 # root may run it, which is how /init knows to run it as root rather than
 # as its guest; every other test anyone may run
-SELFTEST_ROOT := fs/blockdev fs/mount
+SELFTEST_ROOT := fs/blockdev fs/mount fs/root
 
 # the image's /init: asks which tests to run, runs each as a guest and
 # powers the machine off. built the way a test is, since it is a program
@@ -498,8 +498,8 @@ $(T)/tty:      tests/test_tty.c      sched/spinlock.c \
                sched/process.c sched/signal.c lib/string.c
 $(T)/elf:      tests/test_elf.c      fs/elf.c \
                lib/string.c
-$(T)/ramdisk:  tests/test_ramdisk.c  fs/ramdisk.c \
-               lib/string.c
+$(T)/ramdisk:  tests/test_ramdisk.c  fs/ramdisk.c fs/ramfs.c \
+               sched/spinlock.c lib/string.c
 $(T)/fat32:    tests/test_fat32.c    fs/fat32.c \
                lib/string.c
 # the one suite that can see a race: real threads through the real

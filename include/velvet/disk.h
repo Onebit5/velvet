@@ -37,14 +37,9 @@
 
 /*
  * a disk is not a filesystem, and the machine got a partition table:
- * a filesystem is mounted in a slot of its own, numbered. the first two
- * are the ones the kernel mounts at boot, the system at / and a second
- * filesystem on the same drive at /work, and the rest are mount's
+ * a filesystem is mounted in a slot of its own, numbered, by mount
  */
 #define DISK_MOUNTS     8
-#define DISK_ROOT       0
-#define DISK_WORK       1
-#define DISK_WORK_AT    "/work"
 
 struct disk_entry {
     char     name[DISK_NAME_MAX];
@@ -94,7 +89,11 @@ bool   disk_part_at(size_t index, struct disk_part *out);
 
 int disk_mounted_part(size_t which);
 
-bool disk_mount(void);
+/*
+ * the drives found, and what each of their tables says it holds, listed
+ * as block devices: whether there is a drive at all. nothing is mounted
+ */
+bool disk_scan(void);
 
 bool disk_ready(size_t which);
 
@@ -182,9 +181,11 @@ int disk_mount_block(const struct disk_block *p_block, enum disk_kind e_want);
 /* a slot's filesystem written out, its log closed, and the slot free */
 bool disk_unmount_slot(size_t sz_which);
 
-int disk_mounted_drive(void);
 
 int disk_system_drive(void);
+
+/* the number of the drive or partition a slot's filesystem is on, or 0 */
+uint32_t disk_dev(size_t sz_which);
 
 /*
  * the filesystem describes the disk it was made for, and its partition
@@ -204,8 +205,6 @@ bool disk_dirty(void);
 void disk_cache_stats(struct bcache_stats *out);
 
 const char *disk_label(size_t which);
-const char *disk_model(void);
-uint64_t    disk_bytes(void);
 bool        disk_usage(size_t which, uint64_t *used_bytes,
                        uint64_t *total_bytes);
 uint32_t    disk_cluster_bytes(size_t which);

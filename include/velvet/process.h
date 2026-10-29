@@ -101,6 +101,12 @@ struct process {
     uint64_t u_cloexec;         /* bit n: descriptor n closes on exec */
 
     char cwd[PATH_MAX];
+
+    /*
+     * where its "/" is, empty for the namespace's own: a name it hands
+     * over is resolved inside this, and cannot climb out of it
+     */
+    char arr_root[PATH_MAX];
 };
 
 /* the process the running thread belongs to, 0 for a kernel thread */
@@ -108,6 +114,10 @@ int current_pid(void);
 
 const char *process_cwd(int pid);
 void        process_set_cwd(int pid, const char *path);
+
+/* where a process's "/" is in the namespace, "/" for none of its own */
+const char *process_root(int i_pid);
+void        process_set_root(int i_pid, const char *str_path);
 
 int  process_create(const char *name, int parent, int uid, bool announce,
                     uint64_t now_ms);
@@ -321,6 +331,16 @@ bool process_any_file(bool (*p_test)(const struct file *p_file,
                       const void *p_ctx);
 bool process_any_cwd(bool (*p_test)(const char *str_cwd, const void *p_ctx),
                      const void *p_ctx);
+
+/*
+ * every path a process holds rewritten in place by p_map: each one's
+ * working directory and root, with b_place, and the name each open file
+ * was opened by, once for each file however many descriptors share it.
+ * called with the process table locked, so p_map may take nothing
+ */
+void process_map_paths(void (*p_map)(char *str_path, bool b_place,
+                                     const void *p_ctx),
+                       const void *p_ctx);
 
 const struct process *process_at(size_t index);
 size_t process_count(void);
