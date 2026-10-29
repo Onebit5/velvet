@@ -547,6 +547,30 @@ int main(void)
               "and following it arrives somewhere real");
     }
 
+    /*
+     * device nodes: an inode with a type and a number and no blocks, the
+     * number where blocks would be, which a reader that took it for
+     * block numbers would make a broken filesystem of
+     */
+    CHECK(ext4_mknod(&fs, "null", EXT4_S_IFCHR | 0666, 0, 0, 1 << 8 | 3)
+          && ext4_lookup(&fs, "null", &f)
+          && (f.mode & EXT4_S_IFMT) == EXT4_S_IFCHR && f.rdev == (1 << 8 | 3)
+          && (f.mode & 0777) == 0666 && f.size == 0,
+          "a character device is made, with its number and no bytes");
+    CHECK(ext4_mknod(&fs, "wide", EXT4_S_IFBLK | 0600, 0, 0, 259 << 8 | 7)
+          && ext4_lookup(&fs, "wide", &f)
+          && (f.mode & EXT4_S_IFMT) == EXT4_S_IFBLK && f.rdev == (259 << 8 | 7),
+          "and a block device whose major is wider than a byte keeps it");
+    CHECK(!ext4_mknod(&fs, "null", EXT4_S_IFCHR | 0666, 0, 0, 1 << 8 | 5)
+          && !ext4_mknod(&fs, "plain", EXT4_S_IFREG | 0644, 0, 0, 0),
+          "a name taken is not made again, and a file is not a node");
+    CHECK(fsck_clean(&fs, &fd),
+          "and the checker takes their numbers for what they are");
+    CHECK(ext4_unlink(&fs, "null") && ext4_unlink(&fs, "wide")
+          && !ext4_lookup(&fs, "null", &f),
+          "they go with nothing of theirs to free");
+    CHECK(fsck_clean(&fs, &fd), "and leave nothing behind");
+
 
 
     CHECK(ext4_create(&fs, "before.txt", 0644, 0, 0, &made), "a file to rename");

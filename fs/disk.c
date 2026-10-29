@@ -456,6 +456,8 @@ static void fill_ext4(struct disk_entry *out, const struct ext4_file *f)
     out->is_symlink = f->is_symlink;
     out->written = f->modified;
     out->mode = f->mode & 0xfff;
+    out->u_type = f->mode & EXT4_S_IFMT;
+    out->u_rdev = f->rdev;
     out->uid = f->uid;
     out->gid = f->gid;
     out->ino = f->ino;
@@ -793,6 +795,19 @@ bool disk_symlink(size_t which, const char *path, const char *target,
     }
     uint64_t flags = enter();
     bool ok = ext4_symlink(&m->ext, below(path), target, u_uid, u_gid);
+    leave(flags);
+    return ok;
+}
+
+bool disk_mknod(size_t which, const char *path, uint32_t u_mode,
+                uint32_t u_uid, uint32_t u_gid, uint32_t u_rdev)
+{
+    struct mount *m = at(which);
+    if (!m->ready || m->kind != DISK_EXT4) {
+        return false;           /* fat has no type to give a name but file */
+    }
+    uint64_t flags = enter();
+    bool ok = ext4_mknod(&m->ext, below(path), u_mode, u_uid, u_gid, u_rdev);
     leave(flags);
     return ok;
 }

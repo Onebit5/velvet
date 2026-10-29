@@ -221,6 +221,7 @@ CALL1(exit_group, int)
 CALL3(tgkill, int, int, int)
 CALL4(openat, int, u64, int, u32)
 CALL3(mkdirat, int, u64, u32)
+CALL4(mknodat, int, u64, u32, u32)
 CALL5(fchownat, int, u64, u32, u32, int)
 CALL4(newfstatat, int, u64, u64, int)
 CALL3(unlinkat, int, u64, int)
@@ -295,6 +296,11 @@ static int64_t do_renameat(struct pt_regs *p_regs)
 static int64_t do_mkdir(struct pt_regs *p_regs)
 {
     return sys_mkdirat(AT_FDCWD, A0, (u32)A1);
+}
+
+static int64_t do_mknod(struct pt_regs *p_regs)
+{
+    return sys_mknodat(AT_FDCWD, A0, (u32)A1, (u32)A2);
 }
 
 static int64_t do_rmdir(struct pt_regs *p_regs)
@@ -908,7 +914,8 @@ static const syscall_fn s_arr_table[NR_SYSCALLS] = {
     ENTRY(tkill), ENTRY(time), ENTRY(getdents64), ENTRY(set_tid_address),
     ENTRY(clock_settime), ENTRY(clock_gettime), ENTRY(clock_getres),
     ENTRY(clock_nanosleep), ENTRY(exit_group), ENTRY(tgkill),
-    ENTRY(openat), ENTRY(mkdirat), ENTRY(fchownat), ENTRY(newfstatat),
+    ENTRY(openat), ENTRY(mkdirat), ENTRY(mknodat), ENTRY(fchownat),
+    ENTRY(newfstatat), ENTRY(mknod),
     ENTRY(unlinkat), ENTRY(renameat), ENTRY(linkat), ENTRY(symlinkat),
     ENTRY(readlinkat), ENTRY(fchmodat), ENTRY(faccessat), ENTRY(pselect6),
     ENTRY(ppoll), ENTRY(set_robust_list), ENTRY(accept4), ENTRY(dup3),

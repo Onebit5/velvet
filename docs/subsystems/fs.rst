@@ -143,6 +143,17 @@ copy of any block to disagree with the first. what the filesystem holds
 in memory and has not written yet it does not see, which is what
 ``sync`` is for.
 
+a device need not be in /dev to be opened. ``mknod`` makes a node that
+names one by its number, root's to make for a device, on ext4 or in
+memory, and opening the node opens the device, wherever the node is;
+one whose number nothing answers to opens as nothing, ``ENXIO``. on ext4
+the number is kept where the inode's blocks would be, in the first word
+when both halves fit in a byte and the second when they do not, and the
+inode has no blocks, which the driver, the checker and ``readext4.py``
+all know. a fifo or a socket is refused, ``EPERM``, until something here
+opens one: a named pipe is only one when opening it waits for the other
+end.
+
 the generator is ``drivers/random.c``: a chacha20 keystream whose key
 changes after every request, to the first block the old one makes, which
 is never handed out, so bytes already given away cannot be worked back to
@@ -622,6 +633,9 @@ where each hangs in the namespace is the namespace's to say.
 ``bool disk_readlink(size_t which, const char *path, char *out, size_t size);``
     where a symlink points, and looking one up *without* following it, which is what `ls -l` and `rm` want
 
+``bool disk_mknod(size_t which, const char *path, uint32_t u_mode, uint32_t u_uid, uint32_t u_gid, uint32_t u_rdev);``
+    a device node, by the type in u_mode: ext4 keeps one, fat has nowhere to
+
 ``bool disk_sync(void);``
     writes do not reach the drive when they are made.
 
@@ -781,6 +795,12 @@ which has no working directory, is the root's.
 
 ``bool vfs_readlink(const char *path, char *out, size_t size);``
     where a symlink points, and finding one without following it, which is what `ls -l` and `rm` want
+
+``bool vfs_mknod(const char *str_path, uint32_t u_mode, uint32_t u_uid, uint32_t u_gid, uint32_t u_rdev);``
+    a device node, on a disk or in memory
+
+``bool vfs_is_device(const struct vfs_file *p_node);``
+    whether opening it opens a device: one in /dev, or a node naming one by its number
 
 ``bool vfs_may_read(const struct vfs_file *f, int uid);``
     may a process running as `uid` read this?

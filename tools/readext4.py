@@ -44,6 +44,10 @@ import sys
 
 EXT2_MAGIC = 0xEF53
 S_IFMT, S_IFREG, S_IFDIR, S_IFLNK = 0xF000, 0x8000, 0x4000, 0xA000
+S_IFCHR, S_IFBLK, S_IFIFO, S_IFSOCK = 0x2000, 0x6000, 0x1000, 0xC000
+# a device, a fifo or a socket has no blocks; a device keeps its number
+# where they would be
+SPECIAL = (S_IFCHR, S_IFBLK, S_IFIFO, S_IFSOCK)
 
 INCOMPAT_FILETYPE = 0x0002
 INCOMPAT_RECOVER = 0x0004
@@ -298,7 +302,8 @@ class Ext2:
         """every data block of an inode, in order. `want_meta` also
         yields the indirect blocks themselves, which is what a check of
         the bitmap needs and what reading the file does not"""
-        if self.is_fast_symlink(ino_data):
+        if self.is_fast_symlink(ino_data) or \
+                (ino_data["mode"] & S_IFMT) in SPECIAL:
             return []
 
         if self.has_extents(ino_data):
@@ -507,7 +512,8 @@ def check(fs, verbose):
                 sub = path.rstrip("/") + "/" + name
                 cd = fs.inode(child)
                 ck = cd["mode"] & S_IFMT
-                want = {S_IFREG: 1, S_IFDIR: 2, S_IFLNK: 7}.get(ck, 0)
+                want = {S_IFREG: 1, S_IFDIR: 2, S_IFCHR: 3, S_IFBLK: 4,
+                        S_IFIFO: 5, S_IFSOCK: 6, S_IFLNK: 7}.get(ck, 0)
                 if fs.incompat & 0x2 and ftype != want:
                     problems.append(f"{sub}: the directory says type "
                                     f"{ftype}, the inode says {want}")

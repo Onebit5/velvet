@@ -36,4 +36,7 @@ bool dev_find(const char *str_name, size_t *p_index);
 /* the device opened for u_mode, with one reference, or NULL */
 struct file *dev_open(size_t sz_index, uint32_t u_mode);
 
+/* and the one numbered u_rdev, which is how a node elsewhere names it */
+struct file *dev_open_rdev(uint32_t u_rdev, uint32_t u_mode);
+
 #endif

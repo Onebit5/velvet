@@ -44,6 +44,8 @@ struct vfs_file {
     uint32_t uid, gid;
     bool     is_symlink;
     uint32_t u_ino;         /* the inode, where a filesystem has them */
+    uint32_t u_type;        /* S_IFCHR and the rest, where a node has one */
+    uint32_t u_rdev;        /* a device node's number, major << 8 | minor */
 
     const void *data;
     uint32_t    cluster;
@@ -86,6 +88,19 @@ bool vfs_chmod(const char *path, uint32_t mode);
 bool vfs_chown(const char *path, uint32_t uid, uint32_t gid);
 bool vfs_symlink(const char *path, const char *target, uint32_t u_uid,
                  uint32_t u_gid);
+
+/*
+ * a device node, by the type in u_mode, numbered u_rdev: false where the
+ * filesystem has nowhere to keep one
+ */
+bool vfs_mknod(const char *str_path, uint32_t u_mode, uint32_t u_uid,
+               uint32_t u_gid, uint32_t u_rdev);
+
+/*
+ * whether opening it opens a device rather than a file: one in /dev, or a
+ * node naming one by its number on any filesystem
+ */
+bool vfs_is_device(const struct vfs_file *p_node);
 
 bool vfs_readlink(const char *path, char *out, size_t size);
 bool vfs_open_nofollow(const char *path, struct vfs_file *out);

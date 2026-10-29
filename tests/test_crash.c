@@ -111,6 +111,7 @@ static void do_work(struct ext4 *fs)
         }
     }
     ext4_symlink(fs, "link", "one.txt", 0, 0);
+    ext4_mknod(fs, "sub/null", EXT4_S_IFCHR | 0666, 0, 0, 1 << 8 | 3);
     ext4_rename(fs, "one.txt", "sub/moved.txt");
     ext4_unlink(fs, "sub/two.txt");
     ext4_rmdir(fs, "nothing-here");

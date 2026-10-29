@@ -194,6 +194,8 @@ static void from_disk(struct vfs_file *out, const struct disk_entry *e,
     out->gid = e->gid;
     out->is_symlink = e->is_symlink;
     out->u_ino = e->ino;
+    out->u_type = e->u_type;
+    out->u_rdev = e->u_rdev;
 }
 
 /*
@@ -212,6 +214,8 @@ static void from_ramfs(struct vfs_file *p_out, const struct ramfs_entry *p_e,
     p_out->size = p_e->u_size;
     p_out->is_dir = (p_e->u_mode & S_IFMT) == S_IFDIR;
     p_out->is_symlink = (p_e->u_mode & S_IFMT) == S_IFLNK;
+    p_out->u_type = p_e->u_mode & S_IFMT;
+    p_out->u_rdev = p_e->u_rdev;
     p_out->mode = p_e->u_mode & 07777;
     p_out->uid = p_e->u_uid;
     p_out->gid = p_e->u_gid;
@@ -533,6 +537,8 @@ struct store_ops {
                     uint32_t u_uid, uint32_t u_gid);
     bool (*readlink)(size_t which, const char *path, char *out,
                      size_t size);
+    bool (*mknod)(size_t which, const char *path, uint32_t u_mode,
+                  uint32_t u_uid, uint32_t u_gid, uint32_t u_rdev);
 };
 
 static bool disk_create_node(size_t which, const char *path, uint32_t u_mode,
@@ -575,15 +581,23 @@ static bool ramfs_symlink_node(size_t sz_fs, const char *str_path,
                       str_target, NULL);
 }
 
+static bool ramfs_mknod_node(size_t sz_fs, const char *str_path,
+                             uint32_t u_mode, uint32_t u_uid, uint32_t u_gid,
+                             uint32_t u_rdev)
+{
+    return ramfs_make(sz_fs, str_path, u_mode, u_uid, u_gid, u_rdev, NULL,
+                      NULL);
+}
+
 static const struct store_ops s_disk_ops = {
     disk_create_node, disk_mkdir, disk_rmdir, disk_unlink, disk_rename,
-    disk_chmod, disk_chown, disk_symlink, disk_readlink,
+    disk_chmod, disk_chown, disk_symlink, disk_readlink, disk_mknod,
 };
 
 static const struct store_ops s_ramfs_ops = {
     ramfs_create_node, ramfs_mkdir_node, ramfs_rmdir, ramfs_unlink,
     ramfs_rename, ramfs_chmod, ramfs_chown, ramfs_symlink_node,
-    ramfs_readlink,
+    ramfs_readlink, ramfs_mknod_node,
 };
 
 /*
@@ -688,6 +702,20 @@ bool vfs_symlink(const char *path, const char *target, uint32_t u_uid,
     bool b_ok = p_mount != NULL
                 && p_ops->symlink(p_mount->sz_slot, rest, target, u_uid,
                                   u_gid);
+    mount_leave(p_mount);
+    return b_ok;
+}
+
+bool vfs_mknod(const char *str_path, uint32_t u_mode, uint32_t u_uid,
+               uint32_t u_gid, uint32_t u_rdev)
+{
+    char arr_buf[VFS_NAME_MAX + 1];
+    const char *rest;
+    const struct store_ops *p_ops;
+    struct mount_point *p_mount = on_store(str_path, arr_buf, &rest, &p_ops);
+    bool b_ok = p_mount != NULL
+                && p_ops->mknod(p_mount->sz_slot, rest, u_mode, u_uid, u_gid,
+                                u_rdev);
     mount_leave(p_mount);
     return b_ok;
 }
@@ -830,6 +858,13 @@ bool vfs_may_read(const struct vfs_file *f, int uid)
     return (f->mode & 0004) != 0;
 
     /* the owner half of that is what an inode answers. */
+}
+
+bool vfs_is_device(const struct vfs_file *p_node)
+{
+    return (p_node->kind == VFS_DEV && !p_node->is_dir)
+           || p_node->u_type == S_IFCHR || p_node->u_type == S_IFBLK
+           || p_node->u_type == S_IFIFO || p_node->u_type == S_IFSOCK;
 }
 
 bool vfs_writable(const struct vfs_file *f)
@@ -1356,6 +1391,16 @@ struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode)
 {
     if (p_node->kind == VFS_DEV && !p_node->is_dir) {
         return dev_open(p_node->sz_dev, u_mode);
+    }
+    /*
+     * a node naming a device by its number opens that device, wherever
+     * the node is. a fifo or a socket opens as nothing here yet
+     */
+    if (p_node->u_type == S_IFCHR || p_node->u_type == S_IFBLK) {
+        return dev_open_rdev(p_node->u_rdev, u_mode);
+    }
+    if (vfs_is_device(p_node)) {
+        return NULL;
     }
     if (p_node->is_dir) {
         struct file *p_dir = file_alloc(&dir_ops, u_mode & FILE_READ,

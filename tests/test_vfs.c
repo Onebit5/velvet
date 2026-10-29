@@ -334,6 +334,16 @@ bool disk_symlink(size_t w, const char *p, const char *t, uint32_t u_uid,
     (void)w; (void)p; (void)t; return false;
 }
 
+static uint32_t s_u_mknod_rdev;
+bool disk_mknod(size_t w, const char *p, uint32_t u_mode, uint32_t u_uid,
+                uint32_t u_gid, uint32_t u_rdev)
+{
+    (void)p; (void)u_mode; (void)u_uid; (void)u_gid;
+    last_mount = w;
+    s_u_mknod_rdev = u_rdev;
+    return disk_ready(w);
+}
+
 bool disk_rename(size_t w, const char *from, const char *to)
 {
     (void)from; (void)to; last_mount = w; renames++; return disk_ready(w);
@@ -960,6 +970,39 @@ int main(void)
               && arr_got[0] == 0x5a,
               "urandom reads from the generator");
         file_put(p_file);
+    }
+
+    /*
+     * a device node, wherever it is, opens the device it names by its
+     * number: one in memory for /dev/null opens /dev/null
+     */
+    {
+        struct file *p_file = NULL;
+        char arr_got[8];
+
+        CHECK(vfs_mknod("/null", 0020000 | 0666, 0, 0, 1 << 8 | 3)
+              && vfs_open("/null", &f) && f.kind == VFS_RAMFS
+              && f.u_type == 0020000 && f.u_rdev == (1 << 8 | 3)
+              && vfs_is_device(&f),
+              "a device node is made in memory, with its type and number");
+        p_file = vfs_open_file(&f, FILE_READ | FILE_WRITE);
+        CHECK(p_file != NULL && p_file->e_type == FILE_TYPE_CHAR
+              && p_file->p_ops->read(p_file, arr_got, 8) == 0
+              && p_file->p_ops->write(p_file, "gone", 4) == 4,
+              "and opens as the device it names");
+        file_put(p_file);
+        CHECK(vfs_mknod("/nothing", 0020000 | 0666, 0, 0, 99 << 8 | 99)
+              && vfs_open("/nothing", &f) && vfs_open_file(&f, FILE_READ)
+                 == NULL,
+              "one whose number nothing answers to opens as nothing");
+        CHECK(vfs_mknod("/mnt/node", 0060000 | 0600, 0, 0, 8 << 8 | 1)
+              && last_mount == SLOT_ROOT && s_u_mknod_rdev == (8 << 8 | 1),
+              "one under the disk's mount is made on the disk, with its "
+              "number");
+        CHECK(!vfs_mknod("/proc/node", 0020000 | 0666, 0, 0, 1 << 8 | 3),
+              "and /proc keeps none");
+        CHECK(vfs_unlink("/null") && vfs_unlink("/nothing"),
+              "and they go like any name");
     }
 
     /* and a machine whose disk went away has the root it booted with */

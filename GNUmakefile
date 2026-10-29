@@ -271,7 +271,7 @@ SELFTEST_BINS := $(addprefix $(BINDIR)/selftests/,$(SELFTESTS))
 # the tests of what only root may do. each goes on the medium so that only
 # root may run it, which is how /init knows to run it as root rather than
 # as its guest; every other test anyone may run
-SELFTEST_ROOT := fs/blockdev fs/mount fs/root
+SELFTEST_ROOT := fs/blockdev fs/mknod fs/mount fs/root
 
 # the image's /init: asks which tests to run, runs each as a guest and
 # powers the machine off. built the way a test is, since it is a program

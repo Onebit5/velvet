@@ -63,6 +63,8 @@ struct disk_entry {
     uint32_t uid, gid;
     bool     is_symlink;
     uint32_t ino;               /* the identity. 0 where there is none */
+    uint32_t u_type;            /* the type bits, where an inode has them */
+    uint32_t u_rdev;            /* a device's number, major << 8 | minor */
 };
 
 enum disk_kind {
@@ -128,6 +130,10 @@ bool disk_chmod(size_t which, const char *path, uint32_t mode);
 bool disk_chown(size_t which, const char *path, uint32_t uid, uint32_t gid);
 bool disk_symlink(size_t which, const char *path, const char *target,
                   uint32_t u_uid, uint32_t u_gid);
+
+/* a device node, by the type in u_mode: ext4 keeps one, fat cannot */
+bool disk_mknod(size_t which, const char *path, uint32_t u_mode,
+                uint32_t u_uid, uint32_t u_gid, uint32_t u_rdev);
 
 bool disk_readlink(size_t which, const char *path, char *out, size_t size);
 bool disk_lookup_nofollow(size_t which, const char *path,

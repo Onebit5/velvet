@@ -13,6 +13,7 @@
 #include <velvet/string.h>
 #include <asm/uaccess.h>
 #include <uapi/velvet/fcntl.h>
+#include <uapi/velvet/stat.h>
 
 int current_uid(void)
 {
@@ -232,6 +233,69 @@ int64_t sys_mkdirat(int i_dirfd, uint64_t u_path, uint32_t u_mode)
     return vfs_mkdir(arr_path, u_mode & ~u_umask & 07777,
                      (uint32_t)current_uid(), (uint32_t)current_gid())
            ? 0 : -ENOSPC;
+}
+
+/*
+ * a device number as a program packs it, a major of twelve bits and a
+ * minor of twenty split around it, made the kernel's, major << 8 | minor:
+ * true, or false for a minor too wide to keep
+ */
+static bool rdev_from(uint32_t u_dev, uint32_t *p_rdev)
+{
+    uint32_t u_major = (u_dev & 0xfff00) >> 8;
+    uint32_t u_minor = (u_dev & 0xff) | ((u_dev >> 12) & 0xfff00);
+    *p_rdev = u_major << 8 | u_minor;
+    return u_minor < 256;
+}
+
+/*
+ * a file or a device, by the type in u_mode, 0 being a file. a device is
+ * root's to make, since naming one is reaching it; a fifo or a socket is
+ * refused, since nothing here opens one yet, and a directory is mkdir's
+ */
+int64_t sys_mknodat(int i_dirfd, uint64_t u_path, uint32_t u_mode,
+                    uint32_t u_dev)
+{
+    char arr_path[PATH_MAX];
+    uint32_t u_type = u_mode & S_IFMT;
+    uint32_t u_rdev = 0;
+
+    if (u_type == 0) {
+        u_type = S_IFREG;
+    }
+    if (u_type != S_IFREG && u_type != S_IFCHR && u_type != S_IFBLK
+        && u_type != S_IFIFO && u_type != S_IFSOCK && u_type != S_IFDIR) {
+        return -EINVAL;
+    }
+    if (u_type == S_IFDIR || u_type == S_IFIFO || u_type == S_IFSOCK) {
+        return -EPERM;
+    }
+    bool b_device = u_type != S_IFREG;
+    if (b_device && current_uid() != 0) {
+        return -EPERM;
+    }
+    if (b_device && !rdev_from(u_dev, &u_rdev)) {
+        return -EINVAL;
+    }
+    int64_t i_why = path_at(i_dirfd, u_path, arr_path);
+    if (i_why == 0) {
+        i_why = may_make(arr_path, true);
+    }
+    if (i_why < 0) {
+        return i_why;
+    }
+    const struct process *p = process_find(current_pid());
+    uint32_t u_perms = u_mode & ~((p != NULL) ? p->u_umask : 022) & 07777;
+    uint32_t u_uid = (uint32_t)current_uid();
+    uint32_t u_gid = (uint32_t)current_gid();
+    if (!b_device) {
+        struct vfs_file node;
+        return vfs_create(arr_path, u_perms, u_uid, u_gid, &node) ? 0
+                                                                  : -ENOSPC;
+    }
+    /* a filesystem with nowhere to keep a device's number has none */
+    return vfs_mknod(arr_path, u_type | u_perms, u_uid, u_gid, u_rdev)
+           ? 0 : -EPERM;
 }
 
 int64_t sys_unlinkat(int i_dirfd, uint64_t u_path, int i_flags)

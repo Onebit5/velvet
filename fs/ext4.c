@@ -540,6 +540,43 @@ static bool is_fast_symlink(const uint8_t *inode)
     return (rd16(inode) & EXT4_S_IFMT) == EXT4_S_IFLNK && rd32(inode + 4) < 60;
 }
 
+/* a device, a fifo or a socket, which have a type and no blocks */
+static bool is_special(const uint8_t *inode)
+{
+    uint32_t u_type = rd16(inode) & EXT4_S_IFMT;
+    return u_type == EXT4_S_IFCHR || u_type == EXT4_S_IFBLK
+           || u_type == EXT4_S_IFIFO || u_type == EXT4_S_IFSOCK;
+}
+
+/*
+ * a device's number kept where its blocks would be: in the first word
+ * when both halves fit in a byte, the way the oldest filesystems kept it,
+ * and in the second, wider, when they do not
+ */
+static void put_rdev(uint8_t *inode, uint32_t rdev)
+{
+    uint32_t major = rdev >> 8;
+    uint32_t minor = rdev & 0xff;
+    if (major < 256) {
+        wr32(inode + 40, major << 8 | minor);
+        wr32(inode + 44, 0);
+    } else {
+        wr32(inode + 40, 0);
+        wr32(inode + 44, (minor & 0xff) | (major << 8)
+                         | ((minor & ~0xffu) << 12));
+    }
+}
+
+static uint32_t get_rdev(const uint8_t *inode)
+{
+    uint32_t old = rd32(inode + 40);
+    if (old != 0) {
+        return old & 0xffff;
+    }
+    uint32_t wide = rd32(inode + 44);
+    return ((wide & 0xfff00) >> 8) << 8 | (wide & 0xff);
+}
+
 static void fill_file(struct ext4 *fs, uint32_t ino, const uint8_t *raw,
                       struct ext4_file *out)
 {
@@ -553,6 +590,7 @@ static void fill_file(struct ext4 *fs, uint32_t ino, const uint8_t *raw,
     out->links = rd16(raw + 26);
     out->is_dir = (out->mode & EXT4_S_IFMT) == EXT4_S_IFDIR;
     out->is_symlink = (out->mode & EXT4_S_IFMT) == EXT4_S_IFLNK;
+    out->rdev = is_special(raw) ? get_rdev(raw) : 0;
 
     ext4_unix_to_time(rd32(raw + 8), &out->accessed);
     ext4_unix_to_time(rd32(raw + 12), &out->created);
@@ -1330,7 +1368,8 @@ static uint32_t map_block(struct ext4 *fs, uint8_t *inode, uint32_t index,
 /* every block of a file, given back one at a time. */
 static void free_all_blocks(struct ext4 *fs, uint8_t *inode)
 {
-    if (is_fast_symlink(inode)) {
+    /* the sixty bytes are a link's target, or a device's number */
+    if (is_fast_symlink(inode) || is_special(inode)) {
         return;
     }
     if (has_extents(inode)) {
@@ -2309,9 +2348,23 @@ static bool split_parent(struct ext4 *fs, const char *path, uint32_t *dir_ino,
     return (rd16(dir_inode) & EXT4_S_IFMT) == EXT4_S_IFDIR;
 }
 
+/* the type a directory entry records, from the inode's own */
+static uint8_t entry_type(uint32_t mode)
+{
+    switch (mode & EXT4_S_IFMT) {
+    case EXT4_S_IFDIR:  return 2;
+    case EXT4_S_IFCHR:  return 3;
+    case EXT4_S_IFBLK:  return 4;
+    case EXT4_S_IFIFO:  return 5;
+    case EXT4_S_IFSOCK: return 6;
+    case EXT4_S_IFLNK:  return 7;
+    default:            return 1;
+    }
+}
+
 static bool make(struct ext4 *fs, const char *path, uint32_t mode,
                  uint32_t uid, uint32_t gid, const char *link_target,
-                 uint32_t *out_ino)
+                 uint32_t rdev, uint32_t *out_ino)
 {
     if (!fs->mounted || fs->write == NULL) {
         return false;
@@ -2349,9 +2402,14 @@ static bool make(struct ext4 *fs, const char *path, uint32_t mode,
      * born with an extent tree if the filesystem has them, and an empty
      * one is a header and nothing else. a fast symlink is the exception
      * and gets neither: those sixty bytes are the target, and a header
-     * written over the front of it would be the target
+     * written over the front of it would be the target. a device is the
+     * other: they hold its number, written before the inode ever is, so
+     * there is no moment it is a device with none
      */
-    if (fs->extents && !(link_target != NULL && strlen(link_target) < 60)) {
+    if (is_special(inode)) {
+        put_rdev(inode, rdev);
+    } else if (fs->extents
+               && !(link_target != NULL && strlen(link_target) < 60)) {
         wr32(inode + 32, rd32(inode + 32) | EXT4_EXTENTS_FL);
         node_init(inode_map(inode), root_max(), 0);
     }
@@ -2421,8 +2479,7 @@ static bool make(struct ext4 *fs, const char *path, uint32_t mode,
         return false;
     }
 
-    uint8_t file_type = directory ? 2 : (link_target != NULL ? 7 : 1);
-    if (!dir_add(fs, dir_ino, dir_inode, leaf, ino, file_type)) {
+    if (!dir_add(fs, dir_ino, dir_inode, leaf, ino, entry_type(mode))) {
         return false;
     }
 
@@ -2458,7 +2515,8 @@ static bool ext4_create_locked(struct ext4 *fs, const char *path, uint32_t mode,
     }
 
     uint32_t ino;
-    if (!make(fs, path, EXT4_S_IFREG | (mode & 0xfff), uid, gid, NULL, &ino)) {
+    if (!make(fs, path, EXT4_S_IFREG | (mode & 0xfff), uid, gid, NULL, 0,
+              &ino)) {
         return false;
     }
     return ext4_lookup(fs, path, out);
@@ -2477,7 +2535,8 @@ bool ext4_create(struct ext4 *fs, const char *path, uint32_t mode,
 static bool ext4_mkdir_locked(struct ext4 *fs, const char *path, uint32_t mode,
                 uint32_t uid, uint32_t gid)
 {
-    return make(fs, path, EXT4_S_IFDIR | (mode & 0xfff), uid, gid, NULL, NULL);
+    return make(fs, path, EXT4_S_IFDIR | (mode & 0xfff), uid, gid, NULL, 0,
+                NULL);
 }
 
 /* one thing a caller asked for is one transaction, however many blocks it turns into. */
@@ -2493,7 +2552,7 @@ bool ext4_mkdir(struct ext4 *fs, const char *path, uint32_t mode,
 static bool ext4_symlink_locked(struct ext4 *fs, const char *path, const char *target,
                   uint32_t uid, uint32_t gid)
 {
-    return make(fs, path, EXT4_S_IFLNK | 0777, uid, gid, target, NULL);
+    return make(fs, path, EXT4_S_IFLNK | 0777, uid, gid, target, 0, NULL);
 }
 
 /* one thing a caller asked for is one transaction, however many blocks it turns into. */
@@ -2502,6 +2561,22 @@ bool ext4_symlink(struct ext4 *fs, const char *path, const char *target,
 {
     jbd_begin(&fs->journal);
     bool ok = ext4_symlink_locked(fs, path, target, uid, gid);
+    jbd_commit(&fs->journal);
+    return ok;
+}
+
+/* one thing a caller asked for is one transaction, however many blocks it turns into. */
+bool ext4_mknod(struct ext4 *fs, const char *path, uint32_t mode,
+                uint32_t uid, uint32_t gid, uint32_t rdev)
+{
+    uint32_t u_type = mode & EXT4_S_IFMT;
+    if (u_type != EXT4_S_IFCHR && u_type != EXT4_S_IFBLK
+        && u_type != EXT4_S_IFIFO && u_type != EXT4_S_IFSOCK) {
+        return false;
+    }
+    jbd_begin(&fs->journal);
+    bool ok = make(fs, path, u_type | (mode & 0xfff), uid, gid, NULL, rdev,
+                   NULL);
     jbd_commit(&fs->journal);
     return ok;
 }

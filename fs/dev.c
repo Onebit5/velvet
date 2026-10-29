@@ -180,6 +180,17 @@ bool dev_find(const char *str_name, size_t *p_index)
     return false;
 }
 
+struct file *dev_open_rdev(uint32_t u_rdev, uint32_t u_mode)
+{
+    size_t sz_count = dev_count();
+    for (size_t sz_at = 0; sz_at < sz_count; sz_at++) {
+        if (dev_rdev(sz_at) == u_rdev) {
+            return dev_open(sz_at, u_mode);
+        }
+    }
+    return NULL;
+}
+
 struct file *dev_open(size_t sz_index, uint32_t u_mode)
 {
     const struct disk_block *p_block = block_at(sz_index);

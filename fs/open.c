@@ -84,11 +84,12 @@ int64_t sys_openat(int i_dirfd, uint64_t u_path, int i_flags,
         || ((b_write || (i_flags & O_TRUNC)) && !may_access(&node, W_OK))) {
         return -EACCES;
     }
-    if ((b_write || (i_flags & O_TRUNC)) && !node.is_dir
-        && node.kind != VFS_DEV && !vfs_writable(&node)) {
+    bool b_device = vfs_is_device(&node);
+    if ((b_write || (i_flags & O_TRUNC)) && !node.is_dir && !b_device
+        && !vfs_writable(&node)) {
         return -EROFS;
     }
-    if ((i_flags & O_TRUNC) && b_write && node.kind == VFS_DISK
+    if ((i_flags & O_TRUNC) && b_write && !node.is_dir && !b_device
         && node.size != 0 && !vfs_truncate(&node, 0)) {
         return -EIO;
     }
@@ -96,11 +97,12 @@ int64_t sys_openat(int i_dirfd, uint64_t u_path, int i_flags,
     uint32_t u_fmode = (b_read ? FILE_READ : 0) | (b_write ? FILE_WRITE : 0);
     /*
      * a device that will not open is one with nothing behind it, /dev/tty
-     * for a process with no terminal; anything else is out of memory
+     * for a process with no terminal or a node whose number nothing
+     * answers to; anything else is out of memory
      */
     struct file *p_file = vfs_open_file(&node, u_fmode);
     if (p_file == NULL) {
-        return (node.kind == VFS_DEV) ? -ENXIO : -ENOMEM;
+        return b_device ? -ENXIO : -ENOMEM;
     }
     p_file->u_mode = u_fmode;
     p_file->u_flags = (uint32_t)i_flags & (O_APPEND | O_NONBLOCK);

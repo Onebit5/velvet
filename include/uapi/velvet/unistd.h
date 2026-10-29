@@ -123,6 +123,7 @@
 #define __NR_rt_sigtimedwait   128
 #define __NR_rt_sigsuspend     130
 #define __NR_sigaltstack       131
+#define __NR_mknod             133
 #define __NR_statfs            137
 #define __NR_fstatfs           138
 #define __NR_pivot_root        155
@@ -150,6 +151,7 @@
 #define __NR_tgkill            234
 #define __NR_openat            257
 #define __NR_mkdirat           258
+#define __NR_mknodat           259
 #define __NR_fchownat          260
 #define __NR_newfstatat        262
 #define __NR_unlinkat          263

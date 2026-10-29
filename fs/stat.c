@@ -50,23 +50,40 @@ static int64_t seconds_of(const struct fat32_time *p_when)
     return (p_when->year == 0) ? 0 : (int64_t)epoch_from_date(&date);
 }
 
+/*
+ * what kind of thing a node is, as the type bits of a mode: its own,
+ * where its filesystem keeps one, and otherwise what it is plainly
+ */
+static uint32_t type_bits(const struct vfs_file *p_node)
+{
+    if (p_node->u_type != 0) {
+        return p_node->u_type;
+    }
+    if (p_node->is_dir) {
+        return S_IFDIR;
+    }
+    if (p_node->is_symlink) {
+        return S_IFLNK;
+    }
+    if (p_node->kind == VFS_DEV) {
+        return dev_is_block(p_node->sz_dev) ? S_IFBLK : S_IFCHR;
+    }
+    return S_IFREG;
+}
+
 /* the stat of a file a name leads to */
 static void fill_node(const struct vfs_file *p_node, const char *str_path,
                       struct stat *p_st)
 {
     memset(p_st, 0, sizeof *p_st);
-    bool b_dev = p_node->kind == VFS_DEV && !p_node->is_dir;
-    uint32_t u_type = p_node->is_dir ? S_IFDIR
-                    : p_node->is_symlink ? S_IFLNK
-                    : (b_dev && dev_is_block(p_node->sz_dev)) ? S_IFBLK
-                    : b_dev ? S_IFCHR
-                    : S_IFREG;
+    uint32_t u_type = type_bits(p_node);
     p_st->st_dev = dev_of(p_node);
     p_st->st_ino = (p_node->u_ino != 0) ? p_node->u_ino : path_ino(str_path);
     p_st->st_nlink = p_node->is_dir ? 2 : 1;
     p_st->st_mode = u_type | (p_node->mode & 07777);
-    if (b_dev) {
-        p_st->st_rdev = dev_rdev(p_node->sz_dev);
+    if (u_type == S_IFCHR || u_type == S_IFBLK) {
+        p_st->st_rdev = (p_node->kind == VFS_DEV) ? dev_rdev(p_node->sz_dev)
+                                                  : p_node->u_rdev;
     }
     p_st->st_uid = p_node->uid;
     p_st->st_gid = p_node->gid;
@@ -166,14 +183,10 @@ static size_t record_len(size_t sz_name)
     return (offsetof(struct dirent64, d_name) + sz_name + 1 + 7) & ~(size_t)7;
 }
 
+/* a directory entry's type is the mode's, shifted down to its own byte */
 static uint8_t type_of(const struct vfs_file *p_node)
 {
-    return p_node->is_dir ? DT_DIR
-           : p_node->is_symlink ? DT_LNK
-           : (p_node->kind == VFS_DEV && dev_is_block(p_node->sz_dev))
-             ? DT_BLK
-           : (p_node->kind == VFS_DEV) ? DT_CHR
-           : DT_REG;
+    return (uint8_t)(type_bits(p_node) >> 12);
 }
 
 /*

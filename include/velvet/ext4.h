@@ -68,6 +68,10 @@
 #define EXT4_S_IFREG  0x8000
 #define EXT4_S_IFDIR  0x4000
 #define EXT4_S_IFLNK  0xa000
+#define EXT4_S_IFCHR  0x2000
+#define EXT4_S_IFBLK  0x6000
+#define EXT4_S_IFIFO  0x1000
+#define EXT4_S_IFSOCK 0xc000
 
 #define EXT4_DIRECT   12
 
@@ -142,6 +146,7 @@ struct ext4_file {
 
     bool     is_dir;
     bool     is_symlink;
+    uint32_t rdev;              /* a device's number, major << 8 | minor */
 
     /*
      * the three ext2 keeps, broken down so that everything above sees
@@ -186,6 +191,13 @@ bool ext4_create(struct ext4 *fs, const char *path, uint32_t mode,
                  uint32_t uid, uint32_t gid, struct ext4_file *out);
 bool ext4_mkdir(struct ext4 *fs, const char *path, uint32_t mode,
                 uint32_t uid, uint32_t gid);
+/*
+ * a device, a fifo or a socket: an inode with a type and, for a device,
+ * a number, and no blocks at all. mode carries the type
+ */
+bool ext4_mknod(struct ext4 *fs, const char *path, uint32_t mode,
+                uint32_t uid, uint32_t gid, uint32_t rdev);
+
 bool ext4_symlink(struct ext4 *fs, const char *path, const char *target,
                   uint32_t uid, uint32_t gid);
 

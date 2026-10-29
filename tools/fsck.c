@@ -306,6 +306,14 @@ static bool is_fast_symlink(const uint8_t *inode)
     return (rd16(inode) & EXT4_S_IFMT) == EXT4_S_IFLNK && rd32(inode + 4) < 60;
 }
 
+/* a device, a fifo or a socket: what would be its blocks is its number */
+static bool is_special(const uint8_t *inode)
+{
+    uint32_t u_type = rd16(inode) & EXT4_S_IFMT;
+    return u_type == EXT4_S_IFCHR || u_type == EXT4_S_IFBLK
+           || u_type == EXT4_S_IFIFO || u_type == EXT4_S_IFSOCK;
+}
+
 /* does this group carry a copy of the superblock and the descriptor table? */
 static bool group_has_super(const struct check *c, uint32_t g)
 {
@@ -438,8 +446,8 @@ static void claim_blocks_of(struct check *c, uint32_t ino,
                             const uint8_t *inode)
 {
     (void)ino;
-    if (is_fast_symlink(inode)) {
-        return;                 /* those sixty bytes are the target */
+    if (is_fast_symlink(inode) || is_special(inode)) {
+        return;                 /* the sixty bytes are a target, or a number */
     }
 
     if (rd32(inode + 32) & EXT4_EXTENTS_FL) {

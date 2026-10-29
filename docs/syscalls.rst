@@ -146,6 +146,7 @@ number  name             where                  notes
 128     rt_sigtimedwait  sched/sigcall.c
 130     rt_sigsuspend    sched/sigcall.c
 131     sigaltstack      sched/sigcall.c
+133     mknod            arch/x86_64/syscall.c  mknodat from the working directory
 137     statfs           fs/namespace.c
 138     fstatfs          fs/namespace.c
 155     pivot_root       fs/namespace.c         root; the old root under the new
@@ -174,6 +175,7 @@ number  name             where                  notes
 234     tgkill           sched/sigcall.c
 257     openat           fs/open.c
 258     mkdirat          fs/namei.c
+259     mknodat          fs/namei.c             a file, or a device, root's; no fifos
 260     fchownat         fs/open.c
 262     newfstatat       fs/stat.c
 263     unlinkat         fs/namei.c
