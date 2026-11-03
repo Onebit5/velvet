@@ -19,8 +19,10 @@ libc and a toolchain belong to whatever system is built on a release of it.
 
 what is in here: the boot protocol, which says what a loader leaves the kernel; physical and
 virtual memory, with demand paging and copy on write; threads, processes, signals and
-an init; smp with a scheduler on every core; fat32, and ext4 with extents and a
-journal; ahci, e1000, ps/2, the console and the serial line; and a tcp/ip stack. there is
+an init; smp with a scheduler on every core; a root in memory made of the archive the
+loader hands over, and mounts on it, moved and pivoted; fat32, and ext4 with extents and
+a journal; ahci, with the drives and their partitions as block devices, e1000, ps/2, the
+console and the serial line; and a tcp/ip stack, with an address a program sets. there is
 no shell in it: what the kernel has to say about itself is in `/proc` and the kernel log,
 for a program to read.
 
@@ -63,17 +65,18 @@ make lint            # the style guide, checked (whole tree, or FILES=fs/ext4.c)
 make                 # the bootable disk image, velvet.img, with philemon fetched to write it
 make run             # boot it in qemu (CPUS=4, MEM=2G)
 make test            # the host test suites and the checkers (no qemu needed)
-make boottest        # boot it, power it off, and check the disk it ran on
-make kselftest       # run the selftests in ring 3, as guest (TARGETS=sched for one subsystem)
+make boottest        # boot it, install it on a blank drive, check its root, boot the copy
+make kselftest       # run the selftests in ring 3, as guest or as root (TARGETS=sched for one)
 make kernelrelease   # print the version
 ```
 
 `make run` gives you a qemu window *and* a serial console in your terminal, and since com1 is wired into the input queue, you can type at either one. the kernel cannot tell the difference.
 
-the image this tree builds carries no programs but its selftests and an `/init` that runs
-them, so what you get is a question: which selftests to run. name some, or `all`, and it
-runs them as guest and powers off; `none` powers off at once. a machine with programs on
-it is a system built on this kernel.
+the image this tree builds carries no programs but its selftests, a checker, and an `/init`
+that mounts the disk, moves into it and runs them, so what you get is a question: which
+selftests to run. name some, or `all`, and it runs them, as guest unless only root may, and
+powers off; `none` powers off at once. a machine with programs on it is a system built on
+this kernel.
 
 another tree builds the kernel with `make -C path/to/velvet BINDIR=... OBJROOT=...
 kernel tools`; [docs/building.rst](docs/building.rst) says what each of those is

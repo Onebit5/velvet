@@ -48,35 +48,14 @@ to programs by people who have never heard of this kernel, and since
 0.4.5 that interface is this kernel's: the system calls every x86_64
 program and libc already makes, numbered and shaped the way they expect,
 the signals and the frame a handler is entered on, errno, the stack exec
-leaves, and floating point in ring 3. what is left of the series is the
-rest of what such a program takes for granted: a root it can mount
-things under, terminals, threads, a `/proc`, a loader, and at the end
-somebody else's programs run unmodified. the reason is the one every
-checker in this project rests on, an outside answer: the same static
-binary run on both machines says, call by call, where this kernel
-differs.
-
-**0.4.6 a root of its own, and what a client, an installer and a checker
-need.** the kernel mounts the disk at `/` itself and lays the ramdisk
-under `/boot`, and that is a system's decision. the archive the loader
-hands over becomes the root instead, a filesystem in memory a program may
-write, with `/dev` on it filled in by the kernel, and `/init` mounts the
-disk and moves into it with `pivot_root`. `mount`, `umount2`,
-`pivot_root`, `chroot`, `statfs` and `mknod` arrive with it, and the
-drives appear in `/dev` as block devices, the drive and each partition,
-read and written by sector, root's. that is also what an installer
-needs, a drive with no filesystem on it yet, and what a checker needs,
-the partition under a mounted filesystem, with what the cache holds for
-it written out first. since 0.4.3 the machine boots with no address, and
-nothing can give it one: a dhcp client needs the interface ioctls that
-set the address, the netmask and the route, root's, and a datagram to
-255.255.255.255 that leaves as an ethernet broadcast whether or not there
-is an address to send it from, since its first message goes out before
-there is one. *ends when an `/init` in ring 3 mounts the disk and pivots
-into it, a dhcp client leases an address from qemu's server and pings
-the router with it, a program copies the medium onto a blank drive that
-then boots on its own, and another checks the filesystem at `/` and
-finds what the host's checker finds.*
+leaves, and floating point in ring 3, and since 0.4.6 a root of its own
+to mount things under and the drives and the network a client, an
+installer and a checker need. what is left of the series is the rest of
+what such a program takes for granted: terminals, threads, a `/proc`, a
+loader, and at the end somebody else's programs run unmodified. the
+reason is the one every checker in this project rests on, an outside
+answer: the same static binary run on both machines says, call by call,
+where this kernel differs.
 
 **0.4.7 a terminal, the way linux asks for one.** 0.4.5's terminals
 answer termios through `ioctl`, with sessions, a controlling terminal
@@ -86,7 +65,10 @@ that gets its terminal by opening it, and `SIGHUP` when the terminal
 goes away. and then the layer this machine has always been missing: a
 pty, a terminal with nothing behind it but another program. a pty is
 what `script` and a multiplexer are, and it is the thing standing
-between this machine and anything remote.
+between this machine and anything remote. the fifo goes with it: `mknod`
+makes every node but that one, since a named pipe is only one when
+opening it waits for the other end, which is the same wait a pty's two
+sides make.
 
 **0.4.8 threads the way linux makes them.** `clone`, with the flags a
 pthread library passes (one address space, one descriptor table, one set

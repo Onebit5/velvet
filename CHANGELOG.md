@@ -15,6 +15,68 @@ a kernel that booted.
 
 ---
 
+- **0.4.6**: a root of its own. **the archive is the root.** the kernel
+  mounted the disk at `/` itself, the first partition it found with a
+  filesystem and the next at `/work`, and hung the archive the loader
+  handed over at `/boot`, read-only, with the names the disk lacked looked
+  for in it too. which disk is a system's is that system's to say, and a
+  root of read-only memory is one nothing can be mounted on. the archive
+  is now unpacked into ramfs, a filesystem kept in memory, which is the
+  root, with `/dev` on it, and the kernel mounts nothing else. `mount`,
+  `umount2`, `statfs`, `pivot_root`, `chroot` and `mknod` arrive with it:
+  ext2, ext3 and ext4, vfat, ramfs or tmpfs, /proc and /dev mount where a
+  program says, `MS_MOVE` moves a mount with what stands on it, and the
+  namespace is a table of mounts whose moves rewrite every path a process
+  holds, so what it named before it names after. the kernel's own `/init`
+  does what a system's does first: mounts `/proc` and the disk, moves
+  `/dev` and `/proc` onto it, pivots into it with the archive going to
+  `/boot`, and mounts the work filesystem. a node naming a device by its
+  number opens that device wherever it is, on ext4 or in memory.
+
+  **the drives, by the byte.** the sata driver gives every drive its own
+  port and command list, so reaching another drive is naming it, and one
+  block cache serves every drive, a block known by its drive as well as
+  its number. the drives and the partitions their tables name are block
+  devices in `/dev`, `sda` and `sda1`, root's, read and written by the
+  byte through that cache, so a program and a filesystem on one drive
+  never hold two copies of a block. the selftests of what only root may
+  do go on the medium so only root may run them, and `/init` runs those
+  as root.
+
+  **an address a program sets.** the interface starts down, and the
+  ioctls every program asks a socket bring it up and give it an address,
+  a netmask and a route, root's to set and anyone's to read. a datagram
+  to 255.255.255.255 leaves as an ethernet broadcast from no address at
+  all, once the socket has said `SO_BROADCAST`, which is how a dhcp
+  client's first message goes out, and a ping socket lets a program ask
+  whether the router is there. a selftest leases an address from qemu's
+  dhcp server, sets it, pings the router from it, and takes it down
+  again.
+
+  **what it found on the way.** asking a drive its name switched the
+  controller to that drive without the disk's lock, and handed back the
+  buffer the switch back rewrote. a program was named after the first
+  fifteen characters of its path, so everything under one long directory
+  had that directory's name. a read went on to the end, and `pread`
+  reached, only a regular file, not a drive or a directory. a file on a
+  disk had a device number no device had. and `sync` asked whether
+  anything was mounted before it wrote what the cache held, which a drive
+  written by the byte has with nothing mounted at all. and the
+  selftests and `/init` were built for whatever cpu gcc assumed, which
+  for the gcc in ubuntu's amd64v3 archive is one with avx2, and the
+  machine qemu boots has none: they are built for the kernel's, any
+  x86_64, and the image boots with philemon 1.0.1, whose 64-bit half
+  is built for it too.
+
+  **the end of it** is the boot test: the machine copies its medium onto
+  a blank drive by the byte and checks the filesystem at `/` with the
+  same checker the host has, built for the machine, whose report has to
+  be the host's report on that partition after shutdown, free counts and
+  all; then the drive it installed boots by itself. 43 selftests pass, on
+  two cores and on four. **the roadmap** has the fifo with the ptys in
+  0.4.7, since a named pipe is only one when opening it waits for the
+  other end.
+
 - **0.4.5**: the interface programs already speak. **every x86_64
   program's system calls.** a program for this kernel had to be written
   for it: its own call numbers, -1 for every error, an environment the
