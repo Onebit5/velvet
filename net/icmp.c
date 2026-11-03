@@ -2,7 +2,8 @@
 /*
  * net/icmp.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * icmp, which for this machine is entirely ping.
+ * icmp, which for this machine is entirely ping: answering it, and a
+ * program's ping socket asking it.
  */
 
 #include "icmp.h"
@@ -28,6 +29,19 @@ bool icmp_parse_echo(const uint8_t *p, size_t len, struct icmp_echo *out)
         return false;
     }
 
+    out->type = p[0];
+    out->id   = get16be(p + 4);
+    out->seq  = get16be(p + 6);
+    out->payload_at  = ICMP_HEADER_LEN;
+    out->payload_len = len - ICMP_HEADER_LEN;
+    return true;
+}
+
+bool icmp_parse_request(const uint8_t *p, size_t len, struct icmp_echo *out)
+{
+    if (len < ICMP_HEADER_LEN || p[0] != ICMP_ECHO_REQUEST || p[1] != 0) {
+        return false;
+    }
     out->type = p[0];
     out->id   = get16be(p + 4);
     out->seq  = get16be(p + 6);

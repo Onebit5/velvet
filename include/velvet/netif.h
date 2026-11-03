@@ -33,7 +33,27 @@
  * what this machine is on the wire, and where whatever is not on it goes.
  * a router of 0 is none: only this wire can be reached
  */
-bool net_up(ipv4 address, ipv4 netmask, ipv4 router);
+/* whether there is a card at all */
+bool net_present(void);
+
+/* the interface up or down: false with no card to bring up */
+bool net_set_up(bool b_up);
+
+/* its address and netmask, 0 for none, and the router for anywhere else */
+void net_set_address(ipv4 u_ip, ipv4 u_mask);
+void net_set_router(ipv4 u_router);
+
+/* every machine on the wire: 255.255.255.255, or this network's own */
+bool net_is_broadcast(ipv4 u_to);
+
+/* whether a datagram for u_to has anywhere to go */
+bool net_reachable(ipv4 u_to);
+
+/*
+ * a socket's ioctl about the interface or the route: SIOCGIFADDR and the
+ * rest, the ones that set something root's. 0, or minus an errno
+ */
+int64_t net_dev_ioctl(uint32_t u_cmd, uint64_t u_arg);
 bool net_is_up(void);
 
 ipv4 net_address(void);
@@ -81,6 +101,13 @@ size_t net_socket_pending(int i_owner, int i_handle);
 
 /* handles are offset by TCP_HANDLE_BASE so that one number space serves both kinds. */
 #define TCP_HANDLE_BASE 64
+
+/*
+ * a ping socket, known by the identifier its echo requests carry: its
+ * handle, which every net_socket_ call below takes, or -1 for one in use
+ */
+#define PING_HANDLE_BASE 32
+int  net_ping_open(int i_owner, uint16_t u_id);
 
 int  net_tcp_open(int owner, ipv4 to, uint16_t port);
 int  net_tcp_serve(int owner, uint16_t port);

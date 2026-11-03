@@ -41,6 +41,8 @@
 struct sock {
     int i_owner;
     int i_type;                 /* SOCK_STREAM or SOCK_DGRAM */
+    bool b_ping;                /* a datagram socket of echo requests */
+    bool b_broadcast;           /* SO_BROADCAST: it may send to everybody */
     int i_handle;               /* the stack's, or -1 for none yet */
     bool b_listening;
     bool b_shut_read;
@@ -154,18 +156,26 @@ static int64_t write_addr(uint64_t u_addr, uint64_t u_len, ipv4 u_ip,
     return 0;
 }
 
-/* a datagram socket on a port: the one asked for, or a free one for 0 */
+/* a datagram socket's port, or a ping socket's identifier */
+static int open_port(const struct sock *p_sock, uint16_t u_port)
+{
+    return p_sock->b_ping ? net_ping_open(p_sock->i_owner, u_port)
+                          : net_socket_open(p_sock->i_owner, u_port);
+}
+
+/*
+ * a datagram socket on a port: the one asked for, or a free one for 0.
+ * a port is the machine's whether or not the interface is up, the way an
+ * address of 0 is, so it may be bound before there is a network at all
+ */
 static int64_t bind_port(struct sock *p_sock, uint16_t u_port)
 {
     if (p_sock->i_type != SOCK_DGRAM) {
         p_sock->u_port = u_port;
         return 0;
     }
-    if (!net_is_up()) {
-        return -ENETDOWN;
-    }
     if (u_port != 0) {
-        int i_handle = net_socket_open(p_sock->i_owner, u_port);
+        int i_handle = open_port(p_sock, u_port);
         if (i_handle < 0) {
             return -EADDRINUSE;
         }
@@ -174,7 +184,7 @@ static int64_t bind_port(struct sock *p_sock, uint16_t u_port)
         return 0;
     }
     for (uint32_t u_try = EPHEMERAL_FIRST; u_try <= EPHEMERAL_LAST; u_try++) {
-        int i_handle = net_socket_open(p_sock->i_owner, (uint16_t)u_try);
+        int i_handle = open_port(p_sock, (uint16_t)u_try);
         if (i_handle >= 0) {
             p_sock->i_handle = i_handle;
             p_sock->u_port = (uint16_t)u_try;
@@ -191,6 +201,13 @@ static int64_t send_datagram(struct file *p_file, struct sock *p_sock,
 {
     if (sz_len > SOCKET_DATAGRAM) {
         return -EMSGSIZE;
+    }
+    /* a datagram for everybody is sent only by a socket that said it would */
+    if (net_is_broadcast(u_to) && !p_sock->b_broadcast) {
+        return -EACCES;
+    }
+    if (!net_reachable(u_to)) {
+        return -ENETUNREACH;
     }
     if (p_sock->i_handle < 0) {
         int64_t i_why = bind_port(p_sock, 0);
@@ -366,10 +383,17 @@ static uint32_t sock_poll(struct file *p_file)
     }
 }
 
+/* the interface's and the route's, which any socket may be asked */
+#define SIOC_FIRST 0x8900
+#define SIOC_LAST  0x89ff
+
 static int64_t sock_ioctl(struct file *p_file, uint32_t u_cmd,
                           uint64_t u_arg)
 {
     struct sock *p_sock = p_file->p_private;
+    if (u_cmd >= SIOC_FIRST && u_cmd <= SIOC_LAST) {
+        return net_dev_ioctl(u_cmd, u_arg);
+    }
     if (u_cmd != FIONREAD || p_sock->i_type != SOCK_STREAM) {
         return -ENOTTY;
     }
@@ -403,8 +427,8 @@ static const struct file_operations sock_ops = {
 };
 
 /* a new socket file, installed with its flags: its descriptor */
-static int64_t sock_install(int i_type, int i_handle, int i_owner,
-                            int i_flags)
+static int64_t sock_install(int i_type, bool b_ping, int i_handle,
+                            int i_owner, int i_flags)
 {
     struct sock *p_sock = kmalloc(sizeof *p_sock);
     if (p_sock == NULL) {
@@ -416,6 +440,7 @@ static int64_t sock_install(int i_type, int i_handle, int i_owner,
                       : __atomic_add_fetch(&s_i_next_owner, 1,
                                            __ATOMIC_RELAXED);
     p_sock->i_type = i_type;
+    p_sock->b_ping = b_ping;
     p_sock->i_handle = i_handle;
 
     struct file *p_file = file_alloc(&sock_ops, FILE_READ | FILE_WRITE,
@@ -438,15 +463,20 @@ int64_t sys_socket(int i_family, int i_type, int i_protocol)
     if (i_type & ~(SOCK_TYPE_MASK | SOCK_NONBLOCK | SOCK_CLOEXEC)) {
         return -EINVAL;
     }
+    /*
+     * a datagram socket of icmp is a ping socket: echo requests out and
+     * their replies back, for anyone, with no way to send anything else
+     */
+    bool b_ping = i_kind == SOCK_DGRAM && i_protocol == IPPROTO_ICMP;
     if ((i_kind == SOCK_STREAM && i_protocol != 0 && i_protocol != IPPROTO_TCP)
         || (i_kind == SOCK_DGRAM && i_protocol != 0
-            && i_protocol != IPPROTO_UDP)) {
+            && i_protocol != IPPROTO_UDP && !b_ping)) {
         return -EPROTONOSUPPORT;
     }
     if (i_kind != SOCK_STREAM && i_kind != SOCK_DGRAM) {
         return -ESOCKTNOSUPPORT;
     }
-    return sock_install(i_kind, -1, 0, i_type);
+    return sock_install(i_kind, b_ping, -1, 0, i_type);
 }
 
 int64_t sys_bind(int i_fd, uint64_t u_addr, uint32_t u_len)
@@ -545,7 +575,8 @@ int64_t sys_accept4(int i_fd, uint64_t u_addr, uint64_t u_len, int i_flags)
                          &u_peer, &u_peer_port);
             net_tcp_give(p_sock->i_owner, i_conn, i_owner);
             p_sock->i_handle = net_tcp_serve(p_sock->i_owner, p_sock->u_port);
-            i_result = sock_install(SOCK_STREAM, i_conn, i_owner, i_flags);
+            i_result = sock_install(SOCK_STREAM, false, i_conn, i_owner,
+                                    i_flags);
             if (i_result < 0) {
                 net_tcp_shut(i_owner, i_conn);
                 break;
@@ -587,7 +618,7 @@ int64_t sys_connect(int i_fd, uint64_t u_addr, uint32_t u_len)
     i_why = read_addr(u_addr, u_len, &u_ip, &u_port);
     if (i_why == 0) {
         i_why = (p_sock->b_listening) ? -EISCONN
-              : (!net_is_up()) ? -ENETUNREACH
+              : (!net_reachable(u_ip)) ? -ENETUNREACH
               : 0;
     }
     if (i_why == 0 && p_sock->i_type == SOCK_DGRAM) {
@@ -920,6 +951,14 @@ int64_t sys_setsockopt(int i_fd, int i_level, int i_name, uint64_t u_value,
                                       : &p_sock->u_sndtimeo_ms) = ms_of(&tv);
             i_why = 0;
         }
+    } else if (i_level == SOL_SOCKET && i_name == SO_BROADCAST) {
+        int32_t i_on = 0;
+        i_why = (u_len < sizeof i_on) ? -EINVAL
+              : (copy_from_user(&i_on, u_value, sizeof i_on) != 0) ? -EFAULT
+              : 0;
+        if (i_why == 0) {
+            p_sock->b_broadcast = i_on != 0;
+        }
     } else if ((i_level == SOL_SOCKET
                 && (i_name == SO_REUSEADDR || i_name == SO_SNDBUF
                     || i_name == SO_RCVBUF))
@@ -952,6 +991,8 @@ int64_t sys_getsockopt(int i_fd, int i_level, int i_name, uint64_t u_value,
         i_value = TCP_SEND_BUF;
     } else if (i_name == SO_RCVBUF) {
         i_value = TCP_RECV_BUF;
+    } else if (i_name == SO_BROADCAST) {
+        i_value = p_sock->b_broadcast ? 1 : 0;
     } else if (i_name != SO_REUSEADDR) {
         i_why = -ENOPROTOOPT;
     }

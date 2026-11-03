@@ -22,6 +22,12 @@
 
 /* NOTE: everything this file *calls* is checked against packets built from the rfcs. */
 
+/*
+ * up is the interface's own state, which a program sets: an interface
+ * that is down neither sends nor hears. an address of 0 is an interface
+ * with none yet, which can still broadcast and must still hear what is
+ * sent to the address it is about to be given
+ */
 static bool up;
 static ipv4 my_ip, my_mask;
 static ipv4 my_router;
@@ -51,19 +57,61 @@ const struct mac *net_mac(void)
 {
     return e1000_mac();
 }
-bool net_up(ipv4 address, ipv4 netmask, ipv4 router)
+bool net_present(void)
+{
+    return e1000_present();
+}
+
+bool net_set_up(bool b_up)
 {
     if (!e1000_present()) {
         return false;
     }
     uint64_t flags = spin_lock_irq(&net_lock);
-    my_ip = address;
-    my_mask = netmask;
-    my_router = router;
+    up = b_up;
     arp_cache_reset(&cache);
-    up = true;
     spin_unlock_irq(&net_lock, flags);
     return true;
+}
+
+void net_set_address(ipv4 u_ip, ipv4 u_mask)
+{
+    uint64_t flags = spin_lock_irq(&net_lock);
+    my_ip = u_ip;
+    my_mask = u_mask;
+    arp_cache_reset(&cache);
+    spin_unlock_irq(&net_lock, flags);
+}
+
+void net_set_router(ipv4 u_router)
+{
+    uint64_t flags = spin_lock_irq(&net_lock);
+    my_router = u_router;
+    spin_unlock_irq(&net_lock, flags);
+}
+
+/* every machine on the wire: the one broadcast, or this network's own */
+bool net_is_broadcast(ipv4 u_to)
+{
+    return u_to == 0xffffffff
+           || (my_ip != 0 && my_mask != 0 && my_mask != 0xffffffff
+               && u_to == (my_ip | ~my_mask));
+}
+
+/*
+ * the machine a datagram for u_to is handed to on the wire: u_to itself
+ * on this network, the router for anywhere else, or 0 for nowhere. with
+ * no address there is no network to be on and nothing is anywhere
+ */
+static ipv4 hop_for(ipv4 u_to)
+{
+    return (my_ip == 0) ? 0 : ip_next_hop(u_to, my_ip, my_mask, my_router);
+}
+
+bool net_reachable(ipv4 u_to)
+{
+    return up && (net_is_broadcast(u_to) || (my_ip != 0 && u_to == my_ip)
+                  || hop_for(u_to) != 0);
 }
 
 /* the receive path, needed by the send path, see the loopback note in net_send_ip. */
@@ -99,7 +147,7 @@ static bool send_frame(const struct mac *to, uint16_t type,
 
 bool net_arp_request(ipv4 who)
 {
-    if (!up) {
+    if (!up || my_ip == 0) {
         return false;
     }
     uint8_t p[ARP_PACKET_LEN];
@@ -420,7 +468,7 @@ bool net_send_ip(ipv4 to, uint8_t protocol, const void *payload, size_t len)
     }
 
     /* a datagram addressed to this machine's own address must never reach the wire. */
-    if (to == my_ip) {
+    if (my_ip != 0 && to == my_ip) {
         /*
          * on the stack rather than static, unlike every other buffer in
          * this file, and for one reason: this path *re-enters itself*.
@@ -444,8 +492,22 @@ bool net_send_ip(ipv4 to, uint8_t protocol, const void *payload, size_t len)
         return true;
     }
 
+    /*
+     * one for every machine on the wire goes to all of them, with no one
+     * to ask where they are, and from whatever address this has, none
+     * included: the first a dhcp client sends goes out before it has one
+     */
+    if (net_is_broadcast(to)) {
+        static uint8_t s_arr_all[ETHER_MTU];
+        size_t sz_at = ip_build(s_arr_all, my_ip, to, protocol, (uint16_t)len,
+                                (uint16_t)(pit_uptime_ms() & 0xffff));
+        memcpy(s_arr_all + sz_at, payload, len);
+        return send_frame(&MAC_BROADCAST, ETHERTYPE_IPV4, s_arr_all,
+                          sz_at + len);
+    }
+
     /* who to hand it to. an address on this wire goes straight to that machine. */
-    ipv4 hop = ip_next_hop(to, my_ip, my_mask, my_router);
+    ipv4 hop = hop_for(to);
     if (hop == 0) {
         return false;
     }
@@ -488,6 +550,31 @@ bool net_send_ip(ipv4 to, uint8_t protocol, const void *payload, size_t len)
 
 static struct socket_table sockets;
 
+/*
+ * and the ping sockets, an echo request out and its replies back, in a
+ * table of their own, known by the identifier the requests carry the
+ * way a datagram is known by its port. their handles are offset, the
+ * way a connection's are, so every call below serves both
+ */
+static struct socket_table pings;
+
+static struct socket_table *table_of(int *p_handle)
+{
+    if (*p_handle >= PING_HANDLE_BASE) {
+        *p_handle -= PING_HANDLE_BASE;
+        return &pings;
+    }
+    return &sockets;
+}
+
+int net_ping_open(int i_owner, uint16_t u_id)
+{
+    uint64_t u_flags = spin_lock_irq(&net_lock);
+    int i_handle = socket_open(&pings, i_owner, u_id);
+    spin_unlock_irq(&net_lock, u_flags);
+    return (i_handle < 0) ? i_handle : PING_HANDLE_BASE + i_handle;
+}
+
 int net_socket_open(int owner, uint16_t port)
 {
     uint64_t flags = spin_lock_irq(&net_lock);
@@ -498,8 +585,9 @@ int net_socket_open(int owner, uint16_t port)
 
 bool net_socket_close(int owner, int handle)
 {
+    struct socket_table *p_table = table_of(&handle);
     uint64_t flags = spin_lock_irq(&net_lock);
-    bool ok = socket_close(&sockets, owner, handle);
+    bool ok = socket_close(p_table, owner, handle);
     spin_unlock_irq(&net_lock, flags);
     return ok;
 }
@@ -507,16 +595,18 @@ bool net_socket_close(int owner, int handle)
 int64_t net_socket_take(int owner, int handle, ipv4 *from,
                         uint16_t *from_port, void *out, size_t max)
 {
+    struct socket_table *p_table = table_of(&handle);
     uint64_t flags = spin_lock_irq(&net_lock);
-    int64_t n = socket_take(&sockets, owner, handle, from, from_port, out, max);
+    int64_t n = socket_take(p_table, owner, handle, from, from_port, out, max);
     spin_unlock_irq(&net_lock, flags);
     return n;
 }
 
 size_t net_socket_pending(int i_owner, int i_handle)
 {
+    struct socket_table *p_table = table_of(&i_handle);
     uint64_t u_flags = spin_lock_irq(&net_lock);
-    size_t sz_count = socket_waiting(&sockets, i_owner, i_handle);
+    size_t sz_count = socket_waiting(p_table, i_owner, i_handle);
     spin_unlock_irq(&net_lock, u_flags);
     return sz_count;
 }
@@ -525,9 +615,11 @@ bool net_socket_send(int owner, int handle, ipv4 to, uint16_t port,
                      const void *data, size_t len)
 {
     uint16_t mine;
+    bool b_ping = handle >= PING_HANDLE_BASE;
+    struct socket_table *p_table = table_of(&handle);
 
     uint64_t flags = spin_lock_irq(&net_lock);
-    bool ok = socket_port(&sockets, owner, handle, &mine);
+    bool ok = socket_port(p_table, owner, handle, &mine);
     spin_unlock_irq(&net_lock, flags);
 
     if (!ok || len + UDP_HEADER_LEN + IP_HEADER_MIN > ETHER_MTU) {
@@ -536,6 +628,21 @@ bool net_socket_send(int owner, int handle, ipv4 to, uint16_t port,
 
     /* built outside the lock. */
     static uint8_t datagram[ETHER_MTU];
+    if (b_ping) {
+        /*
+         * the caller's echo request, with this socket's identifier in it
+         * whatever the caller put there, and the checksum made over what
+         * is actually sent
+         */
+        struct icmp_echo e;
+        if (!icmp_parse_request(data, len, &e)) {
+            return false;
+        }
+        size_t n = icmp_build_echo(datagram, ICMP_ECHO_REQUEST, mine, e.seq,
+                                   (const uint8_t *)data + e.payload_at,
+                                   e.payload_len);
+        return net_send_ip(to, IP_PROTO_ICMP, datagram, n);
+    }
     size_t n = udp_build(datagram, my_ip, to, mine, port, data, len);
 
     return net_send_ip(to, IP_PROTO_UDP, datagram, n);
@@ -554,7 +661,7 @@ static void got_arp(const uint8_t *p, size_t len)
     arp_learn(&cache, a.sender_ip, &a.sender_mac, pit_uptime_ms());
     spin_unlock_irq(&net_lock, flags);
 
-    if (a.op == ARP_REQUEST && up && a.target_ip == my_ip) {
+    if (a.op == ARP_REQUEST && my_ip != 0 && a.target_ip == my_ip) {
         uint8_t reply[ARP_PACKET_LEN];
         arp_build(reply, ARP_REPLY, e1000_mac(), my_ip,
                   &a.sender_mac, a.sender_ip);
@@ -571,9 +678,15 @@ static void got_icmp(const struct ip_header *ih, const uint8_t *p, size_t len)
 
     /*
      * a request is answered, with the payload copied straight back. a
-     * reply answers nothing the kernel asked, since it sends no echoes
-     * of its own, and goes no further
+     * reply is the answer to a ping socket's request, whole, header and
+     * all, to whichever one sent it, by the identifier it carries
      */
+    if (e.type == ICMP_ECHO_REPLY) {
+        uint64_t u_flags = spin_lock_irq(&net_lock);
+        socket_deliver(&pings, e.id, ih->from, 0, p, len);
+        spin_unlock_irq(&net_lock, u_flags);
+        return;
+    }
     if (e.type != ICMP_ECHO_REQUEST) {
         return;
     }
@@ -593,8 +706,12 @@ static void got_ip(const uint8_t *p, size_t len)
         return;
     }
 
-    /* not for this machine. */
-    if (up && ih.to != my_ip && ih.to != 0xffffffff) {
+    /*
+     * not for this machine. one with no address yet takes what is sent
+     * to it, since a server answers a dhcp client at the address it is
+     * offering, before the client has said it will take it
+     */
+    if (my_ip != 0 && ih.to != my_ip && !net_is_broadcast(ih.to)) {
         return;
     }
 
@@ -632,6 +749,10 @@ static void got_ip(const uint8_t *p, size_t len)
 
 void net_receive(const uint8_t *frame, size_t len)
 {
+    /* an interface that is down hears nothing */
+    if (!up) {
+        return;
+    }
     struct ether_header eh;
     if (!ether_parse(frame, len, &eh)) {
         return;

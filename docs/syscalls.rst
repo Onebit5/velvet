@@ -53,7 +53,9 @@ number  name             where                  notes
 13      rt_sigaction     sched/sigcall.c
 14      rt_sigprocmask   sched/sigcall.c
 15      rt_sigreturn     arch/x86_64/syscall.c  from the frame a handler was entered with
-16      ioctl            fs/fcntl.c             terminals, sockets, drives, ext4 resize
+16      ioctl            fs/fcntl.c             terminals, sockets and the
+                                                interface under them, drives,
+                                                ext4 resize
 17      pread64          fs/read_write.c
 18      pwrite64         fs/read_write.c
 19      readv            fs/read_write.c
@@ -72,7 +74,8 @@ number  name             where                  notes
 37      alarm            sched/sigcall.c
 38      setitimer        sched/sigcall.c        ITIMER_REAL
 39      getpid           sched/sys.c
-41      socket           net/sockets.c          AF_INET, stream and datagram
+41      socket           net/sockets.c          AF_INET, stream and datagram,
+                                                and ping, datagram of icmp
 42      connect          net/sockets.c
 43      accept           arch/x86_64/syscall.c  accept4 with no flags
 44      sendto           net/sockets.c

@@ -291,6 +291,21 @@ int main(void)
           "so changing a payload byte fails it");
 
     /*
+     * what a program hands its ping socket: a request, whatever its
+     * checksum, since the one sent is made over what is sent
+     */
+    CHECK(icmp_parse_request(echo, elen, &ie) && ie.seq == 1
+          && ie.payload_len == strlen(payload),
+          "a ping socket takes a request with any checksum, which it makes "
+          "again itself");
+    echo[0] = ICMP_ECHO_REPLY;
+    CHECK(!icmp_parse_request(echo, elen, &ie),
+          "and nothing that is not a request");
+    echo[0] = ICMP_ECHO_REQUEST;
+    CHECK(!icmp_parse_request(echo, ICMP_HEADER_LEN - 1, &ie),
+          "nor one too short to be one");
+
+    /*
      * the pseudo-header is the interesting part: twelve bytes that are
      * never sent, holding the addresses the datagram travelled between.
      * a stack that checksums only the datagram produces something every

@@ -88,7 +88,10 @@ drive's first filesystem, moves ``/dev`` and ``/proc`` onto it and makes
 it the root with ``pivot_root``, the archive it came from going to
 ``/boot``, and mounts the work filesystem, which is smaller than its
 partition, at ``/work``. the tests are then under ``/boot/selftests``,
-and with no disk they stay where they were, under ``/selftests``.
+and with no disk they stay where they were, under ``/selftests``. it has
+an e1000 too, on qemu's own network, with its dhcp server and its router
+at 10.0.2.2, and the interface is down and has no address until a test
+says otherwise; one that brings it up puts it back down.
 
 running a subset of selftests
 -----------------------------

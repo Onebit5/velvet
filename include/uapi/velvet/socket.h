@@ -51,6 +51,12 @@
 #define SHUT_WR   1
 #define SHUT_RDWR 2
 
+/* an address of any family, the sixteen bytes every one fits in */
+struct sockaddr {
+    uint16_t sa_family;
+    uint8_t  sa_data[14];
+};
+
 /* an internet address. the port and the address are in network order */
 struct sockaddr_in {
     uint16_t sin_family;

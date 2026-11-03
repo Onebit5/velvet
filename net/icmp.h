@@ -27,6 +27,13 @@ struct icmp_echo {
 
 bool icmp_parse_echo(const uint8_t *p, size_t len, struct icmp_echo *out);
 
+/*
+ * an echo request a program hands its ping socket: the type, the code
+ * and room for the header, and no checksum, which is the kernel's to make
+ * over what it actually sends
+ */
+bool icmp_parse_request(const uint8_t *p, size_t len, struct icmp_echo *out);
+
 size_t icmp_build_echo(uint8_t *p, uint8_t type, uint16_t id, uint16_t seq,
                        const void *payload, size_t payload_len);
 

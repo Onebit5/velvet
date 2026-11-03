@@ -61,9 +61,9 @@ the layers
    else is on the wire; anything not local has nowhere to go).
 
 ``icmp.c``
-   which for this machine is entirely ``ping``. an echo request and an
-   echo reply are the same eight-byte header with one number changed and
-   the payload copied back. it is the smallest possible round trip, so
+   which for this machine is entirely ``ping``, answered and asked. an echo
+   request and an echo reply are the same eight-byte header with one number
+   changed and the payload copied back. it is the smallest possible round trip, so
    when it works the card, arp, ip and the checksum are all working, and
    when it does not the fault is in one of four things rather than forty.
 
@@ -115,15 +115,36 @@ the layers
    two would want a routing table, and the roadmap is explicit that there
    is no routing here.
 
-the machine boots with no address and keeps none until it is given one.
-until then it says nothing on the wire, which is honest: there is no address
-to put in a packet, and every command that needs one says "the wire is not
-up". the kernel does not go and ask for one. finding out an address, and
-which name server to ask about names, and fetching anything once both are
-known, is a client's work, and a client is a program. the monitor's
-``ifconfig`` set one by hand until 0.4.4, when the monitor went, so until a
-program can hand the kernel what it found out, which the roadmap has next,
-the stack has no address at all and answers nothing on the wire.
+the machine boots with the interface down and no address, and the kernel
+does not go and ask for one. finding out an address, and which name server
+to ask about names, and fetching anything once both are known, is a
+client's work, and a client is a program. ``devinet.c`` is what it hands
+the kernel what it found through, the ioctls every program asks a socket:
+``SIOCSIFFLAGS`` brings the interface ``eth0`` up and down,
+``SIOCSIFADDR`` and ``SIOCSIFNETMASK`` give it an address and a netmask,
+an address taking the netmask its class gives it until one is set, and
+``SIOCADDRT`` and ``SIOCDELRT`` the one route there is, the default, to a
+router on that network. the ones that set something are root's; the ones
+that read, the flags, the address, the netmask, the broadcast, the
+hardware address, the index and the mtu, are anyone's.
+
+an interface that is down neither sends nor hears. one that is up with no
+address can still broadcast: a datagram to 255.255.255.255 leaves as an
+ethernet broadcast from 0.0.0.0, with nobody asked where everybody is,
+which is how a dhcp client's first message goes out before it has
+anything to send it from. a socket sends one only once ``SO_BROADCAST``
+says it will, and ``EACCES`` before, so a program does not shout at the
+whole wire by mistake. and an interface with no address takes what is
+sent to it as well as what is broadcast, since a server may answer a
+client at the address it is offering. with an address it takes only
+what is sent to that address, or to everybody.
+
+a ping socket is a datagram socket of icmp, ``SOCK_DGRAM`` with
+``IPPROTO_ICMP``, anyone's: what a program sends on it is an echo request,
+which goes out with the socket's own identifier in it and a checksum
+made over what is actually sent, and what it reads is the replies to it,
+header and all. it is what lets a program ask whether the router is
+there without a raw socket.
 
 the card
 --------
@@ -145,11 +166,20 @@ the netif interface
 ---------------------
 
 the card, and the state of the wire. frames arrive in a queue and leave
-through a send path, and the interface holds what it was told: its address,
-its netmask and its router.
+through a send path, and the interface holds what it was told: whether it
+is up, its address, its netmask and its router.
 
-``bool net_up(ipv4 address, ipv4 netmask, ipv4 router);``
-    what this machine is on the wire, and where whatever is not on it goes.
+``bool net_set_up(bool b_up);``
+    the interface up or down, false with no card to bring up.
+
+``void net_set_address(ipv4 u_ip, ipv4 u_mask);``
+    what this machine is on the wire, 0 for nothing yet.
+
+``bool net_reachable(ipv4 u_to);``
+    whether a datagram has anywhere to go: everybody, or a machine on this network, or the router for the rest.
+
+``int64_t net_dev_ioctl(uint32_t u_cmd, uint64_t u_arg);``
+    a socket asked about the interface or the route.
 
 ``ipv4 net_router(void);``
     where anything not on this wire is sent, 0 for nowhere.

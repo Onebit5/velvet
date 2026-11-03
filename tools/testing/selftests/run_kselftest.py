@@ -51,6 +51,7 @@ class Machine:
                "-smp", os.environ.get("CPUS", "2"), "-boot", "order=c",
                "-drive", "id=boot,file=%s,format=raw,if=none" % image,
                "-device", "ide-hd,drive=boot,bus=ide.0,bootindex=0",
+               "-netdev", "user,id=n0", "-device", "e1000,netdev=n0",
                "-display", "none", "-serial", "stdio", "-no-reboot"]
         if disk:
             cmd += ["-drive", "id=data,file=%s,format=raw,if=none" % disk,
