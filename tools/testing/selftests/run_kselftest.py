@@ -46,7 +46,7 @@ PANIC_LINES = re.compile(r"cpu exception|page fault at|double fault|"
 class Machine:
     """qemu with the serial port on a pipe, and what it has said so far."""
 
-    def __init__(self, image, log, disk=None):
+    def __init__(self, image, log, disk=None, blank=None):
         cmd = ["qemu-system-x86_64", "-M", "q35", "-m", "1G",
                "-smp", os.environ.get("CPUS", "2"), "-boot", "order=c",
                "-drive", "id=boot,file=%s,format=raw,if=none" % image,
@@ -56,6 +56,9 @@ class Machine:
         if disk:
             cmd += ["-drive", "id=data,file=%s,format=raw,if=none" % disk,
                     "-device", "ide-hd,drive=data,bus=ide.1"]
+        if blank:
+            cmd += ["-drive", "id=blank,file=%s,format=raw,if=none" % blank,
+                    "-device", "ide-hd,drive=blank,bus=ide.2"]
         self.out = bytearray()
         self.lock = threading.Lock()
         self.log = open(log, "wb")
@@ -156,13 +159,18 @@ def main(argv):
     if disk:
         copy = os.path.join(scratch, "disk.img")
         shutil.copyfile(disk, copy)
+    # and a drive with nothing on it, as big as the medium, for a test to
+    # copy the medium onto the way an installer would
+    blank = os.path.join(scratch, "blank.img")
+    with open(blank, "wb") as f:
+        f.truncate(os.path.getsize(image))
     try:
-        return run(image, tests, timeout, log, copy)
+        return run(image, tests, timeout, log, copy, blank)
     finally:
         shutil.rmtree(scratch)
 
 
-def run(image, tests, timeout, log, disk):
+def run(image, tests, timeout, log, disk, blank):
     print("TAP version 13")
     print("1..%d" % len(tests))
     print("# timeout set to %d" % timeout)
@@ -170,7 +178,7 @@ def run(image, tests, timeout, log, disk):
         print("# Totals: pass:0 fail:0")
         return 0
 
-    m = Machine(image, log, disk)
+    m = Machine(image, log, disk, blank)
     at = m.expect(QUESTION, 0, 120)
     gone = None
     if isinstance(at, int):

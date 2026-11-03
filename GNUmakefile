@@ -271,17 +271,26 @@ SELFTEST_BINS := $(addprefix $(BINDIR)/selftests/,$(SELFTESTS))
 # the tests of what only root may do. each goes on the medium so that only
 # root may run it, which is how /init knows to run it as root rather than
 # as its guest; every other test anyone may run
-SELFTEST_ROOT := fs/blockdev fs/mknod fs/mount fs/root net/dhcp
+SELFTEST_ROOT := fs/blockdev fs/fsck fs/install fs/mknod fs/mount fs/root \
+                 net/dhcp
 
 # the image's /init: asks which tests to run, runs each as a guest and
 # powers the machine off. built the way a test is, since it is a program
 # that sees the kernel only from where they do
 SELFTEST_INIT := $(BINDIR)/init
 
-# what goes on the medium: init, those tests and the directories they are
-# in, named one by one rather than the whole of bin/selftests/, so a
-# binary left behind by a test that has since gone does not ship
-SELFTEST_TAR := $(sort ./init ./selftests \
+# and the checker, tools/fsckext4.c, built for the machine as well as for
+# the host: the same program on both sides of a shutdown, so what it says
+# about the filesystem at / on the machine can be held against what it
+# says about that partition off it. it is a tool rather than a test, and
+# sits in bin/ on the medium, where /init does not look for tests
+MACHINE_FSCK := $(BINDIR)/bin/fsckext4
+
+# what goes on the medium: init, the checker, those tests and the
+# directories they are in, named one by one rather than the whole of
+# bin/selftests/, so a binary left behind by a test that has since gone
+# does not ship
+SELFTEST_TAR := $(sort ./init ./bin ./bin/fsckext4 ./selftests \
                   $(patsubst $(BINDIR)/%/,./%,$(dir $(SELFTEST_BINS))) \
                   $(patsubst $(BINDIR)/%,./%,$(SELFTEST_BINS)))
 
@@ -322,9 +331,19 @@ $(SELFTEST_INIT): $(SELFTEST_DIR)/init.c $(SELFTEST_DIR)/kselftest.h \
 	@mkdir -p $(@D)
 	$(MUSL_GCC) $(SELFTEST_CFLAGS) $(SELFTEST_LDFLAGS) $< -o $@
 
+# the checker reads the ext4 layout out of the kernel's header, which is
+# the format rather than the kernel, the way it does on the host
+$(MACHINE_FSCK): tools/fsckext4.c tools/fsck.c tools/fsck.h \
+                 include/velvet/ext4.h
+	@mkdir -p $(@D)
+	$(MUSL_GCC) -std=gnu11 -Wall -Wextra -O1 -g $(MACHINE_CPU) \
+		-DVELVET_HOSTED -Iinclude $(SELFTEST_LDFLAGS) \
+		tools/fsckext4.c tools/fsck.c -o $@
+
 # the makefile too, since what the archive is made from is written here,
 # and a change to that is a change make cannot otherwise see
-$(RAMDISK): $(SELFTEST_INIT) $(SELFTEST_BINS) $(SELFTEST_LIST) GNUmakefile
+$(RAMDISK): $(SELFTEST_INIT) $(MACHINE_FSCK) $(SELFTEST_BINS) \
+            $(SELFTEST_LIST) GNUmakefile
 	@mkdir -p $(@D)
 	@chmod 0755 $(SELFTEST_BINS)
 	@chmod 0700 $(addprefix $(BINDIR)/selftests/,$(SELFTEST_ROOT))

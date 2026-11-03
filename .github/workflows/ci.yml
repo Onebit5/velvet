@@ -64,13 +64,13 @@ jobs:
       - name: selftests
         run: make kselftest
 
-      - name: keep the boot image and the serial log
+      - name: keep the boot image and the serial logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: velvet-boot
           path: |
             velvet.img
-            bin/*-boottest.log
+            bin/*-boottest*.log
             bin/*-kselftest.log
           if-no-files-found: warn

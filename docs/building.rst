@@ -105,11 +105,12 @@ the targets
    the same command CI runs first, and `testing`_ is the full account.
 
 ``make boottest``
-   build the image, boot it headless, answer ``none``, let it power itself
-   off, and check the serial log for every step of both and the disk it ran
-   on for a checker's verdict. needs qemu. the serial log is
-   written to ``bin/*-boottest.log``, which is what CI uploads when the
-   run fails.
+   build the image, boot it headless, have it install itself onto a blank
+   drive and check its own root, let it power itself off, check the serial
+   log for every step of both and the disk it ran on for a checker's
+   verdict, and boot the drive it installed. needs qemu. the serial logs
+   are written to ``bin/*-boottest*.log``, which is what CI uploads when
+   the run fails.
 
 ``make fuzz``
    the parsers that read from the wire and from disks, fed random and

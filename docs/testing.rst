@@ -130,21 +130,29 @@ the one that needs a machine:
 
    make boottest
 
-it builds the image, boots it headless in qemu on a fresh two-partition
-disk, tells its ``/init`` over the serial port to run no selftests, and
-lets the machine power itself off, which is what ``none`` does. the
-serial log is left in ``bin/*-boottest.log``, and CI uploads it, with the
-boot image, when a run fails.
+it builds the image and boots it headless in qemu on a fresh
+two-partition disk, with a blank drive beside it, and tells its ``/init``
+over the serial port to run two selftests of root's: ``fs/install``,
+which copies the medium onto the blank drive by the byte, and
+``fs/fsck``, which checks the filesystem at / with the checker built for
+the machine. then it boots the drive the machine installed itself onto,
+with nothing else to start from, and tells that one ``none``, which runs
+no selftests and powers the machine off. the serial logs are left in
+``bin/*-boottest.log`` and ``bin/*-boottest-copy.log``, and CI uploads
+them, with the boot image, when a run fails.
 
 what it checks is what the kernel can show with no system on its medium,
 from its log: the boot itself, the memory map and the allocators, the
 page tables, the archive made the root, the disk mounted and moved into
 by ``/init`` and the work filesystem beside it, the journal started,
-``/init`` asking, and the shutdown. then that the machine powered off by
-itself rather than being stopped, and last, from the host, that both
-filesystems it ran on are clean by ``fsckext4`` and ``readext4.py``: a
-mount, a journal and an unmount that left anything behind would show
-there. it takes seconds, because the machine ends it. ring 3 is the
+``/init`` asking and installing, and the shutdown. then that the
+machine powered off by itself rather than being stopped, from the host
+that both filesystems it ran on are clean by ``fsckext4`` and
+``readext4.py``, a mount, a journal and an unmount that left anything
+behind would show there, and that the checker said on the machine, with
+the root mounted, what it says on the host with the machine down, down
+to the free blocks and inodes. last, that the drive it installed boots by
+itself, all the way to ``/init``, and comes down clean. it takes seconds, because the machine ends it. ring 3 is the
 other half of the machine: the selftests below check what the kernel
 promises it, and the programs a system ships are that system's to
 check.

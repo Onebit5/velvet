@@ -108,7 +108,12 @@ against.
 ``mkext4.c`` and ``mkfat.c`` are drivers rather than rewrites: they point
 ``mkfs.c``, ``fs/ext4.c`` and ``fs/fat32.c`` at a host file and a host
 directory, so the image a disk is built from is written by the same code the
-machine runs. ``fsckext4.c`` is the same shape for ``fsck.c``, the checker.
+machine runs. ``fsckext4.c`` is the same shape for ``fsck.c``, the checker,
+and it is built twice: for the host, and with musl for the machine, where
+it sits in ``bin/`` of the kernel's own image and reads a partition by the
+byte through /dev. it says, after the shape of the filesystem, how many
+blocks and inodes it found free from the bitmaps, so two of its reports
+on one filesystem that agree agree on more than its shape.
 
 ``mkfs.c`` is mke2fs in about the smallest form that produces something
 ``fs/ext4.c`` will mount and ``readext4.py``, written from the layout rather
@@ -150,12 +155,17 @@ the boot test
 -------------
 
 ``boottest.sh``
-   build the image, boot it headless in qemu, answer ``none`` over the
-   serial port and let the machine power itself off, then read the log for
-   every step of both and hand the disk it ran on to ``fsckext4`` and
-   ``readext4.py``. the medium carries no programs, so what it checks is
-   what the kernel can show by itself; ring 3 is checked by the selftests,
-   and a system's programs by that system. it is a shell script rather
-   than python because it is mostly qemu's own flags. the serial log
-   is left in ``bin/*-boottest.log``, and CI uploads it with the boot image
-   when a run fails. see `testing <../testing.rst>`_.
+   build the image, boot it headless in qemu with a blank drive beside its
+   disk, answer two root's selftests over the serial port, one copying the
+   medium onto the blank drive and one checking the filesystem at /, and
+   let the machine power itself off, then read the log for every step of
+   both, hand the disk it ran on to ``fsckext4`` and ``readext4.py``, and
+   hold the checker's report from the machine against its report from the
+   host. then boot the drive it installed with nothing else to start from,
+   answer ``none``, and check that too. the medium carries no programs but
+   the checker, so what it checks is what the kernel can show by itself;
+   ring 3 is checked by the selftests, and a system's programs by that
+   system. it is a shell script rather than python because it is mostly
+   qemu's own flags. the serial logs are left in ``bin/*-boottest*.log``,
+   and CI uploads them with the boot image when a run fails. see `testing
+   <../testing.rst>`_.

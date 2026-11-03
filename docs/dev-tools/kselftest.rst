@@ -91,7 +91,9 @@ partition, at ``/work``. the tests are then under ``/boot/selftests``,
 and with no disk they stay where they were, under ``/selftests``. it has
 an e1000 too, on qemu's own network, with its dhcp server and its router
 at 10.0.2.2, and the interface is down and has no address until a test
-says otherwise; one that brings it up puts it back down.
+says otherwise; one that brings it up puts it back down. and a third
+drive, blank and as big as the medium, for ``fs/install`` to copy the
+medium onto.
 
 running a subset of selftests
 -----------------------------

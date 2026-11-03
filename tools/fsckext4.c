@@ -86,6 +86,12 @@ int main(int argc, char **argv)
 
     printf("%s: %u blocks of %u, %u inodes, %u group(s)\n",
            path, r.blocks, r.block_size, r.inodes, r.groups);
+    /*
+     * the counts it found, from the bitmaps, rather than the ones the
+     * filesystem says: two checks of one filesystem that agree on these
+     * agree on more than its shape
+     */
+    printf("  %u blocks and %u inodes free\n", r.free_blocks, r.free_inodes);
 
     if (r.total_found == 0) {
         printf("  nothing wrong with it\n");
