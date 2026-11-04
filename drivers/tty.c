@@ -31,8 +31,34 @@
 /* how long a timed raw read sleeps between looks */
 #define TTY_SLICE_MS 10
 
+/* how much of a write is put through, and shown, under one hold of the lock */
+#define TTY_CHUNK 256
+
+struct tty;
+
+/*
+ * what a terminal sits between: where what is typed at it comes from,
+ * and where what it shows goes. the discipline in the middle is the same
+ * for every terminal, and these are all that make one a console's. all
+ * but wait are called with the lock held
+ */
+struct tty_end {
+    /* the next byte typed and not yet taken, or -1 for none */
+    int (*take)(struct tty *t);
+    /* every byte typed and not yet taken, thrown away */
+    void (*flush)(struct tty *t);
+    /*
+     * sleep until a byte may have been typed: true, or false when a
+     * signal for the caller ended the wait first
+     */
+    bool (*wait)(struct tty *t);
+    /* bytes shown, as the discipline left them */
+    void (*put)(struct tty *t, const char *p_bytes, size_t sz_len);
+};
+
 struct tty {
-    unsigned u_console;
+    const struct tty_end *p_end;
+    unsigned u_console;         /* for a console's, which one */
     struct termios termios;
 
     int i_pgrp;                 /* the group in front */
@@ -56,11 +82,14 @@ static struct spinlock tty_lock = SPINLOCK("tty", LOCK_RANK_TTY);
 static struct tty s_arr_ttys[VCONSOLE_COUNT];
 static bool s_b_made;
 
+static const struct tty_end console_end;
+
 /* the terminal on a console, made the first time any is asked for */
 static struct tty *tty_at(unsigned u_console)
 {
     if (!s_b_made) {
         for (unsigned u_at = 0; u_at < VCONSOLE_COUNT; u_at++) {
+            s_arr_ttys[u_at].p_end = &console_end;
             s_arr_ttys[u_at].u_console = u_at;
             term_default(&s_arr_ttys[u_at].termios);
         }
@@ -111,12 +140,28 @@ static struct tty *ctty_of(int i_pid)
     return NULL;
 }
 
+/* a console's terminal: what is typed at that console, onto its screen */
+static int console_take(struct tty *t)
+{
+    return input_take(t->u_console);
+}
+
+static void console_flush(struct tty *t)
+{
+    input_flush(t->u_console);
+}
+
+static bool console_wait(struct tty *t)
+{
+    return input_wait(t->u_console);
+}
+
 /*
  * bytes onto a terminal's console. what is printed goes to the console
  * of the thread printing it, so for as long as this takes the writer is
  * on the terminal's console, whichever one it was on before
  */
-static void put_on(const struct tty *t, const char *p_bytes, size_t sz_len)
+static void console_put(struct tty *t, const char *p_bytes, size_t sz_len)
 {
     if (sz_len == 0) {
         return;
@@ -131,6 +176,13 @@ static void put_on(const struct tty *t, const char *p_bytes, size_t sz_len)
     kwrite(p_bytes, sz_len);
     p_me->console = u_was;
 }
+
+static const struct tty_end console_end = {
+    .take = console_take,
+    .flush = console_flush,
+    .wait = console_wait,
+    .put = console_put,
+};
 
 bool tty_intercept(int key)
 {
@@ -165,18 +217,15 @@ bool tty_intercept(int key)
     }
     settle(t);
     int i_pgrp = t->i_pgrp;
-    bool b_flush = !(t->termios.c_lflag & NOFLSH);
-    if (b_flush) {
+    if (!(t->termios.c_lflag & NOFLSH)) {
         forget(t);
+        t->p_end->flush(t);
     }
     char arr_echo[2];
     size_t sz_echo = term_echo(&t->termios, (uint8_t)key, arr_echo);
-    put_on(t, arr_echo, sz_echo);
+    t->p_end->put(t, arr_echo, sz_echo);
     spin_unlock_irq(&tty_lock, u_flags);
 
-    if (b_flush) {
-        input_flush(u_console);
-    }
     if (i_pgrp != TTY_NOBODY) {
         process_signal_group(i_pgrp, i_sig);
     }
@@ -207,7 +256,7 @@ static void erase(struct tty *t, size_t sz_count, bool b_word)
         t->sz_line--;
         for (size_t sz_col = 0; b_show && sz_col < term_width(p_t, u_c);
              sz_col++) {
-            put_on(t, "\b \b", 3);
+            t->p_end->put(t, "\b \b", 3);
         }
     }
 }
@@ -255,7 +304,7 @@ static void take_byte(struct tty *t, uint8_t u_raw)
         if (sz_used < TTY_BUF) {
             t->arr_buf[t->sz_ready++] = u_c;
         }
-        put_on(t, arr_echo, term_echo(p_t, u_c, arr_echo));
+        t->p_end->put(t, arr_echo, term_echo(p_t, u_c, arr_echo));
         return;
     }
 
@@ -272,7 +321,7 @@ static void take_byte(struct tty *t, uint8_t u_raw)
             erase(t, TTY_BUF, false);
         } else {
             t->sz_line = 0;
-            put_on(t, "\n", (p_t->c_lflag & ECHO) ? 1 : 0);
+            t->p_end->put(t, "\n", (p_t->c_lflag & ECHO) ? 1 : 0);
         }
         return;
     case TERM_EOF:
@@ -286,7 +335,7 @@ static void take_byte(struct tty *t, uint8_t u_raw)
         }
         t->arr_buf[sz_used] = u_c;
         t->sz_line++;
-        put_on(t, arr_echo, term_echo(p_t, u_c, arr_echo));
+        t->p_end->put(t, arr_echo, term_echo(p_t, u_c, arr_echo));
         if (e_act == TERM_DELIVER) {
             deliver(t);
         }
@@ -295,17 +344,17 @@ static void take_byte(struct tty *t, uint8_t u_raw)
 }
 
 /*
- * whatever has been typed at the terminal's console, through the
- * discipline, for as long as it has room: echoed as it is taken, which
- * is when somebody reads or asks whether there is anything to read. a
- * byte is taken and put through under one hold of the lock, so two
- * readers draining at once cannot put two keys in the wrong order
+ * whatever has been typed at the terminal, through the discipline, for
+ * as long as it has room: echoed as it is taken, which is when somebody
+ * reads or asks whether there is anything to read. a byte is taken and
+ * put through under one hold of the lock, so two readers draining at
+ * once cannot put two keys in the wrong order
  */
 static void drain(struct tty *t)
 {
     for (;;) {
         uint64_t u_flags = spin_lock_irq(&tty_lock);
-        int i_byte = has_room(t) ? input_take(t->u_console) : -1;
+        int i_byte = has_room(t) ? t->p_end->take(t) : -1;
         if (i_byte >= 0) {
             take_byte(t, (uint8_t)i_byte);
         }
@@ -455,20 +504,29 @@ static int64_t tty_read(struct file *p_file, void *p_buf, size_t sz_len)
                 return -ERESTARTSYS;
             }
             sleep_ms(TTY_SLICE_MS);
-        } else if (!input_wait(t->u_console)) {
+        } else if (!t->p_end->wait(t)) {
             return -ERESTARTSYS;
         }
     }
 }
 
 /*
- * what is written goes to the console as it is. OPOST is not looked at:
- * the console starts a new line at the start, which is ONLCR, either way
+ * what is written is shown as it is, a chunk at a time. OPOST is not
+ * looked at: the console starts a new line at the start, which is
+ * ONLCR, either way
  */
 static int64_t tty_write(struct file *p_file, const void *p_buf,
                          size_t sz_len)
 {
-    put_on(p_file->p_private, p_buf, sz_len);
+    struct tty *t = p_file->p_private;
+    const char *p_bytes = p_buf;
+    for (size_t sz_at = 0; sz_at < sz_len; sz_at += TTY_CHUNK) {
+        size_t sz_part = (sz_len - sz_at < TTY_CHUNK) ? sz_len - sz_at
+                                                      : TTY_CHUNK;
+        uint64_t u_flags = spin_lock_irq(&tty_lock);
+        t->p_end->put(t, p_bytes + sz_at, sz_part);
+        spin_unlock_irq(&tty_lock, u_flags);
+    }
     return (int64_t)sz_len;
 }
 
@@ -519,12 +577,10 @@ static void set_termios(struct tty *t, const struct termios *p_new,
     }
     if (b_flush) {
         forget(t);
+        t->p_end->flush(t);
     }
     t->termios = *p_new;
     spin_unlock_irq(&tty_lock, u_flags);
-    if (b_flush) {
-        input_flush(t->u_console);
-    }
 }
 
 /* the caller's own terminal, or why not: -ENOTTY for any other */
@@ -563,9 +619,9 @@ static int64_t take_as_own(struct tty *t, uint64_t u_arg)
     }
     spin_unlock_irq(&tty_lock, u_flags);
 
-    /* and the kernel's own lines about it appear where it is */
+    /* and a console's, the kernel's own lines about it appear on it */
     struct thread *p_me = sched_current();
-    if (i_result == 0 && p_me != NULL) {
+    if (i_result == 0 && p_me != NULL && t->p_end == &console_end) {
         p_me->console = t->u_console;
     }
     return i_result;

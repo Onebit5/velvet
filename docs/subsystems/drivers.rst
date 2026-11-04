@@ -114,6 +114,14 @@ whichever is the caller's own. a terminal holds what a program sets with
 ``tcsetattr``, a ``struct termios``, the line being typed, the group in
 front and the session it belongs to.
 
+a terminal is a discipline between two **ends**, a ``struct tty_end``:
+where what is typed at it comes from, and where what it shows goes. the
+discipline is the same for every terminal, and the ends are all that make
+one a console's: the keys typed at that console, out of input's ring, and
+that console's screen. an end can take a byte, throw away what it has not
+handed over, wait for more, and show bytes, and only waiting is done
+without the terminal's lock held.
+
 a terminal belongs to a **session**. a session leader with none takes
 one with ``TIOCSCTTY``, and has it until it lets go with ``TIOCNOTTY`` or
 ends; root may take one from another session. every process of the
