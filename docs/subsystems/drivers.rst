@@ -159,6 +159,17 @@ is read; a read shorter than its line leaves the rest for the next. what
 is ready and the line being typed are one buffer, the ready part a list
 of line lengths, and the end of input is a line of none. without
 ``ICANON`` a read is what ``VMIN`` and ``VTIME`` say.
+
+what a terminal shows, written or echoed, goes through output
+processing first, as ``OPOST`` and the flags with it say: ``ONLCR`` a
+newline as a return and a newline, ``OCRNL`` a return as a newline,
+``ONOCR`` no return at the left margin, ``ONLRET`` a newline that returns
+the carriage itself, ``OLCUC`` capitals, and ``XTABS`` a tab as the spaces
+to the next eighth column, which needs the terminal to keep count of the
+column it has left the cursor in. the console starts every new line at
+the left, as a terminal in new line mode does, so the return ``ONLCR``
+puts before a newline is left out of what reaches its screen, its serial
+line and the kernel's log, all of which make their own.
 the keys that are not characters, the arrows, home, end, delete and the
 page keys, arrive as the escape sequences a console terminal sends for
 them.

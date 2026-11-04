@@ -76,6 +76,8 @@ struct tty {
     size_t sz_line;
     uint16_t arr_lines[TTY_LINES];
     size_t sz_lines;
+
+    size_t sz_column;           /* where output has left the cursor */
 };
 
 static struct spinlock tty_lock = SPINLOCK("tty", LOCK_RANK_TTY);
@@ -159,22 +161,56 @@ static bool console_wait(struct tty *t)
 /*
  * bytes onto a terminal's console. what is printed goes to the console
  * of the thread printing it, so for as long as this takes the writer is
- * on the terminal's console, whichever one it was on before
+ * on the terminal's console, whichever one it was on before.
+ *
+ * a console starts a new line at the left whatever it is told, the way
+ * a terminal set to new line mode does, and so does the serial line,
+ * which puts a return before every newline itself. the return ONLCR
+ * puts in front of a newline is one both have made already, and is left
+ * out, rather than written twice to the wire and once into the log
  */
 static void console_put(struct tty *t, const char *p_bytes, size_t sz_len)
 {
-    if (sz_len == 0) {
-        return;
-    }
     struct thread *p_me = sched_current();
-    if (p_me == NULL) {
-        kwrite(p_bytes, sz_len);
-        return;
+    unsigned u_was = (p_me != NULL) ? p_me->console : 0;
+    if (p_me != NULL) {
+        p_me->console = t->u_console;
     }
-    unsigned u_was = p_me->console;
-    p_me->console = t->u_console;
-    kwrite(p_bytes, sz_len);
-    p_me->console = u_was;
+    size_t sz_from = 0;
+    for (size_t sz_at = 0; sz_at + 1 < sz_len; sz_at++) {
+        if (p_bytes[sz_at] == '\r' && p_bytes[sz_at + 1] == '\n') {
+            kwrite(p_bytes + sz_from, sz_at - sz_from);
+            sz_from = sz_at + 1;
+        }
+    }
+    kwrite(p_bytes + sz_from, sz_len - sz_from);
+    if (p_me != NULL) {
+        p_me->console = u_was;
+    }
+}
+
+/*
+ * bytes shown on a terminal, through output processing, handed to its
+ * end a chunk at a time. what a program writes and what the terminal
+ * echoes both come this way, so a newline echoed is a newline written.
+ * the lock is held
+ */
+static void show(struct tty *t, const char *p_bytes, size_t sz_len)
+{
+    char arr_out[TTY_CHUNK + TERM_OUT_MAX];
+    size_t sz_out = 0;
+
+    for (size_t sz_at = 0; sz_at < sz_len; sz_at++) {
+        sz_out += term_output(&t->termios, (uint8_t)p_bytes[sz_at],
+                              &t->sz_column, arr_out + sz_out);
+        if (sz_out >= TTY_CHUNK) {
+            t->p_end->put(t, arr_out, sz_out);
+            sz_out = 0;
+        }
+    }
+    if (sz_out > 0) {
+        t->p_end->put(t, arr_out, sz_out);
+    }
 }
 
 static const struct tty_end console_end = {
@@ -223,7 +259,7 @@ bool tty_intercept(int key)
     }
     char arr_echo[2];
     size_t sz_echo = term_echo(&t->termios, (uint8_t)key, arr_echo);
-    t->p_end->put(t, arr_echo, sz_echo);
+    show(t, arr_echo, sz_echo);
     spin_unlock_irq(&tty_lock, u_flags);
 
     if (i_pgrp != TTY_NOBODY) {
@@ -256,7 +292,7 @@ static void erase(struct tty *t, size_t sz_count, bool b_word)
         t->sz_line--;
         for (size_t sz_col = 0; b_show && sz_col < term_width(p_t, u_c);
              sz_col++) {
-            t->p_end->put(t, "\b \b", 3);
+            show(t, "\b \b", 3);
         }
     }
 }
@@ -304,7 +340,7 @@ static void take_byte(struct tty *t, uint8_t u_raw)
         if (sz_used < TTY_BUF) {
             t->arr_buf[t->sz_ready++] = u_c;
         }
-        t->p_end->put(t, arr_echo, term_echo(p_t, u_c, arr_echo));
+        show(t, arr_echo, term_echo(p_t, u_c, arr_echo));
         return;
     }
 
@@ -321,7 +357,7 @@ static void take_byte(struct tty *t, uint8_t u_raw)
             erase(t, TTY_BUF, false);
         } else {
             t->sz_line = 0;
-            t->p_end->put(t, "\n", (p_t->c_lflag & ECHO) ? 1 : 0);
+            show(t, "\n", (p_t->c_lflag & ECHO) ? 1 : 0);
         }
         return;
     case TERM_EOF:
@@ -335,7 +371,7 @@ static void take_byte(struct tty *t, uint8_t u_raw)
         }
         t->arr_buf[sz_used] = u_c;
         t->sz_line++;
-        t->p_end->put(t, arr_echo, term_echo(p_t, u_c, arr_echo));
+        show(t, arr_echo, term_echo(p_t, u_c, arr_echo));
         if (e_act == TERM_DELIVER) {
             deliver(t);
         }
@@ -510,11 +546,7 @@ static int64_t tty_read(struct file *p_file, void *p_buf, size_t sz_len)
     }
 }
 
-/*
- * what is written is shown as it is, a chunk at a time. OPOST is not
- * looked at: the console starts a new line at the start, which is
- * ONLCR, either way
- */
+/* what is written is shown, through output processing, a chunk at a time */
 static int64_t tty_write(struct file *p_file, const void *p_buf,
                          size_t sz_len)
 {
@@ -524,7 +556,7 @@ static int64_t tty_write(struct file *p_file, const void *p_buf,
         size_t sz_part = (sz_len - sz_at < TTY_CHUNK) ? sz_len - sz_at
                                                       : TTY_CHUNK;
         uint64_t u_flags = spin_lock_irq(&tty_lock);
-        t->p_end->put(t, p_bytes + sz_at, sz_part);
+        show(t, p_bytes + sz_at, sz_part);
         spin_unlock_irq(&tty_lock, u_flags);
     }
     return (int64_t)sz_len;

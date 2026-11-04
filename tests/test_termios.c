@@ -97,6 +97,49 @@ int main(void)
           && term_echo(&quiet, '\n', arr_echo) == 1,
           "a password prompt with ECHONL shows the end of the line only");
 
+    char arr_out[TERM_OUT_MAX];
+    size_t sz_col = 5;
+    CHECK(term_output(&t, '\n', &sz_col, arr_out) == 2
+          && memcmp(arr_out, "\r\n", 2) == 0 && sz_col == 0,
+          "a newline goes out as a return and a newline, ONLCR being on");
+    sz_col = 3;
+    CHECK(term_output(&t, 'a', &sz_col, arr_out) == 1 && arr_out[0] == 'a'
+          && sz_col == 4
+          && term_output(&t, '\t', &sz_col, arr_out) == 1 && sz_col == 8,
+          "a letter moves the cursor one, and a tab to the next eighth");
+    CHECK(term_output(&t, '\b', &sz_col, arr_out) == 1 && sz_col == 7
+          && term_output(&t, 0x07, &sz_col, arr_out) == 1 && sz_col == 7,
+          "backspace one back, and a bell nowhere");
+    CHECK(term_output(&t, 0xc3, &sz_col, arr_out) == 1 && sz_col == 8
+          && term_output(&t, 0xa9, &sz_col, arr_out) == 1 && sz_col == 8,
+          "and a character of two bytes in utf-8 one column, not two");
+
+    struct termios out = t;
+    out.c_oflag |= XTABS;
+    sz_col = 3;
+    CHECK(term_output(&out, '\t', &sz_col, arr_out) == 5
+          && memcmp(arr_out, "     ", 5) == 0 && sz_col == 8,
+          "with XTABS a tab is the spaces to the next eighth");
+    out.c_oflag = OPOST | OCRNL | OLCUC;
+    CHECK(term_output(&out, '\r', &sz_col, arr_out) == 1
+          && arr_out[0] == '\n' && sz_col == 8
+          && term_output(&out, 'q', &sz_col, arr_out) == 1
+          && arr_out[0] == 'Q',
+          "OCRNL makes a return a newline, and OLCUC a letter a capital");
+    out.c_oflag = OPOST | ONOCR | ONLRET;
+    sz_col = 0;
+    CHECK(term_output(&out, '\r', &sz_col, arr_out) == 0,
+          "with ONOCR a return at the left margin is left out");
+    sz_col = 4;
+    CHECK(term_output(&out, '\n', &sz_col, arr_out) == 1
+          && arr_out[0] == '\n' && sz_col == 0,
+          "and with ONLRET a newline returns the carriage itself");
+    out.c_oflag = ONLCR;
+    sz_col = 4;
+    CHECK(term_output(&out, '\n', &sz_col, arr_out) == 1
+          && arr_out[0] == '\n' && sz_col == 4,
+          "without OPOST nothing is done to anything, ONLCR or not");
+
     if (failures == 0) printf("all good\n");
     return failures;
 }

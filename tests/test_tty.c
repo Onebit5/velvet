@@ -332,6 +332,27 @@ int main(void)
           "FIONREAD counts what a read would have");
     rd(p_tty, arr_buf, sizeof arr_buf);
 
+    /* what is written, as OPOST says, and the console's own newlines */
+    screens_clear();
+    CHECK(p_tty->p_ops->write(p_tty, "x\ny\rz\n", 6) == 6
+          && strcmp(s_arr_screen[1], "x\ny\rz\n") == 0,
+          "a newline goes out without the return ONLCR puts before it, "
+          "which the console makes itself");
+    struct termios cooked = mode;
+    cooked.c_oflag |= XTABS | OLCUC;
+    ctl(p_tty, TCSETS, &cooked);
+    screens_clear();
+    p_tty->p_ops->write(p_tty, "ab\tc\n", 5);
+    CHECK(strcmp(s_arr_screen[1], "AB      C\n") == 0,
+          "and what is written goes out as the output flags say");
+    screens_clear();
+    type(1, "\tq\r");
+    rd(p_tty, arr_buf, sizeof arr_buf);
+    CHECK(strcmp(arr_buf, "\tq\n") == 0
+          && strcmp(s_arr_screen[1], "        Q\n") == 0,
+          "which is what an echo goes out as, too");
+    ctl(p_tty, TCSETS, &mode);
+
     struct winsize size;
     CHECK(ctl(p_tty, TIOCGWINSZ, &size) == 0 && size.ws_col == 100
           && size.ws_row == 37,

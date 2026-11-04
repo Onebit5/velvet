@@ -133,3 +133,82 @@ size_t term_width(const struct termios *p_t, uint8_t u_c)
     }
     return shown_as_control(p_t, u_c) ? 2 : 1;
 }
+
+/*
+ * a byte that moves no cursor: the ascii controls, and the second row of
+ * them above 0x80 that nothing has used since
+ */
+static bool is_control(uint8_t u_c)
+{
+    return u_c < 0x20 || (u_c >= 0x7f && u_c < 0xa0);
+}
+
+size_t term_output(const struct termios *p_t, uint8_t u_c, size_t *p_column,
+                   char *p_out)
+{
+    uint32_t u_o = p_t->c_oflag;
+
+    if (!(u_o & OPOST)) {
+        p_out[0] = (char)u_c;
+        return 1;
+    }
+    switch (u_c) {
+    case '\n':
+        if (u_o & ONLRET) {
+            *p_column = 0;
+        }
+        if (u_o & ONLCR) {
+            *p_column = 0;
+            p_out[0] = '\r';
+            p_out[1] = '\n';
+            return 2;
+        }
+        break;
+    case '\r':
+        /* a return at the left margin goes nowhere, and ONOCR leaves it out */
+        if ((u_o & ONOCR) && *p_column == 0) {
+            return 0;
+        }
+        if (u_o & OCRNL) {
+            u_c = '\n';
+            if (u_o & ONLRET) {
+                *p_column = 0;
+            }
+            break;
+        }
+        *p_column = 0;
+        break;
+    case '\t': {
+        size_t sz_spaces = 8 - (*p_column & 7);
+        *p_column += sz_spaces;
+        if ((u_o & TABDLY) == XTABS) {
+            memset(p_out, ' ', sz_spaces);
+            return sz_spaces;
+        }
+        break;
+    }
+    case '\b':
+        if (*p_column > 0) {
+            (*p_column)--;
+        }
+        break;
+    default:
+        if (is_control(u_c)) {
+            break;
+        }
+        /*
+         * a-z only: a byte of a longer utf-8 character is not a letter of
+         * its own, and making it a capital would make it another one
+         */
+        if ((u_o & OLCUC) && u_c >= 'a' && u_c <= 'z') {
+            u_c = (uint8_t)(u_c - 'a' + 'A');
+        }
+        /* and a byte that continues a utf-8 character takes no column */
+        if (!((p_t->c_iflag & IUTF8) && (u_c & 0xc0) == 0x80)) {
+            (*p_column)++;
+        }
+        break;
+    }
+    p_out[0] = (char)u_c;
+    return 1;
+}

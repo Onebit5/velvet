@@ -77,8 +77,16 @@ struct winsize {
 #define IUTF8   0040000
 
 /* c_oflag */
-#define OPOST 0000001
-#define ONLCR 0000004
+#define OPOST  0000001
+#define OLCUC  0000002
+#define ONLCR  0000004
+#define OCRNL  0000010
+#define ONOCR  0000020
+#define ONLRET 0000040
+#define TABDLY 0014000
+#define TAB0   0000000
+#define TAB3   0014000
+#define XTABS  0014000
 
 /* c_cflag */
 #define B38400 0000017

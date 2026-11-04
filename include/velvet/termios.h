@@ -56,4 +56,16 @@ size_t term_echo(const struct termios *p_t, uint8_t u_c, char *p_out);
 /* the columns one kept byte took, which is what an erase takes back */
 size_t term_width(const struct termios *p_t, uint8_t u_c);
 
+/* the most one byte becomes on its way out: a tab, as spaces */
+#define TERM_OUT_MAX 8
+
+/*
+ * what a byte shown on the terminal becomes on its way out, as OPOST and
+ * the flags with it say, into p_out, at most TERM_OUT_MAX bytes: how
+ * many. *p_column is where the terminal's cursor is taken to be, and is
+ * moved past what goes out, which is how a tab knows how far it goes
+ */
+size_t term_output(const struct termios *p_t, uint8_t u_c, size_t *p_column,
+                   char *p_out);
+
 #endif
