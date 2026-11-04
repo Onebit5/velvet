@@ -145,7 +145,12 @@ itself.
 
 with ``ICANON`` a read takes one whole line, edited as it is typed with
 ``VERASE``, ``VWERASE`` and ``VKILL``, and ``VEOF`` at the start of a line
-is the end of input. without it a read is what ``VMIN`` and ``VTIME`` say.
+is the end of input. lines typed ahead wait in the order they were typed,
+each for a read of its own, and are echoed as they are taken, not as each
+is read; a read shorter than its line leaves the rest for the next. what
+is ready and the line being typed are one buffer, the ready part a list
+of line lengths, and the end of input is a line of none. without
+``ICANON`` a read is what ``VMIN`` and ``VTIME`` say.
 the keys that are not characters, the arrows, home, end, delete and the
 page keys, arrive as the escape sequences a console terminal sends for
 them.

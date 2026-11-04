@@ -22,8 +22,11 @@
 #include <uapi/velvet/fcntl.h>
 #include <uapi/velvet/poll.h>
 
-/* the most one line may be, and the most typed ahead in raw mode */
+/* the most one terminal holds, typed and not yet read */
 #define TTY_BUF 4096
+
+/* and the most whole lines among that, each waiting for a read of its own */
+#define TTY_LINES 128
 
 /* how long a timed raw read sleeps between looks */
 #define TTY_SLICE_MS 10
@@ -36,20 +39,20 @@ struct tty {
     int i_session;              /* the session it is the terminal of */
 
     /*
-     * what a read can have now: one whole line when canonical, whatever
-     * has been typed when not. a canonical terminal takes no more keys
-     * off the console until the line has been read, so a read never
-     * runs two lines together
+     * what has been typed, through the discipline: first the sz_ready
+     * bytes a read can have, and after them the sz_line of the line
+     * being typed. canonical, what is ready is whole lines, arr_lines
+     * long each and in the order typed, a line of none being the end of
+     * input; raw, it is bytes, and there are no lines
      */
-    uint8_t arr_ready[TTY_BUF];
+    uint8_t arr_buf[TTY_BUF];
     size_t sz_ready;
-
-    uint8_t arr_line[TTY_BUF];  /* the line being typed */
     size_t sz_line;
-    bool b_eof;                 /* end of input: the next read is 0 */
+    uint16_t arr_lines[TTY_LINES];
+    size_t sz_lines;
 };
 
-static struct spinlock tty_lock = SPINLOCK("tty", LOCK_RANK_DEVICE);
+static struct spinlock tty_lock = SPINLOCK("tty", LOCK_RANK_TTY);
 static struct tty s_arr_ttys[VCONSOLE_COUNT];
 static bool s_b_made;
 
@@ -64,6 +67,14 @@ static struct tty *tty_at(unsigned u_console)
         s_b_made = true;
     }
     return &s_arr_ttys[u_console < VCONSOLE_COUNT ? u_console : 0];
+}
+
+/* everything typed and not yet read, thrown away. the lock is held */
+static void forget(struct tty *t)
+{
+    t->sz_ready = 0;
+    t->sz_line = 0;
+    t->sz_lines = 0;
 }
 
 /*
@@ -156,9 +167,7 @@ bool tty_intercept(int key)
     int i_pgrp = t->i_pgrp;
     bool b_flush = !(t->termios.c_lflag & NOFLSH);
     if (b_flush) {
-        t->sz_line = 0;
-        t->sz_ready = 0;
-        t->b_eof = false;
+        forget(t);
     }
     char arr_echo[2];
     size_t sz_echo = term_echo(&t->termios, (uint8_t)key, arr_echo);
@@ -185,7 +194,7 @@ static void erase(struct tty *t, size_t sz_count, bool b_word)
     bool b_in_word = false;
 
     while (sz_count > 0 && t->sz_line > 0) {
-        uint8_t u_c = t->arr_line[t->sz_line - 1];
+        uint8_t u_c = t->arr_buf[t->sz_ready + t->sz_line - 1];
         if (b_word) {
             bool b_space = (u_c == ' ' || u_c == '\t');
             if (b_space && b_in_word) {
@@ -203,14 +212,31 @@ static void erase(struct tty *t, size_t sz_count, bool b_word)
     }
 }
 
-/* the line complete, for a read to have. the lock is held */
+/*
+ * the line being typed complete, for a read of its own to have, which it
+ * already is where it lies. the lock is held
+ */
 static void deliver(struct tty *t)
 {
-    size_t sz_room = TTY_BUF - t->sz_ready;
-    size_t sz_take = (t->sz_line < sz_room) ? t->sz_line : sz_room;
-    memcpy(t->arr_ready + t->sz_ready, t->arr_line, sz_take);
-    t->sz_ready += sz_take;
+    t->arr_lines[t->sz_lines++] = (uint16_t)t->sz_line;
+    t->sz_ready += t->sz_line;
     t->sz_line = 0;
+}
+
+/*
+ * whether the discipline may take another byte: in raw mode while there
+ * is room, and canonical while there is room for another line and the
+ * lines already typed are not what is taking it. a line too long for the
+ * terminal loses its end, as it would anywhere, but a line typed after
+ * others loses nothing: it waits where it was typed until they are read
+ */
+static bool has_room(const struct tty *t)
+{
+    if (!(t->termios.c_lflag & ICANON)) {
+        return t->sz_ready < TTY_BUF;
+    }
+    return t->sz_lines < TTY_LINES
+           && (t->sz_ready == 0 || t->sz_ready + t->sz_line < TTY_BUF - 1);
 }
 
 /* one byte as it was typed, through the discipline. the lock is held */
@@ -223,16 +249,18 @@ static void take_byte(struct tty *t, uint8_t u_raw)
     }
     uint8_t u_c = (uint8_t)i_c;
     char arr_echo[2];
+    size_t sz_used = t->sz_ready + t->sz_line;
 
     if (!(p_t->c_lflag & ICANON)) {
-        if (t->sz_ready < TTY_BUF) {
-            t->arr_ready[t->sz_ready++] = u_c;
+        if (sz_used < TTY_BUF) {
+            t->arr_buf[t->sz_ready++] = u_c;
         }
         put_on(t, arr_echo, term_echo(p_t, u_c, arr_echo));
         return;
     }
 
-    switch (term_input(p_t, u_c)) {
+    enum term_action e_act = term_input(p_t, u_c);
+    switch (e_act) {
     case TERM_ERASE:
         erase(t, 1, false);
         return;
@@ -248,19 +276,19 @@ static void take_byte(struct tty *t, uint8_t u_raw)
         }
         return;
     case TERM_EOF:
-        t->b_eof = (t->sz_line == 0);
         deliver(t);
         return;
     case TERM_DELIVER:
-        /* the room kept for it is what makes the newline always fit */
-        t->arr_line[t->sz_line++] = u_c;
-        put_on(t, arr_echo, term_echo(p_t, u_c, arr_echo));
-        deliver(t);
-        return;
     case TERM_KEEP:
-        if (t->sz_line < TTY_BUF - 1) {
-            t->arr_line[t->sz_line++] = u_c;
-            put_on(t, arr_echo, term_echo(p_t, u_c, arr_echo));
+        /* the byte kept back from every line is what a newline goes in */
+        if (sz_used >= ((e_act == TERM_DELIVER) ? TTY_BUF : TTY_BUF - 1)) {
+            return;
+        }
+        t->arr_buf[sz_used] = u_c;
+        t->sz_line++;
+        put_on(t, arr_echo, term_echo(p_t, u_c, arr_echo));
+        if (e_act == TERM_DELIVER) {
+            deliver(t);
         }
         return;
     }
@@ -268,38 +296,52 @@ static void take_byte(struct tty *t, uint8_t u_raw)
 
 /*
  * whatever has been typed at the terminal's console, through the
- * discipline, as far as a read can use it: echoed as it is taken, which
- * is when somebody reads or asks whether there is anything to read
+ * discipline, for as long as it has room: echoed as it is taken, which
+ * is when somebody reads or asks whether there is anything to read. a
+ * byte is taken and put through under one hold of the lock, so two
+ * readers draining at once cannot put two keys in the wrong order
  */
 static void drain(struct tty *t)
 {
     for (;;) {
         uint64_t u_flags = spin_lock_irq(&tty_lock);
-        bool b_full = (t->termios.c_lflag & ICANON)
-                      ? (t->sz_ready > 0 || t->b_eof)
-                      : (t->sz_ready == TTY_BUF);
-        spin_unlock_irq(&tty_lock, u_flags);
-        if (b_full) {
-            return;
+        int i_byte = has_room(t) ? input_take(t->u_console) : -1;
+        if (i_byte >= 0) {
+            take_byte(t, (uint8_t)i_byte);
         }
-        int i_byte = input_take(t->u_console);
+        spin_unlock_irq(&tty_lock, u_flags);
         if (i_byte < 0) {
             return;
         }
-        u_flags = spin_lock_irq(&tty_lock);
-        take_byte(t, (uint8_t)i_byte);
-        spin_unlock_irq(&tty_lock, u_flags);
     }
 }
 
-/* up to sz_len of what is ready, handed over and gone. the lock is held */
-static size_t take_ready(struct tty *t, void *p_buf, size_t sz_len)
+/*
+ * up to sz_len of what is ready, handed over and gone: when canonical, of
+ * the first line only, the rest of it left for the next read. how many,
+ * or -1 for nothing to hand over. the lock is held
+ */
+static int64_t take_ready(struct tty *t, void *p_buf, size_t sz_len)
 {
-    size_t sz_take = (t->sz_ready < sz_len) ? t->sz_ready : sz_len;
-    memcpy(p_buf, t->arr_ready, sz_take);
-    memmove(t->arr_ready, t->arr_ready + sz_take, t->sz_ready - sz_take);
+    bool b_canon = (t->termios.c_lflag & ICANON) != 0;
+    if (b_canon ? t->sz_lines == 0 : t->sz_ready == 0) {
+        return -1;
+    }
+    size_t sz_have = b_canon ? t->arr_lines[0] : t->sz_ready;
+    size_t sz_take = (sz_have < sz_len) ? sz_have : sz_len;
+    memcpy(p_buf, t->arr_buf, sz_take);
+    memmove(t->arr_buf, t->arr_buf + sz_take,
+            t->sz_ready + t->sz_line - sz_take);
     t->sz_ready -= sz_take;
-    return sz_take;
+    /* a read of nothing takes nothing, not even the end of input */
+    if (b_canon && sz_len > 0 && sz_take == sz_have) {
+        t->sz_lines--;
+        memmove(t->arr_lines, t->arr_lines + 1,
+                t->sz_lines * sizeof t->arr_lines[0]);
+    } else if (b_canon) {
+        t->arr_lines[0] = (uint16_t)(sz_have - sz_take);
+    }
+    return (int64_t)sz_take;
 }
 
 /*
@@ -383,12 +425,7 @@ static int64_t tty_read(struct file *p_file, void *p_buf, size_t sz_len)
         int64_t i_got = -1;
         bool b_timed = false;
         if (t->termios.c_lflag & ICANON) {
-            if (t->sz_ready > 0) {
-                i_got = (int64_t)take_ready(t, p_buf, sz_len);
-            } else if (t->b_eof) {
-                t->b_eof = false;
-                i_got = 0;
-            }
+            i_got = take_ready(t, p_buf, sz_len);
         } else {
             size_t sz_min = t->termios.c_cc[VMIN];
             uint64_t u_time = t->termios.c_cc[VTIME] * 100ull;
@@ -402,7 +439,8 @@ static int64_t tty_read(struct file *p_file, void *p_buf, size_t sz_len)
             if ((t->sz_ready >= sz_want && t->sz_ready > 0)
                 || (sz_min == 0 && u_time == 0)
                 || (b_timed && u_now - u_since >= u_time)) {
-                i_got = (int64_t)take_ready(t, p_buf, sz_len);
+                i_got = take_ready(t, p_buf, sz_len);
+                i_got = (i_got < 0) ? 0 : i_got;
             }
         }
         spin_unlock_irq(&tty_lock, u_flags);
@@ -434,32 +472,53 @@ static int64_t tty_write(struct file *p_file, const void *p_buf,
     return (int64_t)sz_len;
 }
 
+/*
+ * whether a read would not wait, as poll asks it: a whole line, or raw,
+ * the bytes VMIN asks for, or one when VTIME would only be waited out
+ * for the first. the lock is held
+ */
+static bool readable(const struct tty *t)
+{
+    if (t->termios.c_lflag & ICANON) {
+        return t->sz_lines > 0;
+    }
+    size_t sz_want = (t->termios.c_cc[VTIME] == 0) ? t->termios.c_cc[VMIN]
+                                                   : 1;
+    return t->sz_ready >= sz_want;
+}
+
 static uint32_t tty_poll(struct file *p_file)
 {
     struct tty *t = p_file->p_private;
     drain(t);
     uint64_t u_flags = spin_lock_irq(&tty_lock);
-    bool b_in = t->sz_ready > 0 || t->b_eof;
+    bool b_in = readable(t);
     spin_unlock_irq(&tty_lock, u_flags);
     return POLLOUT | (b_in ? POLLIN : 0);
 }
 
 /*
- * a new termios, and what changing it means for what is already typed:
- * a line half typed when ICANON goes off is what raw reads find first
+ * a new termios, and what changing it means for what is already typed.
+ * with ICANON going off the lines and the one half typed are bytes, for
+ * raw reads to find first; coming on, what was typed raw is one line,
+ * for a read to hand over as it is
  */
 static void set_termios(struct tty *t, const struct termios *p_new,
                         bool b_flush)
 {
     uint64_t u_flags = spin_lock_irq(&tty_lock);
-    if ((t->termios.c_lflag & ICANON) && !(p_new->c_lflag & ICANON)) {
-        deliver(t);
-        t->b_eof = false;
+    bool b_was = (t->termios.c_lflag & ICANON) != 0;
+    bool b_now = (p_new->c_lflag & ICANON) != 0;
+    if (b_was && !b_now) {
+        t->sz_ready += t->sz_line;
+        t->sz_line = 0;
+        t->sz_lines = 0;
+    } else if (!b_was && b_now && t->sz_ready > 0) {
+        t->arr_lines[0] = (uint16_t)t->sz_ready;
+        t->sz_lines = 1;
     }
     if (b_flush) {
-        t->sz_line = 0;
-        t->sz_ready = 0;
-        t->b_eof = false;
+        forget(t);
     }
     t->termios = *p_new;
     spin_unlock_irq(&tty_lock, u_flags);

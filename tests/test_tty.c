@@ -239,6 +239,24 @@ int main(void)
           && strcmp(arr_buf, "ond\n") == 0,
           "and a line longer than the read is the rest of it next time");
 
+    screens_clear();
+    type(1, "one\rtwo\x04three\r\x04" "four\r");
+    CHECK(rd(p_tty, arr_buf, sizeof arr_buf) == 4
+          && strcmp(arr_buf, "one\n") == 0
+          && strcmp(s_arr_screen[1], "one\ntwothree\nfour\n") == 0,
+          "lines typed ahead are all taken and echoed at the first read");
+    CHECK(rd(p_tty, arr_buf, sizeof arr_buf) == 3
+          && strcmp(arr_buf, "two") == 0
+          && rd(p_tty, arr_buf, sizeof arr_buf) == 6
+          && strcmp(arr_buf, "three\n") == 0,
+          "and handed over one a read, ctrl+d's without its newline");
+    CHECK(rd(p_tty, arr_buf, 0) == 0
+          && rd(p_tty, arr_buf, sizeof arr_buf) == 0
+          && rd(p_tty, arr_buf, sizeof arr_buf) == 5
+          && strcmp(arr_buf, "four\n") == 0,
+          "the end of input among them is a read of its own, which a read "
+          "of nothing does not take");
+
     type(1, "tail\x04");
     CHECK(rd(p_tty, arr_buf, sizeof arr_buf) == 4
           && strcmp(arr_buf, "tail") == 0,
@@ -302,7 +320,11 @@ int main(void)
     CHECK(rd(p_tty, arr_buf, sizeof arr_buf) == 4
           && memcmp(arr_buf, "half", 4) == 0,
           "turning ICANON off hands over the line in progress");
-    ctl(p_tty, TCSETS, &mode);
+    type(1, "raw");
+    CHECK(rd(p_tty, arr_buf, 0) == 0 && ctl(p_tty, TCSETS, &mode) == 0
+          && rd(p_tty, arr_buf, sizeof arr_buf) == 3
+          && memcmp(arr_buf, "raw", 3) == 0,
+          "and turning it on makes what was typed raw one line");
 
     int32_t i_count = -1;
     type(1, "x\r");

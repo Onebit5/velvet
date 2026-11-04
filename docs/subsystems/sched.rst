@@ -118,7 +118,9 @@ locks of *lower* rank. it is checked, not hoped for.
 ::
 
     LOCK_RANK_PIPE      a pipe wakes threads and calls nothing below it
-    LOCK_RANK_DEVICE    tty, input, pci, the disk
+    LOCK_RANK_MOUNT     the mount table, held to look a name up
+    LOCK_RANK_TTY       a terminal, which takes keys out of input
+    LOCK_RANK_DEVICE    input, pci, the disk
     LOCK_RANK_CLOCK     the cmos clock, a leaf: anything may ask it
     LOCK_RANK_SCHED     the run queue
     LOCK_RANK_PROCESS   the process table, which sched reaches into
@@ -131,6 +133,12 @@ the rule caught it the first time a filesystem stamped a file it had just
 created. the disk lock is held for a whole create, and putting a timestamp
 on the new inode means reading the clock, which was the same rank. a rank of
 its own rather than reordering anything, because the clock is a leaf.
+
+the terminal got one in 0.4.7 for the opposite reason. a key is taken out
+of input and put through the terminal's discipline under one hold of the
+terminal's lock, so that two readers draining one terminal at once cannot
+swap two keys, and that means holding the terminal's lock while taking
+input's, which was the same rank.
 
 processes
 ---------

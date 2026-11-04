@@ -43,7 +43,8 @@ enum lock_rank {
      */
     LOCK_RANK_PIPE = 1,
     LOCK_RANK_MOUNT,            /* the mount table, held to look a name up */
-    LOCK_RANK_DEVICE,           /* tty, input, pci, the disk, ramfs */
+    LOCK_RANK_TTY,              /* a terminal, which takes keys out of input */
+    LOCK_RANK_DEVICE,           /* input, pci, the disk, ramfs */
 
     LOCK_RANK_CLOCK,
     LOCK_RANK_SCHED,            /* the run queue */
