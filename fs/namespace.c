@@ -13,6 +13,7 @@
 #include <velvet/file.h>
 #include <velvet/pmm.h>
 #include <velvet/process.h>
+#include <velvet/pty.h>
 #include <velvet/ramfs.h>
 #include <velvet/string.h>
 #include <velvet/vfs.h>
@@ -49,6 +50,7 @@ static const struct fs_type s_arr_types[] = {
     { "tmpfs",    VFS_RAMFS, DISK_NONE },
     { "proc",     VFS_PROC,  DISK_NONE },
     { "devtmpfs", VFS_DEV,   DISK_NONE },
+    { "devpts",   VFS_PTS,   DISK_NONE },
 };
 
 static const struct fs_type *type_named(const char *str_name)
@@ -177,10 +179,16 @@ int64_t sys_mount(uint64_t u_source, uint64_t u_target, uint64_t u_type,
     if (p_type == NULL) {
         return -ENODEV;
     }
-    /* only a filesystem in memory takes an option, its root's mode */
+    /*
+     * a filesystem in memory takes an option, its root's mode, and
+     * /dev/pts takes those that say whose a terminal is. they are taken
+     * once the mount is there, so a mount refused changes nothing
+     */
     uint32_t u_mode = 0755;
     if (p_type->e_kind == VFS_RAMFS) {
         i_why = ramfs_options(arr_options, &u_mode);
+    } else if (p_type->e_kind == VFS_PTS) {
+        i_why = pty_options(arr_options, false);
     } else if (arr_options[0] != '\0') {
         i_why = -EINVAL;
     }
@@ -218,8 +226,14 @@ int64_t sys_mount(uint64_t u_source, uint64_t u_target, uint64_t u_type,
         }
         return i_why;
     }
+    case VFS_PTS:
+        i_why = vfs_mount_add(arr_target, VFS_PTS, 0, arr_source);
+        return (i_why < 0) ? i_why : pty_options(arr_options, true);
     default:
-        /* /proc and /dev are the kernel's, the same wherever they hang */
+        /*
+         * /proc and /dev are the kernel's, the same wherever they hang,
+         * and so is /dev/pts, there being one set of ptys
+         */
         return vfs_mount_add(arr_target, p_type->e_kind, 0, arr_source);
     }
 }
@@ -357,6 +371,9 @@ static void space_of(const struct vfs_file *p_node, struct statfs *p_st)
     }
     case VFS_PROC:
         p_st->f_type = PROC_SUPER_MAGIC;
+        break;
+    case VFS_PTS:
+        p_st->f_type = DEVPTS_SUPER_MAGIC;
         break;
     default:
         p_st->f_type = TMPFS_MAGIC;

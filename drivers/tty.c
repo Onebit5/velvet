@@ -22,11 +22,9 @@
 #include <uapi/velvet/fcntl.h>
 #include <uapi/velvet/poll.h>
 
-/* the most one terminal holds, typed and not yet read */
-#define TTY_BUF 4096
+#include <velvet/pty.h>
 
-/* and the most whole lines among that, each waiting for a read of its own */
-#define TTY_LINES 128
+#include "tty_end.h"
 
 /* how long a timed raw read sleeps between looks */
 #define TTY_SLICE_MS 10
@@ -34,66 +32,28 @@
 /* how much of a write is put through, and shown, under one hold of the lock */
 #define TTY_CHUNK 256
 
-struct tty;
-
-/*
- * what a terminal sits between: where what is typed at it comes from,
- * and where what it shows goes. the discipline in the middle is the same
- * for every terminal, and these are all that make one a console's. all
- * but wait are called with the lock held
- */
-struct tty_end {
-    /* the next byte typed and not yet taken, or -1 for none */
-    int (*take)(struct tty *t);
-    /* every byte typed and not yet taken, thrown away */
-    void (*flush)(struct tty *t);
-    /*
-     * sleep until a byte may have been typed: true, or false when a
-     * signal for the caller ended the wait first
-     */
-    bool (*wait)(struct tty *t);
-    /* bytes shown, as the discipline left them */
-    void (*put)(struct tty *t, const char *p_bytes, size_t sz_len);
-};
-
-struct tty {
-    const struct tty_end *p_end;
-    unsigned u_console;         /* for a console's, which one */
-    struct termios termios;
-
-    int i_pgrp;                 /* the group in front */
-    int i_session;              /* the session it is the terminal of */
-
-    /*
-     * what has been typed, through the discipline: first the sz_ready
-     * bytes a read can have, and after them the sz_line of the line
-     * being typed. canonical, what is ready is whole lines, arr_lines
-     * long each and in the order typed, a line of none being the end of
-     * input; raw, it is bytes, and there are no lines
-     */
-    uint8_t arr_buf[TTY_BUF];
-    size_t sz_ready;
-    size_t sz_line;
-    uint16_t arr_lines[TTY_LINES];
-    size_t sz_lines;
-
-    size_t sz_column;           /* where output has left the cursor */
-};
-
-static struct spinlock tty_lock = SPINLOCK("tty", LOCK_RANK_TTY);
+struct spinlock g_tty_lock = SPINLOCK("tty", LOCK_RANK_TTY);
 static struct tty s_arr_ttys[VCONSOLE_COUNT];
 static bool s_b_made;
 
 static const struct tty_end console_end;
+
+void tty_make(struct tty *t, const struct tty_end *p_end, uint32_t u_rdev)
+{
+    memset(t, 0, sizeof *t);
+    t->p_end = p_end;
+    t->u_rdev = u_rdev;
+    term_default(&t->termios);
+}
 
 /* the terminal on a console, made the first time any is asked for */
 static struct tty *tty_at(unsigned u_console)
 {
     if (!s_b_made) {
         for (unsigned u_at = 0; u_at < VCONSOLE_COUNT; u_at++) {
-            s_arr_ttys[u_at].p_end = &console_end;
+            tty_make(&s_arr_ttys[u_at], &console_end,
+                     (TTY_MAJOR << 8) | (u_at + 1));
             s_arr_ttys[u_at].u_console = u_at;
-            term_default(&s_arr_ttys[u_at].termios);
         }
         s_b_made = true;
     }
@@ -125,7 +85,20 @@ static void settle(struct tty *t)
     }
 }
 
-/* the terminal i_pid's session has taken, or NULL. the lock is held */
+/* the session's terminal, if t is it. the lock is held */
+static bool is_of(struct tty *t, int i_sid)
+{
+    if (t == NULL) {
+        return false;
+    }
+    settle(t);
+    return t->i_session != 0 && t->i_session == i_sid;
+}
+
+/*
+ * the terminal i_pid's session has taken, or NULL: a console's or a
+ * pty's, which are looked through alike. the lock is held
+ */
 static struct tty *ctty_of(int i_pid)
 {
     const struct process *p = process_find(i_pid);
@@ -133,13 +106,22 @@ static struct tty *ctty_of(int i_pid)
         return NULL;
     }
     for (unsigned u_at = 0; u_at < VCONSOLE_COUNT; u_at++) {
-        struct tty *t = tty_at(u_at);
-        settle(t);
-        if (t->i_session != 0 && t->i_session == p->i_sid) {
-            return t;
+        if (is_of(tty_at(u_at), p->i_sid)) {
+            return tty_at(u_at);
+        }
+    }
+    for (size_t sz_at = 0; sz_at < PTY_MAX; sz_at++) {
+        if (is_of(pty_tty_at(sz_at), p->i_sid)) {
+            return pty_tty_at(sz_at);
         }
     }
     return NULL;
+}
+
+int tty_front(struct tty *t)
+{
+    settle(t);
+    return t->i_pgrp;
 }
 
 /* a console's terminal: what is typed at that console, onto its screen */
@@ -191,18 +173,28 @@ static void console_put(struct tty *t, const char *p_bytes, size_t sz_len)
 
 /*
  * bytes shown on a terminal, through output processing, handed to its
- * end a chunk at a time. what a program writes and what the terminal
- * echoes both come this way, so a newline echoed is a newline written.
- * the lock is held
+ * end a chunk at a time, for as long as what they become fits in
+ * sz_room: how many of them went. what a program writes and what the
+ * terminal echoes both come this way, so a newline echoed is a newline
+ * written. the lock is held
  */
-static void show(struct tty *t, const char *p_bytes, size_t sz_len)
+static size_t show(struct tty *t, const char *p_bytes, size_t sz_len,
+                   size_t sz_room)
 {
     char arr_out[TTY_CHUNK + TERM_OUT_MAX];
     size_t sz_out = 0;
+    size_t sz_at = 0;
 
-    for (size_t sz_at = 0; sz_at < sz_len; sz_at++) {
-        sz_out += term_output(&t->termios, (uint8_t)p_bytes[sz_at],
-                              &t->sz_column, arr_out + sz_out);
+    for (; sz_at < sz_len; sz_at++) {
+        size_t sz_column = t->sz_column;
+        size_t sz_one = term_output(&t->termios, (uint8_t)p_bytes[sz_at],
+                                    &sz_column, arr_out + sz_out);
+        if (sz_one > sz_room) {
+            break;
+        }
+        t->sz_column = sz_column;
+        sz_room -= sz_one;
+        sz_out += sz_one;
         if (sz_out >= TTY_CHUNK) {
             t->p_end->put(t, arr_out, sz_out);
             sz_out = 0;
@@ -211,6 +203,33 @@ static void show(struct tty *t, const char *p_bytes, size_t sz_len)
     if (sz_out > 0) {
         t->p_end->put(t, arr_out, sz_out);
     }
+    return sz_at;
+}
+
+/* an echo, which is never waited for: what an end has no room for is lost */
+static void echo(struct tty *t, const char *p_bytes, size_t sz_len)
+{
+    show(t, p_bytes, sz_len, SIZE_MAX);
+}
+
+/*
+ * a console is the size of its screen. a machine with no framebuffer
+ * answers zero, and a program that believed it would divide by it, so it
+ * is eighty by twenty-four, which every terminal has been since the vt100
+ */
+static void console_size_of(struct tty *t, struct winsize *p_size)
+{
+    size_t sz_cols = 0, sz_rows = 0, sz_width = 0, sz_height = 0;
+    (void)t;
+    console_size(&sz_cols, &sz_rows, &sz_width, &sz_height);
+    if (sz_cols == 0 || sz_rows == 0) {
+        sz_cols = 80;
+        sz_rows = 24;
+    }
+    p_size->ws_row = (uint16_t)sz_rows;
+    p_size->ws_col = (uint16_t)sz_cols;
+    p_size->ws_xpixel = (uint16_t)sz_width;
+    p_size->ws_ypixel = (uint16_t)sz_height;
 }
 
 static const struct tty_end console_end = {
@@ -218,6 +237,7 @@ static const struct tty_end console_end = {
     .flush = console_flush,
     .wait = console_wait,
     .put = console_put,
+    .size = console_size_of,
 };
 
 bool tty_intercept(int key)
@@ -243,29 +263,32 @@ bool tty_intercept(int key)
      * a key is typed at the console being looked at, so both whether it
      * is a signal and who gets it are that console's terminal's to say
      */
-    unsigned u_console = console_active();
-    uint64_t u_flags = spin_lock_irq(&tty_lock);
-    struct tty *t = tty_at(u_console);
-    int i_sig = term_signal(&t->termios, (uint8_t)key);
-    if (i_sig == 0) {
-        spin_unlock_irq(&tty_lock, u_flags);
-        return false;
+    int i_pgrp = TTY_NOBODY;
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
+    int i_sig = tty_signal_key(tty_at(console_active()), (uint8_t)key,
+                               &i_pgrp);
+    spin_unlock_irq(&g_tty_lock, u_flags);
+
+    if (i_sig != 0 && i_pgrp != TTY_NOBODY) {
+        process_signal_group(i_pgrp, i_sig);
     }
-    settle(t);
-    int i_pgrp = t->i_pgrp;
+    return i_sig != 0;
+}
+
+int tty_signal_key(struct tty *t, uint8_t u_c, int *p_pgrp)
+{
+    int i_sig = term_signal(&t->termios, u_c);
+    if (i_sig == 0) {
+        return 0;
+    }
+    *p_pgrp = tty_front(t);
     if (!(t->termios.c_lflag & NOFLSH)) {
         forget(t);
         t->p_end->flush(t);
     }
     char arr_echo[2];
-    size_t sz_echo = term_echo(&t->termios, (uint8_t)key, arr_echo);
-    show(t, arr_echo, sz_echo);
-    spin_unlock_irq(&tty_lock, u_flags);
-
-    if (i_pgrp != TTY_NOBODY) {
-        process_signal_group(i_pgrp, i_sig);
-    }
-    return true;
+    echo(t, arr_echo, term_echo(&t->termios, u_c, arr_echo));
+    return i_sig;
 }
 
 /*
@@ -292,7 +315,7 @@ static void erase(struct tty *t, size_t sz_count, bool b_word)
         t->sz_line--;
         for (size_t sz_col = 0; b_show && sz_col < term_width(p_t, u_c);
              sz_col++) {
-            show(t, "\b \b", 3);
+            echo(t, "\b \b", 3);
         }
     }
 }
@@ -340,7 +363,7 @@ static void take_byte(struct tty *t, uint8_t u_raw)
         if (sz_used < TTY_BUF) {
             t->arr_buf[t->sz_ready++] = u_c;
         }
-        show(t, arr_echo, term_echo(p_t, u_c, arr_echo));
+        echo(t, arr_echo, term_echo(p_t, u_c, arr_echo));
         return;
     }
 
@@ -357,7 +380,7 @@ static void take_byte(struct tty *t, uint8_t u_raw)
             erase(t, TTY_BUF, false);
         } else {
             t->sz_line = 0;
-            show(t, "\n", (p_t->c_lflag & ECHO) ? 1 : 0);
+            echo(t, "\n", (p_t->c_lflag & ECHO) ? 1 : 0);
         }
         return;
     case TERM_EOF:
@@ -371,7 +394,7 @@ static void take_byte(struct tty *t, uint8_t u_raw)
         }
         t->arr_buf[sz_used] = u_c;
         t->sz_line++;
-        show(t, arr_echo, term_echo(p_t, u_c, arr_echo));
+        echo(t, arr_echo, term_echo(p_t, u_c, arr_echo));
         if (e_act == TERM_DELIVER) {
             deliver(t);
         }
@@ -386,15 +409,15 @@ static void take_byte(struct tty *t, uint8_t u_raw)
  * put through under one hold of the lock, so two readers draining at
  * once cannot put two keys in the wrong order
  */
-static void drain(struct tty *t)
+void tty_drain(struct tty *t)
 {
     for (;;) {
-        uint64_t u_flags = spin_lock_irq(&tty_lock);
+        uint64_t u_flags = spin_lock_irq(&g_tty_lock);
         int i_byte = has_room(t) ? t->p_end->take(t) : -1;
         if (i_byte >= 0) {
             take_byte(t, (uint8_t)i_byte);
         }
-        spin_unlock_irq(&tty_lock, u_flags);
+        spin_unlock_irq(&g_tty_lock, u_flags);
         if (i_byte < 0) {
             return;
         }
@@ -441,13 +464,13 @@ static int64_t may_read(struct tty *t)
     if (i_pid == 0) {
         return 0;
     }
-    uint64_t u_flags = spin_lock_irq(&tty_lock);
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
     settle(t);
     const struct process *p = process_find(i_pid);
     bool b_behind = p != NULL && t->i_session != 0
                     && t->i_session == p->i_sid && t->i_pgrp != p->pgid;
     int i_pgid = (p != NULL) ? p->pgid : 0;
-    spin_unlock_irq(&tty_lock, u_flags);
+    spin_unlock_irq(&g_tty_lock, u_flags);
     if (!b_behind) {
         return 0;
     }
@@ -469,13 +492,13 @@ static int64_t may_read(struct tty *t)
 static int64_t may_change(struct tty *t)
 {
     int i_pid = current_pid();
-    uint64_t u_flags = spin_lock_irq(&tty_lock);
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
     settle(t);
     const struct process *p = process_find(i_pid);
     bool b_behind = p != NULL && t->i_session != 0
                     && t->i_session == p->i_sid && t->i_pgrp != p->pgid;
     int i_pgid = (p != NULL) ? p->pgid : 0;
-    spin_unlock_irq(&tty_lock, u_flags);
+    spin_unlock_irq(&g_tty_lock, u_flags);
     const struct signal_state *p_sig = process_signal_state(i_pid);
     if (!b_behind || p_sig == NULL
         || signal_action_for(p_sig, SIGTTOU) == SIGNAL_ACTION_IGNORE
@@ -504,12 +527,14 @@ static int64_t tty_read(struct file *p_file, void *p_buf, size_t sz_len)
     size_t sz_seen = 0;
 
     for (;;) {
-        drain(t);
+        tty_drain(t);
         uint64_t u_now = pit_uptime_ms();
-        uint64_t u_flags = spin_lock_irq(&tty_lock);
+        uint64_t u_flags = spin_lock_irq(&g_tty_lock);
         int64_t i_got = -1;
         bool b_timed = false;
-        if (t->termios.c_lflag & ICANON) {
+        if (t->b_hung) {
+            i_got = 0;
+        } else if (t->termios.c_lflag & ICANON) {
             i_got = take_ready(t, p_buf, sz_len);
         } else {
             size_t sz_min = t->termios.c_cc[VMIN];
@@ -528,7 +553,7 @@ static int64_t tty_read(struct file *p_file, void *p_buf, size_t sz_len)
                 i_got = (i_got < 0) ? 0 : i_got;
             }
         }
-        spin_unlock_irq(&tty_lock, u_flags);
+        spin_unlock_irq(&g_tty_lock, u_flags);
         if (i_got >= 0) {
             return i_got;
         }
@@ -546,20 +571,44 @@ static int64_t tty_read(struct file *p_file, void *p_buf, size_t sz_len)
     }
 }
 
-/* what is written is shown, through output processing, a chunk at a time */
+/*
+ * what is written is shown, through output processing, a chunk at a
+ * time, waiting for room where the end can be full: how much went, which
+ * is less only for a signal or a terminal that would not wait, or -EIO
+ * once the far side is gone
+ */
 static int64_t tty_write(struct file *p_file, const void *p_buf,
                          size_t sz_len)
 {
     struct tty *t = p_file->p_private;
     const char *p_bytes = p_buf;
-    for (size_t sz_at = 0; sz_at < sz_len; sz_at += TTY_CHUNK) {
-        size_t sz_part = (sz_len - sz_at < TTY_CHUNK) ? sz_len - sz_at
-                                                      : TTY_CHUNK;
-        uint64_t u_flags = spin_lock_irq(&tty_lock);
-        show(t, p_bytes + sz_at, sz_part);
-        spin_unlock_irq(&tty_lock, u_flags);
+    size_t sz_done = 0;
+
+    while (sz_done < sz_len) {
+        size_t sz_part = (sz_len - sz_done < TTY_CHUNK) ? sz_len - sz_done
+                                                        : TTY_CHUNK;
+        uint64_t u_flags = spin_lock_irq(&g_tty_lock);
+        bool b_hung = t->b_hung;
+        size_t sz_room = (t->p_end->room != NULL) ? t->p_end->room(t)
+                                                  : SIZE_MAX;
+        size_t sz_went = b_hung ? 0 : show(t, p_bytes + sz_done, sz_part,
+                                           sz_room);
+        spin_unlock_irq(&g_tty_lock, u_flags);
+        sz_done += sz_went;
+        if (b_hung) {
+            return (sz_done > 0) ? (int64_t)sz_done : -EIO;
+        }
+        if (sz_went > 0) {
+            continue;
+        }
+        if (p_file->u_flags & O_NONBLOCK) {
+            return (sz_done > 0) ? (int64_t)sz_done : -EAGAIN;
+        }
+        if (!t->p_end->wait_room(t)) {
+            return (sz_done > 0) ? (int64_t)sz_done : -ERESTARTSYS;
+        }
     }
-    return (int64_t)sz_len;
+    return (int64_t)sz_done;
 }
 
 /*
@@ -577,14 +626,20 @@ static bool readable(const struct tty *t)
     return t->sz_ready >= sz_want;
 }
 
+/* and one whose far side is gone is everything at once, since nothing waits */
 static uint32_t tty_poll(struct file *p_file)
 {
     struct tty *t = p_file->p_private;
-    drain(t);
-    uint64_t u_flags = spin_lock_irq(&tty_lock);
-    bool b_in = readable(t);
-    spin_unlock_irq(&tty_lock, u_flags);
-    return POLLOUT | (b_in ? POLLIN : 0);
+    tty_drain(t);
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
+    uint32_t u_mask = (readable(t) ? POLLIN : 0)
+                      | ((t->p_end->room == NULL || t->p_end->room(t) > 0)
+                         ? POLLOUT : 0);
+    if (t->b_hung) {
+        u_mask = POLLIN | POLLOUT | POLLERR | POLLHUP;
+    }
+    spin_unlock_irq(&g_tty_lock, u_flags);
+    return u_mask;
 }
 
 /*
@@ -596,7 +651,7 @@ static uint32_t tty_poll(struct file *p_file)
 static void set_termios(struct tty *t, const struct termios *p_new,
                         bool b_flush)
 {
-    uint64_t u_flags = spin_lock_irq(&tty_lock);
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
     bool b_was = (t->termios.c_lflag & ICANON) != 0;
     bool b_now = (p_new->c_lflag & ICANON) != 0;
     if (b_was && !b_now) {
@@ -612,15 +667,15 @@ static void set_termios(struct tty *t, const struct termios *p_new,
         t->p_end->flush(t);
     }
     t->termios = *p_new;
-    spin_unlock_irq(&tty_lock, u_flags);
+    spin_unlock_irq(&g_tty_lock, u_flags);
 }
 
 /* the caller's own terminal, or why not: -ENOTTY for any other */
 static int64_t check_own(struct tty *t)
 {
-    uint64_t u_flags = spin_lock_irq(&tty_lock);
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
     bool b_own = ctty_of(current_pid()) == t;
-    spin_unlock_irq(&tty_lock, u_flags);
+    spin_unlock_irq(&g_tty_lock, u_flags);
     return b_own ? 0 : -ENOTTY;
 }
 
@@ -636,7 +691,7 @@ static int64_t take_as_own(struct tty *t, uint64_t u_arg)
     if (p == NULL || p->i_sid != i_pid) {
         return -EPERM;
     }
-    uint64_t u_flags = spin_lock_irq(&tty_lock);
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
     struct tty *p_own = ctty_of(i_pid);
     int64_t i_result = 0;
     if (p_own == t) {
@@ -649,7 +704,7 @@ static int64_t take_as_own(struct tty *t, uint64_t u_arg)
         t->i_session = p->i_sid;
         t->i_pgrp = p->pgid;
     }
-    spin_unlock_irq(&tty_lock, u_flags);
+    spin_unlock_irq(&g_tty_lock, u_flags);
 
     /* and a console's, the kernel's own lines about it appear on it */
     struct thread *p_me = sched_current();
@@ -678,7 +733,7 @@ static int64_t set_front(struct tty *t, uint64_t u_arg)
         return -EPERM;
     }
     const struct process *p_member = process_find(i_member);
-    uint64_t u_flags = spin_lock_irq(&tty_lock);
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
     int64_t i_result = -EPERM;
     if (ctty_of(current_pid()) != t) {
         i_result = -ENOTTY;
@@ -686,7 +741,7 @@ static int64_t set_front(struct tty *t, uint64_t u_arg)
         t->i_pgrp = i_pgrp;
         i_result = 0;
     }
-    spin_unlock_irq(&tty_lock, u_flags);
+    spin_unlock_irq(&g_tty_lock, u_flags);
     return i_result;
 }
 
@@ -698,12 +753,12 @@ static int64_t let_go(struct tty *t)
         return i_why;
     }
     const struct process *p = process_find(current_pid());
-    uint64_t u_flags = spin_lock_irq(&tty_lock);
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
     if (p != NULL && p->i_sid == p->pid) {
         t->i_session = 0;
         t->i_pgrp = TTY_NOBODY;
     }
-    spin_unlock_irq(&tty_lock, u_flags);
+    spin_unlock_irq(&g_tty_lock, u_flags);
     return 0;
 }
 
@@ -712,17 +767,46 @@ static int64_t put_int(uint64_t u_to, int32_t i_value)
     return (put_user_i32(u_to, i_value) == 0) ? 0 : -EFAULT;
 }
 
-static int64_t tty_ioctl(struct file *p_file, uint32_t u_cmd, uint64_t u_arg)
+/* the size the far side says, and a new one, which the group in front hears */
+static int64_t get_size(struct tty *t, uint64_t u_arg)
 {
-    struct tty *t = p_file->p_private;
+    struct winsize size;
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
+    t->p_end->size(t, &size);
+    spin_unlock_irq(&g_tty_lock, u_flags);
+    return (copy_to_user(u_arg, &size, sizeof size) == 0) ? 0 : -EFAULT;
+}
+
+static int64_t set_size(struct tty *t, uint64_t u_arg)
+{
+    struct winsize size;
+    /* a console is the size of the screen, which nothing here changes */
+    if (t->p_end->resize == NULL) {
+        return -EINVAL;
+    }
+    if (copy_from_user(&size, u_arg, sizeof size) != 0) {
+        return -EFAULT;
+    }
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
+    bool b_changed = t->p_end->resize(t, &size);
+    int i_pgrp = tty_front(t);
+    spin_unlock_irq(&g_tty_lock, u_flags);
+    if (b_changed && i_pgrp != TTY_NOBODY) {
+        process_signal_group(i_pgrp, SIGWINCH);
+    }
+    return 0;
+}
+
+int64_t tty_request(struct tty *t, uint32_t u_cmd, uint64_t u_arg)
+{
     struct termios termios;
     int64_t i_why;
 
     switch (u_cmd) {
     case TCGETS: {
-        uint64_t u_flags = spin_lock_irq(&tty_lock);
+        uint64_t u_flags = spin_lock_irq(&g_tty_lock);
         termios = t->termios;
-        spin_unlock_irq(&tty_lock, u_flags);
+        spin_unlock_irq(&g_tty_lock, u_flags);
         return (copy_to_user(u_arg, &termios, sizeof termios) == 0)
                ? 0 : -EFAULT;
     }
@@ -738,27 +822,10 @@ static int64_t tty_ioctl(struct file *p_file, uint32_t u_cmd, uint64_t u_arg)
         }
         set_termios(t, &termios, u_cmd == TCSETSF);
         return 0;
-    case TIOCGWINSZ: {
-        size_t sz_cols = 0, sz_rows = 0, sz_width = 0, sz_height = 0;
-        console_size(&sz_cols, &sz_rows, &sz_width, &sz_height);
-        /*
-         * a machine with no framebuffer answers zero, and a program
-         * that believed it would divide by it. eighty by twenty-four is
-         * what every terminal has been since the vt100
-         */
-        if (sz_cols == 0 || sz_rows == 0) {
-            sz_cols = 80;
-            sz_rows = 24;
-        }
-        struct winsize size = {
-            .ws_row = (uint16_t)sz_rows, .ws_col = (uint16_t)sz_cols,
-            .ws_xpixel = (uint16_t)sz_width, .ws_ypixel = (uint16_t)sz_height,
-        };
-        return (copy_to_user(u_arg, &size, sizeof size) == 0) ? 0 : -EFAULT;
-    }
+    case TIOCGWINSZ:
+        return get_size(t, u_arg);
     case TIOCSWINSZ:
-        /* a console is the size of the screen, which nothing here changes */
-        return -EINVAL;
+        return set_size(t, u_arg);
     case TIOCGPGRP:
         i_why = check_own(t);
         return (i_why < 0) ? i_why : put_int(u_arg, t->i_pgrp);
@@ -772,10 +839,10 @@ static int64_t tty_ioctl(struct file *p_file, uint32_t u_cmd, uint64_t u_arg)
     case TIOCNOTTY:
         return let_go(t);
     case FIONREAD: {
-        drain(t);
-        uint64_t u_flags = spin_lock_irq(&tty_lock);
+        tty_drain(t);
+        uint64_t u_flags = spin_lock_irq(&g_tty_lock);
         int32_t i_count = (int32_t)t->sz_ready;
-        spin_unlock_irq(&tty_lock, u_flags);
+        spin_unlock_irq(&g_tty_lock, u_flags);
         return put_int(u_arg, i_count);
     }
     case TCFLSH:
@@ -797,44 +864,111 @@ static int64_t tty_ioctl(struct file *p_file, uint32_t u_cmd, uint64_t u_arg)
     }
 }
 
+/*
+ * a request of a terminal whose far side is gone is -EIO, except that
+ * putting a group in front of it is a terminal that is not the caller's
+ * any more
+ */
+static int64_t tty_ioctl(struct file *p_file, uint32_t u_cmd, uint64_t u_arg)
+{
+    struct tty *t = p_file->p_private;
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
+    bool b_hung = t->b_hung;
+    spin_unlock_irq(&g_tty_lock, u_flags);
+    if (b_hung) {
+        return (u_cmd == TIOCSPGRP) ? -ENOTTY : -EIO;
+    }
+    return tty_request(t, u_cmd, u_arg);
+}
+
+static int64_t tty_opening(struct file *p_file, int i_flags)
+{
+    struct tty *t = p_file->p_private;
+    (void)i_flags;
+    if (t->p_end->may_open == NULL) {
+        return 0;
+    }
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
+    int64_t i_why = t->p_end->may_open(t);
+    spin_unlock_irq(&g_tty_lock, u_flags);
+    return i_why;
+}
+
+static void tty_release(struct file *p_file)
+{
+    struct tty *t = p_file->p_private;
+    if (t->p_end->detach != NULL) {
+        t->p_end->detach(t);
+    }
+}
+
 static const struct file_operations tty_ops = {
     .read = tty_read,
     .write = tty_write,
     .poll = tty_poll,
     .ioctl = tty_ioctl,
+    .open = tty_opening,
+    .release = tty_release,
 };
+
+struct file *tty_file(struct tty *t, uint32_t u_mode)
+{
+    struct file *p_file = file_alloc(&tty_ops, u_mode, FILE_TYPE_TTY);
+    if (p_file == NULL) {
+        return NULL;
+    }
+    p_file->p_private = t;
+    p_file->u_rdev = t->u_rdev;
+    if (t->p_end->attach != NULL) {
+        t->p_end->attach(t);
+    }
+    return p_file;
+}
 
 struct file *tty_open(unsigned u_console, uint32_t u_mode)
 {
     if (u_console >= VCONSOLE_COUNT) {
         return NULL;
     }
-    struct file *p_file = file_alloc(&tty_ops, u_mode, FILE_TYPE_TTY);
-    if (p_file == NULL) {
-        return NULL;
-    }
-    uint64_t u_flags = spin_lock_irq(&tty_lock);
-    p_file->p_private = tty_at(u_console);
-    spin_unlock_irq(&tty_lock, u_flags);
-    p_file->u_rdev = (TTY_MAJOR << 8) | (u_console + 1);
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
+    struct file *p_file = tty_file(tty_at(u_console), u_mode);
+    spin_unlock_irq(&g_tty_lock, u_flags);
     return p_file;
 }
 
+/*
+ * found and opened under one hold of the lock, so a pty cannot be let go
+ * of in between
+ */
 struct file *tty_open_own(uint32_t u_mode)
 {
-    uint64_t u_flags = spin_lock_irq(&tty_lock);
-    const struct tty *t = ctty_of(current_pid());
-    unsigned u_console = (t != NULL) ? t->u_console : VCONSOLE_COUNT;
-    spin_unlock_irq(&tty_lock, u_flags);
-    return tty_open(u_console, u_mode);
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
+    struct tty *t = ctty_of(current_pid());
+    struct file *p_file = (t != NULL) ? tty_file(t, u_mode) : NULL;
+    spin_unlock_irq(&g_tty_lock, u_flags);
+    return p_file;
 }
 
 int tty_foreground(unsigned u_console)
 {
-    uint64_t u_flags = spin_lock_irq(&tty_lock);
-    struct tty *t = tty_at(u_console);
-    settle(t);
-    int i_pgrp = t->i_pgrp;
-    spin_unlock_irq(&tty_lock, u_flags);
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
+    int i_pgrp = tty_front(tty_at(u_console));
+    spin_unlock_irq(&g_tty_lock, u_flags);
     return i_pgrp;
+}
+
+void tty_hangup(struct tty *t)
+{
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
+    settle(t);
+    int i_leader = t->i_session;
+    t->b_hung = true;
+    t->i_session = 0;
+    t->i_pgrp = TTY_NOBODY;
+    forget(t);
+    spin_unlock_irq(&g_tty_lock, u_flags);
+    if (i_leader != 0) {
+        process_signal(i_leader, SIGHUP);
+        process_signal(i_leader, SIGCONT);
+    }
 }

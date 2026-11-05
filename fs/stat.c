@@ -35,6 +35,7 @@ static uint64_t dev_of(const struct vfs_file *p_node)
     case VFS_DISK:    return disk_dev(p_node->mount);
     case VFS_PROC:    return DEVNO(0, 2);
     case VFS_DEV:     return DEVNO(0, 3);
+    case VFS_PTS:     return DEVNO(0, 4);
     case VFS_RAMFS:   return DEVNO(0, 16 + p_node->mount);
     default:          return 0;
     }

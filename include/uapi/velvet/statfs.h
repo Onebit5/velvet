@@ -28,6 +28,7 @@ struct statfs {
 #define EXT4_SUPER_MAGIC  0xef53        /* ext2 and ext4 alike */
 #define MSDOS_SUPER_MAGIC 0x4d44        /* fat */
 #define PROC_SUPER_MAGIC  0x9fa0
+#define DEVPTS_SUPER_MAGIC 0x1cd1
 #define RAMFS_MAGIC       0x858458f6
 #define TMPFS_MAGIC       0x01021994    /* and devtmpfs, which is one */
 #define PIPEFS_MAGIC      0x50495045

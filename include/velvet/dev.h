@@ -30,6 +30,9 @@ uint32_t dev_rdev(size_t sz_index);
 /* a drive or a partition, rather than a device read a character at a time */
 bool dev_is_block(size_t sz_index);
 
+/* a directory, which a filesystem is mounted on, rather than a device */
+bool dev_is_dir(size_t sz_index);
+
 /* which one is called str_name: true and its index, or false */
 bool dev_find(const char *str_name, size_t *p_index);
 

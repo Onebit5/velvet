@@ -24,6 +24,7 @@ under it; the kernel's own image does that, and ends up with
     /          the system disk
     /boot      the archive, in memory
     /dev       the devices, moved here from the archive
+    /dev/pts   the ptys, mounted by /init and moved with /dev
     /proc      what the kernel says about itself, mounted by /init
     /work      a second filesystem, when the drive holds one
 
@@ -38,14 +39,17 @@ out, and a listing of the directory it stands in leaves it out.
 ``mount`` adds to the table and ``umount2`` takes from it, root's both
 (``fs/namespace.c``). what can be mounted is ext2, ext3 and ext4, one
 driver, and vfat, each off a drive or a partition named in /dev; ramfs,
-also called tmpfs, with ``mode=`` for its root; and /proc and /dev in a
-second place. it hangs over a directory that is there, which goes out of
-sight until the mount comes down. a mount comes down only when nothing
-stands on it, no file is open on it and no working directory is in it,
-and a call in the middle of a name under one counts it, so it cannot go
-out from under that call on another core. ``statfs`` says what kind of
-filesystem a name is on, by the number every program knows that kind by,
-and how full it is.
+also called tmpfs, with ``mode=`` for its root; devpts, the ptys, with
+``uid=``, ``gid=``, ``mode=`` and ``ptmxmode=`` for whose and how open
+what it makes is; and /proc and /dev in a second place. there is one set
+of ptys, so every devpts is the same one, and a mount's options are the
+ones taken from then on. a mount hangs over a directory that is there,
+which goes out of sight until the mount comes down. it comes down only
+when nothing stands on it, no file is open on it and no working
+directory is in it, and a call in the middle of a name under one counts
+it, so it cannot go out from under that call on another core. ``statfs``
+says what kind of filesystem a name is on, by the number every program
+knows that kind by, and how full it is.
 
 ``MS_MOVE`` moves a mount, with every mount standing on it, and
 ``pivot_root`` makes one mount the root and puts the old root under it,
@@ -120,9 +124,13 @@ filesystem is where.
 ``dev.c`` is a table of devices, opened by name: ``null``, which reads as
 the end and swallows what is written; ``zero``, which reads as zeroes;
 ``full``, which reads as zeroes and has no room to write; ``random`` and
-``urandom``, the same generator; and ``tty`` and ``console``, the
-terminal. each is a file with operations of its own, and like /proc
-nothing under /dev is stored anywhere.
+``urandom``, the same generator; ``tty`` and ``console``, the terminal;
+and ``ptmx``, which makes a pty each time it is opened, and ``pts``, an
+empty directory for devpts to be mounted on, since nothing can make one
+in /dev. each is a file with operations of its own, and like /proc
+nothing under /dev is stored anywhere. devpts lists ``ptmx`` again and
+``N`` for each pty whose master is open, the slave's device, 136 and N,
+and the pty is gone from it the moment its master closes.
 
 after them come the drives and their partitions, as the disk layer found
 them: ``sda`` for the first drive and ``sda1`` for the first partition

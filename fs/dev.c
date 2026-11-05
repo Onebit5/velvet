@@ -2,14 +2,15 @@
 /*
  * fs/dev.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * /dev: nothing, zeroes, a full disk, randomness, the terminals, and the
- * drives with their partitions.
+ * /dev: nothing, zeroes, a full disk, randomness, the terminals and the
+ * ptys, and the drives with their partitions.
  */
 
 #include <velvet/dev.h>
 #include <velvet/blockdev.h>
 #include <velvet/disk.h>
 #include <velvet/file.h>
+#include <velvet/pty.h>
 #include <velvet/random.h>
 #include <velvet/string.h>
 #include <velvet/tty.h>
@@ -93,10 +94,15 @@ static const struct file_operations random_ops = {
 /*
  * the terminals are tty.c's own. /dev/ttyN is console N's, from 1 as the
  * consoles are numbered on the keyboard, /dev/console is the first, the
- * one the kernel speaks on, and /dev/tty is whichever is the caller's
+ * one the kernel speaks on, and /dev/tty is whichever is the caller's.
+ * /dev/ptmx makes a pty, and /dev/pts is a directory for /dev/pts to be
+ * mounted on, which a system's /init does, since nothing here makes
+ * directories in /dev
  */
 #define DEV_TTY_OWN (-1)
 #define DEV_NOT_TTY (-2)
+#define DEV_PTMX    (-3)
+#define DEV_DIR     (-4)
 
 struct dev_entry {
     const char *str_name;
@@ -116,6 +122,8 @@ static const struct dev_entry s_arr_devs[] = {
     { "urandom", 0666, DEVNO(1, 9), &random_ops, DEV_NOT_TTY },
     { "tty",     0666, DEVNO(5, 0), NULL,        DEV_TTY_OWN },
     { "console", 0600, DEVNO(5, 1), NULL,        0 },
+    { "ptmx",    0666, PTMX_RDEV,   NULL,        DEV_PTMX },
+    { "pts",     0755, 0,           NULL,        DEV_DIR },
     { "tty1",    0620, DEVNO(TTY_MAJOR, 1), NULL, 0 },
     { "tty2",    0620, DEVNO(TTY_MAJOR, 2), NULL, 1 },
     { "tty3",    0620, DEVNO(TTY_MAJOR, 3), NULL, 2 },
@@ -168,6 +176,11 @@ bool dev_is_block(size_t sz_index)
     return block_at(sz_index) != NULL;
 }
 
+bool dev_is_dir(size_t sz_index)
+{
+    return sz_index < DEV_COUNT && s_arr_devs[sz_index].i_console == DEV_DIR;
+}
+
 bool dev_find(const char *str_name, size_t *p_index)
 {
     size_t sz_count = dev_count();
@@ -182,9 +195,12 @@ bool dev_find(const char *str_name, size_t *p_index)
 
 struct file *dev_open_rdev(uint32_t u_rdev, uint32_t u_mode)
 {
+    if (u_rdev >> 8 == PTY_MAJOR) {
+        return pty_open_slave(u_rdev & 0xff, u_mode);
+    }
     size_t sz_count = dev_count();
     for (size_t sz_at = 0; sz_at < sz_count; sz_at++) {
-        if (dev_rdev(sz_at) == u_rdev) {
+        if (dev_rdev(sz_at) == u_rdev && !dev_is_dir(sz_at)) {
             return dev_open(sz_at, u_mode);
         }
     }
@@ -201,8 +217,14 @@ struct file *dev_open(size_t sz_index, uint32_t u_mode)
         return NULL;
     }
     const struct dev_entry *p_dev = &s_arr_devs[sz_index];
+    if (p_dev->i_console == DEV_DIR) {
+        return NULL;
+    }
     if (p_dev->i_console == DEV_TTY_OWN) {
         return tty_open_own(u_mode);
+    }
+    if (p_dev->i_console == DEV_PTMX) {
+        return pty_open_master(u_mode);
     }
     if (p_dev->i_console >= 0) {
         return tty_open((unsigned)p_dev->i_console, u_mode);

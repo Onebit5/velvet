@@ -19,6 +19,7 @@
 #include <velvet/process.h>
 #include <velvet/proc.h>
 #include <velvet/dev.h>
+#include <velvet/pty.h>
 #include <velvet/spinlock.h>
 #include <velvet/string.h>
 
@@ -198,6 +199,19 @@ static void from_disk(struct vfs_file *out, const struct disk_entry *e,
     out->u_rdev = e->u_rdev;
 }
 
+/* a name in /dev/pts as the namespace describes one: a terminal's device */
+static void from_pty(struct vfs_file *p_out, const struct pty_node *p_node)
+{
+    memset(p_out, 0, sizeof *p_out);
+    p_out->kind = VFS_PTS;
+    copy_name(p_out->name, p_node->arr_name);
+    p_out->u_type = S_IFCHR;
+    p_out->u_rdev = p_node->u_rdev;
+    p_out->mode = p_node->u_mode & 07777;
+    p_out->uid = p_node->u_uid;
+    p_out->gid = p_node->u_gid;
+}
+
 /*
  * a ramfs node as the namespace describes one. the time goes the way a
  * fat one would, broken down, because that is what a node carries
@@ -313,7 +327,16 @@ static bool lookup_own(const struct mount_point *p_mount, const char *str_rest,
         }
         copy_name(p_out->name, str_name);
         p_out->mode = dev_mode(p_out->sz_dev);
+        p_out->is_dir = dev_is_dir(p_out->sz_dev);
         return true;
+    case VFS_PTS: {
+        struct pty_node node;
+        if (!pty_node_named(str_name, &node)) {
+            return false;
+        }
+        from_pty(p_out, &node);
+        return true;
+    }
     default:
         return false;
     }
@@ -410,7 +433,16 @@ static bool readdir_in(const struct mount_point *p_mount,
         p_out->kind = VFS_DEV;
         p_out->sz_dev = sz_index;
         p_out->mode = dev_mode(sz_index);
+        p_out->is_dir = dev_is_dir(sz_index);
         copy_name(p_out->name, name);
+        return true;
+    }
+    case VFS_PTS: {
+        struct pty_node node;
+        if (str_name[0] != '\0' || !pty_node_at(sz_index, &node)) {
+            return false;
+        }
+        from_pty(p_out, &node);
         return true;
     }
     default:
@@ -925,6 +957,7 @@ static const char *type_of(const struct mount_point *p_mount)
     case VFS_RAMFS:   return "ramfs";
     case VFS_PROC:    return "proc";
     case VFS_DEV:     return "devtmpfs";
+    case VFS_PTS:     return "devpts";
     default:          return "none";
     }
 }
@@ -940,6 +973,7 @@ static const char *source_of(const struct mount_point *p_mount)
         return disk_ready(p_mount->sz_slot) ? "a drive" : "nothing";
     case VFS_PROC:    return "the kernel, as it is read";
     case VFS_DEV:     return "the kernel's devices";
+    case VFS_PTS:     return "the kernel's ptys";
     default:          return "memory";
     }
 }

@@ -513,8 +513,9 @@ $(T)/pci:      tests/test_pci.c      drivers/pci.c \
 $(T)/acpi:     tests/test_acpi.c     arch/x86_64/acpi.c \
                lib/string.c
 $(T)/tty:      tests/test_tty.c      sched/spinlock.c \
-               drivers/tty.c drivers/termios.c arch/x86_64/uaccess.c \
-               sched/process.c sched/signal.c lib/string.c
+               drivers/tty.c drivers/termios.c drivers/pty.c fs/pipe.c \
+               arch/x86_64/uaccess.c sched/process.c sched/signal.c \
+               lib/string.c
 $(T)/elf:      tests/test_elf.c      fs/elf.c \
                lib/string.c
 $(T)/ramdisk:  tests/test_ramdisk.c  fs/ramdisk.c fs/ramfs.c \

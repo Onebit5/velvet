@@ -333,11 +333,11 @@ static bool find_disk(char *str_root, char *p_drive, int *p_part)
 }
 
 /*
- * what a system's /init does first: /proc, and the disk that holds the
- * system made the root, with /dev and /proc moved onto it and the
- * archive this came from put under it at /boot, and then the next
- * partition on that drive that holds a filesystem at /work. with no
- * disk the archive stays the root
+ * what a system's /init does first: /proc and /dev/pts, and the disk
+ * that holds the system made the root, with /dev and /proc moved onto
+ * it, /dev/pts going with /dev, and the archive this came from put
+ * under it at /boot, and then the next partition on that drive that
+ * holds a filesystem at /work. with no disk the archive stays the root
  */
 static void start_system(void)
 {
@@ -348,6 +348,9 @@ static void start_system(void)
     mkdir("/proc", 0555);
     if (mount("proc", "/proc", "proc", 0, NULL) != 0) {
         say("/proc would not mount: %s\n", strerror(errno));
+    }
+    if (mount("devpts", "/dev/pts", "devpts", 0, NULL) != 0) {
+        say("/dev/pts would not mount: %s\n", strerror(errno));
     }
     mkdir(NEW_ROOT, 0755);
     if (!find_disk(arr_dev, &c_drive, &i_part)) {

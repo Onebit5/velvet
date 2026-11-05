@@ -455,6 +455,32 @@ struct file *tty_open_own(uint32_t u_mode)
     return NULL;
 }
 
+/* the ptys are drivers/pty.c's, and nothing here mounts /dev/pts */
+#include <velvet/pty.h>
+struct file *pty_open_master(uint32_t u_mode)
+{
+    (void)u_mode;
+    return NULL;
+}
+struct file *pty_open_slave(uint32_t u_minor, uint32_t u_mode)
+{
+    (void)u_minor;
+    (void)u_mode;
+    return NULL;
+}
+bool pty_node_named(const char *str_name, struct pty_node *p_out)
+{
+    (void)str_name;
+    (void)p_out;
+    return false;
+}
+bool pty_node_at(size_t sz_index, struct pty_node *p_out)
+{
+    (void)sz_index;
+    (void)p_out;
+    return false;
+}
+
 /* the slab a file comes from, as plain malloc */
 #include <velvet/file.h>
 #include <velvet/dev.h>
@@ -940,6 +966,12 @@ int main(void)
               && f.mode == 0666 && vfs_may_read(&f, 1000),
               "/dev/null is a device anybody may use");
         CHECK(!vfs_open("/dev/nothing", &f), "and a name it lacks is not");
+        CHECK(vfs_open("/dev/pts", &f) && f.is_dir && f.kind == VFS_DEV
+              && !vfs_is_device(&f) && !vfs_open("/dev/pts/0", &f),
+              "/dev/pts is a directory, empty until it is mounted on");
+        CHECK(vfs_open("/dev/ptmx", &f) && !f.is_dir && vfs_is_device(&f)
+              && f.mode == 0666,
+              "and /dev/ptmx a device anybody may open, to make a pty");
 
         vfs_open("/dev/null", &f);
         p_file = vfs_open_file(&f, FILE_READ | FILE_WRITE);

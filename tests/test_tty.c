@@ -158,16 +158,62 @@ void file_get(struct file *p_file)
 void file_put(struct file *p_file)
 {
     if (p_file != NULL && --p_file->u_refs == 0) {
+        if (p_file->p_ops->release != NULL) {
+            p_file->p_ops->release(p_file);
+        }
         free(p_file);
     }
 }
 
+/* the heap, as plain malloc, and a sleep that is over at once */
+void *kmalloc(size_t sz_size)
+{
+    return calloc(1, sz_size);
+}
+void kfree(void *p_ptr)
+{
+    free(p_ptr);
+}
+void waitq_enqueue(struct waitq *p_q)
+{
+    (void)p_q;
+}
+void waitq_sleep(void)
+{
+}
+void waitq_wake_all(struct waitq *p_q)
+{
+    (void)p_q;
+}
+
+/* a descriptor is a number handed out in order, the file kept for the test */
+static struct file *s_p_installed;
+int64_t install_fd(struct file *p_file, bool b_cloexec)
+{
+    (void)b_cloexec;
+    s_p_installed = p_file;
+    return 7;
+}
+
 #include <velvet/process.h>
 #include <velvet/tty.h>
+#include <velvet/pty.h>
 #include <velvet/input.h>
 #include <velvet/termios.h>
 #include <velvet/errno.h>
 #include <uapi/velvet/fcntl.h>
+/* the host's select.h has a FD_SETSIZE of its own, and this one is the same */
+#undef FD_SETSIZE
+#include <uapi/velvet/poll.h>
+
+int current_uid(void)
+{
+    return process_uid(this_thread.pid);
+}
+int current_gid(void)
+{
+    return 100;
+}
 
 static int failures;
 #define CHECK(c, m) do { if (!(c)) { printf("FAIL: %s\n", m); failures++; } } while (0)
@@ -442,6 +488,168 @@ int main(void)
     process_exited(i_shell, 0, 10);
     CHECK(tty_foreground(1) == TTY_NOBODY,
           "the terminal of a session whose leader is gone is nobody's");
+
+    /* a pty: the same discipline, with a program at each end of it */
+    int i_term = process_create("term", 0, 1000, false, 0);
+    be(i_term, 0);
+    struct file *p_master = pty_open_master(FILE_READ | FILE_WRITE);
+    int32_t i_n = -1;
+    CHECK(p_master != NULL && p_master->u_rdev == PTMX_RDEV
+          && ctl(p_master, TIOCGPTN, &i_n) == 0 && i_n == 0,
+          "opening ptmx makes pty 0, and is its master");
+    struct pty_node node;
+    CHECK(pty_node_named("0", &node)
+          && node.u_rdev == ((PTY_MAJOR << 8) | 0) && node.u_uid == 1000
+          && node.u_gid == 100 && node.u_mode == 0600
+          && !pty_node_named("1", &node) && !pty_node_named("00", &node),
+          "and /dev/pts/0, the opener's to use, and no other");
+    struct file *p_slave = pty_open_slave(0, FILE_READ | FILE_WRITE);
+    CHECK(p_slave != NULL && p_slave->p_ops->open(p_slave, O_RDWR) == -EIO,
+          "the slave may not be opened until it is unlocked");
+    file_put(p_slave);
+    int32_t i_lock = 0;
+    CHECK(ctl(p_master, TIOCSPTLCK, &i_lock) == 0
+          && ctl(p_master, TIOCGPTLCK, &i_lock) == 0 && i_lock == 0,
+          "which is TIOCSPTLCK with 0");
+    CHECK(ctl(p_master, TIOCGPTPEER, (void *)(uintptr_t)O_RDWR) == 7
+          && s_p_installed->u_rdev == ((PTY_MAJOR << 8) | 0),
+          "and the slave opens then, from the master as well as by name");
+    file_put(s_p_installed);
+    p_slave = pty_open_slave(0, FILE_READ | FILE_WRITE);
+    CHECK(p_slave != NULL && p_slave->p_ops->open(p_slave, O_RDWR) == 0
+          && p_slave->u_rdev == ((PTY_MAJOR << 8) | 0),
+          "by name it is /dev/pts/0, 136, 0");
+    p_master->u_flags |= O_NONBLOCK;
+    p_slave->u_flags |= O_NONBLOCK;
+
+    CHECK(p_master->p_ops->write(p_master, "ls\r", 3) == 3
+          && rd(p_slave, arr_buf, sizeof arr_buf) == 3
+          && strcmp(arr_buf, "ls\n") == 0,
+          "what the master writes is typed at the terminal");
+    CHECK(rd(p_master, arr_buf, sizeof arr_buf) == 4
+          && strcmp(arr_buf, "ls\r\n") == 0,
+          "and the master reads the echo, as output processing makes it");
+    CHECK(p_slave->p_ops->write(p_slave, "a\nb", 3) == 3
+          && rd(p_master, arr_buf, sizeof arr_buf) == 4
+          && strcmp(arr_buf, "a\r\nb") == 0,
+          "and what a program on the slave writes, a newline as two");
+    CHECK(p_master->p_ops->write(p_master, "one\rtwo\r", 8) == 8
+          && rd(p_master, arr_buf, sizeof arr_buf) == 10
+          && strcmp(arr_buf, "one\r\ntwo\r\n") == 0,
+          "lines typed ahead are echoed before any is read");
+    CHECK(rd(p_slave, arr_buf, sizeof arr_buf) == 4
+          && rd(p_slave, arr_buf, sizeof arr_buf) == 4
+          && strcmp(arr_buf, "two\n") == 0
+          && rd(p_master, arr_buf, sizeof arr_buf) == -EAGAIN
+          && rd(p_slave, arr_buf, sizeof arr_buf) == -EAGAIN,
+          "and read one at a time, neither end waiting when told not to");
+    int32_t i_waiting = -1;
+    p_slave->p_ops->write(p_slave, "xyz", 3);
+    CHECK(ctl(p_master, FIONREAD, &i_waiting) == 0 && i_waiting == 3
+          && rd(p_master, arr_buf, sizeof arr_buf) == 3,
+          "FIONREAD on the master counts what it may read");
+
+    struct termios pty_mode;
+    CHECK(ctl(p_master, TCGETS, &pty_mode) == 0
+          && (pty_mode.c_lflag & ICANON),
+          "the master's modes are the slave's");
+    struct termios pty_raw = pty_mode;
+    pty_raw.c_lflag &= ~(uint32_t)(ICANON | ECHO);
+    pty_raw.c_oflag &= ~(uint32_t)OPOST;
+    ctl(p_master, TCSETS, &pty_raw);
+    CHECK(p_master->p_ops->write(p_master, "q", 1) == 1
+          && rd(p_slave, arr_buf, sizeof arr_buf) == 1 && arr_buf[0] == 'q'
+          && rd(p_master, arr_buf, sizeof arr_buf) == -EAGAIN
+          && p_slave->p_ops->write(p_slave, "\n", 1) == 1
+          && rd(p_master, arr_buf, sizeof arr_buf) == 1
+          && arr_buf[0] == '\n',
+          "and set through it: raw, unechoed, a newline only a newline");
+    ctl(p_master, TCSETS, &pty_mode);
+
+    /* a session on the slave: its size, and the keys that are signals */
+    int i_sh = process_create("sh", 0, 1000, false, 0);
+    be(i_sh, 0);
+    CHECK(ctl(p_slave, TIOCSCTTY, NULL) == 0,
+          "a session leader takes the slave for its terminal");
+    struct file *p_mine = tty_open_own(FILE_READ);
+    CHECK(p_mine != NULL && p_mine->p_private == p_slave->p_private
+          && p_mine->u_rdev == p_slave->u_rdev,
+          "and /dev/tty is it");
+    file_put(p_mine);
+    struct signal_state *p_shsig = process_signal_state(i_sh);
+    struct sigaction catch_it = { .sa_handler = 0x1000 };
+    signal_set_action(p_shsig, SIGWINCH, &catch_it);
+    be(i_term, 0);
+    struct winsize ws = { .ws_row = 50, .ws_col = 132 };
+    struct winsize ws_got;
+    CHECK(ctl(p_master, TIOCSWINSZ, &ws) == 0
+          && (p_shsig->pending & SIGNAL_BIT(SIGWINCH))
+          && ctl(p_slave, TIOCGWINSZ, &ws_got) == 0 && ws_got.ws_col == 132
+          && ws_got.ws_row == 50,
+          "a size the master sets is SIGWINCH to the group in front, and "
+          "what the slave is told");
+    p_shsig->pending = 0;
+    CHECK(ctl(p_master, TIOCSWINSZ, &ws) == 0 && p_shsig->pending == 0,
+          "the same size again changes nothing, and nobody hears of it");
+    CHECK(p_master->p_ops->write(p_master, "x\x03", 2) == 2
+          && (p_shsig->pending & SIGNAL_BIT(SIGINT))
+          && rd(p_slave, arr_buf, sizeof arr_buf) == -EAGAIN
+          && rd(p_master, arr_buf, sizeof arr_buf) == 2
+          && strcmp(arr_buf, "^C") == 0,
+          "ctrl+c written to the master is SIGINT to the group in front, "
+          "and throws away what was typed before it");
+    p_shsig->pending = 0;
+    int32_t i_front = -1;
+    CHECK(ctl(p_master, TIOCGPGRP, &i_front) == 0 && i_front == i_sh,
+          "the master is told who is in front, though it is not its "
+          "terminal");
+
+    /* the slave closed, and the master closed */
+    file_put(p_slave);
+    CHECK(rd(p_master, arr_buf, sizeof arr_buf) == -EIO
+          && (p_master->p_ops->poll(p_master) & POLLHUP),
+          "with every slave closed the master reads EIO");
+    p_slave = pty_open_slave(0, FILE_READ | FILE_WRITE);
+    p_slave->p_ops->open(p_slave, O_RDWR);
+    p_slave->u_flags |= O_NONBLOCK;
+    CHECK(rd(p_master, arr_buf, sizeof arr_buf) == -EAGAIN,
+          "until one is opened again");
+    struct file *p_other = pty_open_master(FILE_READ | FILE_WRITE);
+    CHECK(ctl(p_other, TIOCGPTN, &i_n) == 0 && i_n == 1
+          && pty_node_at(0, &node) && strcmp(node.arr_name, "ptmx") == 0
+          && pty_node_at(1, &node) && strcmp(node.arr_name, "0") == 0
+          && pty_node_at(2, &node) && strcmp(node.arr_name, "1") == 0
+          && !pty_node_at(3, &node),
+          "a second pty is 1, and /dev/pts lists ptmx and both");
+    file_put(p_other);
+
+    file_put(p_master);
+    CHECK(p_shsig->pending & SIGNAL_BIT(SIGHUP),
+          "closing the master is SIGHUP to the slave's session leader");
+    struct termios hung;
+    CHECK(rd(p_slave, arr_buf, sizeof arr_buf) == 0
+          && p_slave->p_ops->write(p_slave, "z", 1) == -EIO
+          && (p_slave->p_ops->poll(p_slave) & POLLHUP)
+          && ctl(p_slave, TCGETS, &hung) == -EIO,
+          "and hangs the slave up: the end to read, EIO for anything else");
+    be(i_sh, 0);
+    CHECK(!pty_node_named("0", &node) && tty_open_own(FILE_READ) == NULL
+          && pty_open_slave(0, FILE_READ) == NULL,
+          "/dev/pts/0 is gone at once, and the session has no terminal");
+    file_put(p_slave);
+    p_master = pty_open_master(FILE_READ | FILE_WRITE);
+    CHECK(p_master != NULL && ctl(p_master, TIOCGPTN, &i_n) == 0 && i_n == 0,
+          "and 0 is free for the next pty");
+    file_put(p_master);
+    char arr_opts[] = "gid=5,mode=620";
+    CHECK(pty_options("mode=8", false) == -EINVAL
+          && pty_options("size=1", false) == -EINVAL
+          && pty_options(arr_opts, true) == 0
+          && (p_master = pty_open_master(FILE_READ)) != NULL
+          && pty_node_named("0", &node) && node.u_mode == 0620
+          && node.u_gid == 5,
+          "a mount's options say how open a slave is, and whose group");
+    file_put(p_master);
 
     /* the keys that were never characters stay the terminal's own */
     CHECK(tty_intercept(KEY_CONSOLE_1 + 2) && s_u_shown == 2,

@@ -26,6 +26,7 @@ enum vfs_kind {
     VFS_PROC,       /* written by the kernel when read, see fs/proc.c */
     VFS_DEV,        /* a device, opened through fs/dev.c */
     VFS_RAMFS,      /* a filesystem kept in memory, see fs/ramfs.c */
+    VFS_PTS,        /* the ptys, see drivers/pty.c */
 };
 
 /* what mount is told a filesystem is, kept to show in /proc/mounts */

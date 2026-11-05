@@ -2,8 +2,9 @@ drivers
 =======
 
 ``drivers/`` is the things that talk to hardware: the console and
-its font, the serial port, the terminal discipline, the keyboard and mouse,
-the timers, the pci bus, the sata controller, and the partition tables.
+its font, the serial port, the terminal discipline and the ptys, the
+keyboard and mouse, the timers, the pci bus, the sata controller, and the
+partition tables.
 
 the console
 -----------
@@ -117,10 +118,14 @@ front and the session it belongs to.
 a terminal is a discipline between two **ends**, a ``struct tty_end``:
 where what is typed at it comes from, and where what it shows goes. the
 discipline is the same for every terminal, and the ends are all that make
-one a console's: the keys typed at that console, out of input's ring, and
-that console's screen. an end can take a byte, throw away what it has not
-handed over, wait for more, and show bytes, and only waiting is done
-without the terminal's lock held.
+one a console's or a pty's: for a console, the keys typed at that
+console, out of input's ring, and that console's screen. an end can take
+a byte, throw away what it has not handed over, wait for more, and show
+bytes; one that can be full says how much room it has and waits for
+more, and one that is not always the size of a screen keeps the size it
+is told. a terminal whose far side can go away keeps count of the files
+open on it and may refuse to be opened, and only waiting and the last
+close are done without the terminal's lock held.
 
 a terminal belongs to a **session**. a session leader with none takes
 one with ``TIOCSCTTY``, and has it until it lets go with ``TIOCNOTTY`` or
@@ -177,6 +182,35 @@ them.
 a key lands in the terminal of the console being looked at, and a reader
 only takes from its own, so a read on a hidden console waits until
 somebody switches to it, and can never take what was typed at another.
+
+a **pty** is a terminal with a program at each end, and ``pty.c`` is its
+two ends. opening ``/dev/ptmx`` makes one and is its master, and the
+slave is ``/dev/pts/N``, which a program opens as it would any terminal,
+because it is one: the discipline, the session, the group in front and
+the signals are a terminal's like any other. what the master writes is
+typed at it, a byte at a time, so ctrl+c written to the master is
+``SIGINT`` to the group in front, and what the master reads is what the
+terminal shows, its echoes and what the slave writes, through output
+processing. each direction is a pipe's ring, kept under the terminals'
+lock, and the master reading or writing is also when what it typed is
+put through the discipline, so the echo is there to be read without the
+program on the slave reading first.
+
+the slave cannot be opened until the master unlocks it with
+``TIOCSPTLCK``, which is ``unlockpt``, and ``TIOCGPTN`` says its number,
+which is ``ptsname``; ``TIOCGPTPEER`` opens it from the master without a
+name. the master's modes and size are the slave's, so ``tcsetattr`` on
+the master is ``tcsetattr`` on the slave, and a size the master sets is
+``SIGWINCH`` to the group in front of the slave. ``TIOCGPGRP`` on the
+master says who that is, though the slave is not the master's terminal.
+
+when the last file on the slave closes, a master reading is told
+``-EIO``, and poll says ``POLLHUP``, until a slave is opened again. when
+the master closes, the pty's number is free and ``/dev/pts/N`` gone at
+once, and the slave is **hung up**: its session's leader is sent
+``SIGHUP`` and then ``SIGCONT``, the terminal is nobody's, and from then
+on a read of it is the end and anything else is ``-EIO``. it is freed
+with the last file on either end.
 
 ``termios.c`` is how a terminal treats what is typed at it, and it is only
 the *policy*: given a ``struct termios`` and a byte, what does the

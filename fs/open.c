@@ -107,6 +107,13 @@ int64_t sys_openat(int i_dirfd, uint64_t u_path, int i_flags,
     p_file->u_mode = u_fmode;
     p_file->u_flags = (uint32_t)i_flags & (O_APPEND | O_NONBLOCK);
     memcpy(p_file->arr_path, arr_path, sizeof p_file->arr_path);
+    i_why = (p_file->p_ops->open != NULL) ? p_file->p_ops->open(p_file,
+                                                                 i_flags)
+                                          : 0;
+    if (i_why < 0) {
+        file_put(p_file);
+        return i_why;
+    }
     return install_fd(p_file, (i_flags & O_CLOEXEC) != 0);
 }
 
@@ -137,7 +144,7 @@ int64_t sys_faccessat(int i_dirfd, uint64_t u_path, int i_mode, int i_flags)
     if (i_why < 0 || i_mode == F_OK) {
         return i_why;
     }
-    if ((i_mode & W_OK) && !node.is_dir && node.kind != VFS_DEV
+    if ((i_mode & W_OK) && !node.is_dir && !vfs_is_device(&node)
         && !vfs_writable(&node)) {
         return -EROFS;
     }

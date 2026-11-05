@@ -30,6 +30,12 @@
 #define FIONCLEX   0x5450
 #define FIOCLEX    0x5451
 
+/* a pty's master: its number, its lock, and its slave opened from it */
+#define TIOCGPTN   0x80045430
+#define TIOCSPTLCK 0x40045431
+#define TIOCGPTLCK 0x80045439
+#define TIOCGPTPEER 0x5441
+
 #define NCCS 19
 
 struct termios {

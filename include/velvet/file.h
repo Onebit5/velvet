@@ -52,6 +52,12 @@ struct file_operations {
     uint32_t (*poll)(struct file *p_file);
     /* a request only this kind of file understands, u_arg as ring 3's */
     int64_t (*ioctl)(struct file *p_file, uint32_t u_cmd, uint64_t u_arg);
+    /*
+     * what a program opening it by name means beyond its being open,
+     * with the flags open was given: 0, or why it may not be, after
+     * which the file is released
+     */
+    int64_t (*open)(struct file *p_file, int i_flags);
 };
 
 /*
