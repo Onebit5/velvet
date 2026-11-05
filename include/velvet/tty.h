@@ -24,6 +24,13 @@
 /* how a terminal is numbered as a device: major 4, and the console + 1 */
 #define TTY_MAJOR 4
 
+/*
+ * and the two names for one that are not its own: /dev/tty, whichever
+ * is the caller's, and /dev/console, the one the kernel speaks on
+ */
+#define TTY_OWN_RDEV     ((5u << 8) | 0u)
+#define TTY_CONSOLE_RDEV ((5u << 8) | 1u)
+
 struct file;
 
 /*

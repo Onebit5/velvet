@@ -128,8 +128,11 @@ open on it and may refuse to be opened, and only waiting and the last
 close are done without the terminal's lock held.
 
 a terminal belongs to a **session**. a session leader with none takes
-one with ``TIOCSCTTY``, and has it until it lets go with ``TIOCNOTTY`` or
-ends; root may take one from another session. every process of the
+one with ``TIOCSCTTY``, or by opening one nobody has, for reading and
+without ``O_NOCTTY``, and has it until it lets go with ``TIOCNOTTY`` or
+ends; root may take one from another session. ``/dev/console`` is never
+taken by being opened, being every session's to write to, and nor is a
+pty's master. every process of the
 session reaches it as ``/dev/tty``, and a process whose session has none
 is told ``-ENXIO`` there. the kernel starts ``/init`` on the first
 console, and an ``/init`` that wants it for its terminal takes it.

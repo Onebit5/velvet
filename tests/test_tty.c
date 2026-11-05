@@ -519,19 +519,22 @@ int main(void)
           && !pty_node_named("1", &node) && !pty_node_named("00", &node),
           "and /dev/pts/0, the opener's to use, and no other");
     struct file *p_slave = pty_open_slave(0, FILE_READ | FILE_WRITE);
-    CHECK(p_slave != NULL && p_slave->p_ops->open(p_slave, O_RDWR) == -EIO,
+    CHECK(p_slave != NULL
+          && p_slave->p_ops->open(p_slave, O_RDWR | O_NOCTTY) == -EIO,
           "the slave may not be opened until it is unlocked");
     file_put(p_slave);
     int32_t i_lock = 0;
     CHECK(ctl(p_master, TIOCSPTLCK, &i_lock) == 0
           && ctl(p_master, TIOCGPTLCK, &i_lock) == 0 && i_lock == 0,
           "which is TIOCSPTLCK with 0");
-    CHECK(ctl(p_master, TIOCGPTPEER, (void *)(uintptr_t)O_RDWR) == 7
+    CHECK(ctl(p_master, TIOCGPTPEER,
+              (void *)(uintptr_t)(O_RDWR | O_NOCTTY)) == 7
           && s_p_installed->u_rdev == ((PTY_MAJOR << 8) | 0),
           "and the slave opens then, from the master as well as by name");
     file_put(s_p_installed);
     p_slave = pty_open_slave(0, FILE_READ | FILE_WRITE);
-    CHECK(p_slave != NULL && p_slave->p_ops->open(p_slave, O_RDWR) == 0
+    CHECK(p_slave != NULL
+          && p_slave->p_ops->open(p_slave, O_RDWR | O_NOCTTY) == 0
           && p_slave->u_rdev == ((PTY_MAJOR << 8) | 0),
           "by name it is /dev/pts/0, 136, 0");
     p_master->u_flags |= O_NONBLOCK;
@@ -625,7 +628,7 @@ int main(void)
           && (p_master->p_ops->poll(p_master) & POLLHUP),
           "with every slave closed the master reads EIO");
     p_slave = pty_open_slave(0, FILE_READ | FILE_WRITE);
-    p_slave->p_ops->open(p_slave, O_RDWR);
+    p_slave->p_ops->open(p_slave, O_RDWR | O_NOCTTY);
     p_slave->u_flags |= O_NONBLOCK;
     CHECK(rd(p_master, arr_buf, sizeof arr_buf) == -EAGAIN,
           "until one is opened again");
@@ -665,6 +668,32 @@ int main(void)
           && node.u_gid == 5,
           "a mount's options say how open a slave is, and whose group");
     file_put(p_master);
+
+    /* a session leader with no terminal takes one by opening it */
+    int i_lead = process_create("getty", 0, 0, false, 0);
+    int i_kid = process_create("kid", i_lead, 0, false, 0);
+    process_inherit(i_kid, i_lead);
+    be(i_kid, 0);
+    struct file *p_third = tty_open(2, FILE_READ | FILE_WRITE);
+    CHECK(p_third->p_ops->open(p_third, O_RDWR) == 0
+          && tty_foreground(2) == TTY_NOBODY,
+          "a process that leads no session does not take what it opens");
+    be(i_lead, 0);
+    CHECK(p_third->p_ops->open(p_third, O_RDWR | O_NOCTTY) == 0
+          && tty_foreground(2) == TTY_NOBODY,
+          "nor does a leader that says O_NOCTTY");
+    struct file *p_wronly = tty_open(2, FILE_WRITE);
+    p_third->u_rdev = TTY_CONSOLE_RDEV;
+    CHECK(p_wronly->p_ops->open(p_wronly, O_WRONLY) == 0
+          && p_third->p_ops->open(p_third, O_RDWR) == 0
+          && tty_foreground(2) == TTY_NOBODY,
+          "or opens it only to write, or opens /dev/console");
+    p_third->u_rdev = (TTY_MAJOR << 8) | 3;
+    CHECK(p_third->p_ops->open(p_third, O_RDWR) == 0
+          && tty_foreground(2) == i_lead,
+          "and otherwise the leader takes it, its group in front");
+    file_put(p_wronly);
+    file_put(p_third);
 
     /* the keys that were never characters stay the terminal's own */
     CHECK(tty_intercept(KEY_CONSOLE_1 + 2) && s_u_shown == 2,

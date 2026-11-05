@@ -120,8 +120,8 @@ static const struct dev_entry s_arr_devs[] = {
     { "full",    0666, DEVNO(1, 7), &full_ops,   DEV_NOT_TTY },
     { "random",  0666, DEVNO(1, 8), &random_ops, DEV_NOT_TTY },
     { "urandom", 0666, DEVNO(1, 9), &random_ops, DEV_NOT_TTY },
-    { "tty",     0666, DEVNO(5, 0), NULL,        DEV_TTY_OWN },
-    { "console", 0600, DEVNO(5, 1), NULL,        0 },
+    { "tty",     0666, TTY_OWN_RDEV, NULL,       DEV_TTY_OWN },
+    { "console", 0600, TTY_CONSOLE_RDEV, NULL,   0 },
     { "ptmx",    0666, PTMX_RDEV,   NULL,        DEV_PTMX },
     { "pts",     0755, 0,           NULL,        DEV_DIR },
     { "tty1",    0620, DEVNO(TTY_MAJOR, 1), NULL, 0 },
@@ -220,14 +220,21 @@ struct file *dev_open(size_t sz_index, uint32_t u_mode)
     if (p_dev->i_console == DEV_DIR) {
         return NULL;
     }
-    if (p_dev->i_console == DEV_TTY_OWN) {
-        return tty_open_own(u_mode);
-    }
     if (p_dev->i_console == DEV_PTMX) {
         return pty_open_master(u_mode);
     }
-    if (p_dev->i_console >= 0) {
-        return tty_open((unsigned)p_dev->i_console, u_mode);
+    /*
+     * a terminal opened by one of its other names is that name's device,
+     * which is how opening /dev/console knows not to make it anybody's
+     */
+    if (p_dev->i_console == DEV_TTY_OWN || p_dev->i_console >= 0) {
+        struct file *p_tty = (p_dev->i_console == DEV_TTY_OWN)
+                             ? tty_open_own(u_mode)
+                             : tty_open((unsigned)p_dev->i_console, u_mode);
+        if (p_tty != NULL) {
+            p_tty->u_rdev = p_dev->u_rdev;
+        }
+        return p_tty;
     }
     struct file *p_file = file_alloc(p_dev->p_ops, u_mode, FILE_TYPE_CHAR);
     if (p_file != NULL) {

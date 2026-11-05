@@ -112,7 +112,7 @@ int main(void)
     int i_status = -1;
 
     ksft_print_header();
-    ksft_set_plan(16);
+    ksft_set_plan(17);
 
     int i_m = posix_openpt(O_RDWR | O_NOCTTY);
     bool b_named = i_m >= 0 && grantpt(i_m) == 0
@@ -177,6 +177,28 @@ int main(void)
                      && ksft_streq(arr_text, "^C"),
                      "and ctrl+c written to the master is SIGINT to it, "
                      "echoed as ^C\n");
+
+    /* a session leader with no terminal takes the one it opens */
+    pid_t i_kid = fork();
+    if (i_kid == 0) {
+        close(i_m);
+        int i_quiet = open(arr_name, O_RDWR | O_NOCTTY);
+        bool b_not_leader = tcgetsid(open(arr_name, O_RDWR)) < 0;
+        setsid();
+        bool b_noctty = tcgetsid(i_quiet) < 0
+                        && tcgetsid(open(arr_name, O_RDWR | O_NOCTTY)) < 0
+                        && tcgetsid(open(arr_name, O_WRONLY)) < 0;
+        int i_own = open(arr_name, O_RDWR);
+        bool b_taken = tcgetsid(i_own) == getpid()
+                       && tcgetpgrp(i_own) == getpgrp();
+        _exit((b_not_leader ? 0 : 1) | (b_noctty ? 0 : 2)
+              | (b_taken ? 0 : 4));
+    }
+    waitpid(i_kid, &i_status, 0);
+    ksft_test_result(ksft_exited(i_status, 0),
+                     "a session leader with no terminal takes the slave by "
+                     "opening it, unless it says O_NOCTTY or only writes, "
+                     "and nobody else does\n");
 
     /* the slave closed, and then the master */
     close(i_s);

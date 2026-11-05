@@ -689,11 +689,13 @@ static int64_t check_own(struct tty *t)
 }
 
 /*
- * become the terminal of the caller's session: only a session leader's,
- * and only when it has none and this one is nobody else's, except that
- * root asking with 1 may take one from another session
+ * t made the terminal of the caller's session: only a session leader's,
+ * and only when it has none and t is nobody else's, unless b_steal says
+ * to take it from whichever session has it. 0 or -EPERM, and for a
+ * console's, the kernel's own lines about the caller appear on it from
+ * then on
  */
-static int64_t take_as_own(struct tty *t, uint64_t u_arg)
+static int64_t claim(struct tty *t, bool b_steal)
 {
     int i_pid = current_pid();
     const struct process *p = process_find(i_pid);
@@ -705,9 +707,7 @@ static int64_t take_as_own(struct tty *t, uint64_t u_arg)
     int64_t i_result = 0;
     if (p_own == t) {
         i_result = 0;
-    } else if (p_own != NULL) {
-        i_result = -EPERM;
-    } else if (t->i_session != 0 && !(p->uid == 0 && u_arg == 1)) {
+    } else if (p_own != NULL || (t->i_session != 0 && !b_steal)) {
         i_result = -EPERM;
     } else {
         t->i_session = p->i_sid;
@@ -715,12 +715,17 @@ static int64_t take_as_own(struct tty *t, uint64_t u_arg)
     }
     spin_unlock_irq(&g_tty_lock, u_flags);
 
-    /* and a console's, the kernel's own lines about it appear on it */
     struct thread *p_me = sched_current();
     if (i_result == 0 && p_me != NULL && t->p_end == &console_end) {
         p_me->console = t->u_console;
     }
     return i_result;
+}
+
+/* TIOCSCTTY, with which root asking with 1 may take one from another session */
+static int64_t take_as_own(struct tty *t, uint64_t u_arg)
+{
+    return claim(t, process_uid(current_pid()) == 0 && u_arg == 1);
 }
 
 /* the group in front, which has to be in the terminal's session */
@@ -890,16 +895,26 @@ static int64_t tty_ioctl(struct file *p_file, uint32_t u_cmd, uint64_t u_arg)
     return tty_request(t, u_cmd, u_arg);
 }
 
+/*
+ * a program opening a terminal by name. a session leader with no
+ * terminal that opens one nobody has, for reading and without O_NOCTTY,
+ * has it for its terminal from then on, as though it had asked with
+ * TIOCSCTTY. /dev/console never is, being every session's to write to,
+ * and a pty's master is no terminal of this kind at all
+ */
 static int64_t tty_opening(struct file *p_file, int i_flags)
 {
     struct tty *t = p_file->p_private;
-    (void)i_flags;
-    if (t->p_end->may_open == NULL) {
-        return 0;
+    int64_t i_why = 0;
+    if (t->p_end->may_open != NULL) {
+        uint64_t u_flags = spin_lock_irq(&g_tty_lock);
+        i_why = t->p_end->may_open(t);
+        spin_unlock_irq(&g_tty_lock, u_flags);
     }
-    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
-    int64_t i_why = t->p_end->may_open(t);
-    spin_unlock_irq(&g_tty_lock, u_flags);
+    if (i_why == 0 && !(i_flags & O_NOCTTY) && (p_file->u_mode & FILE_READ)
+        && p_file->u_rdev != TTY_CONSOLE_RDEV) {
+        claim(t, false);
+    }
     return i_why;
 }
 
