@@ -575,7 +575,8 @@ static int64_t tty_read(struct file *p_file, void *p_buf, size_t sz_len)
  * what is written is shown, through output processing, a chunk at a
  * time, waiting for room where the end can be full: how much went, which
  * is less only for a signal or a terminal that would not wait, or -EIO
- * once the far side is gone
+ * once the far side is gone. with TOSTOP a write from a group behind is
+ * a change like any other, and stops that group the same way
  */
 static int64_t tty_write(struct file *p_file, const void *p_buf,
                          size_t sz_len)
@@ -584,10 +585,18 @@ static int64_t tty_write(struct file *p_file, const void *p_buf,
     const char *p_bytes = p_buf;
     size_t sz_done = 0;
 
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
+    bool b_tostop = (t->termios.c_lflag & TOSTOP) != 0;
+    spin_unlock_irq(&g_tty_lock, u_flags);
+    int64_t i_why = b_tostop ? may_change(t) : 0;
+    if (i_why < 0) {
+        return i_why;
+    }
+
     while (sz_done < sz_len) {
         size_t sz_part = (sz_len - sz_done < TTY_CHUNK) ? sz_len - sz_done
                                                         : TTY_CHUNK;
-        uint64_t u_flags = spin_lock_irq(&g_tty_lock);
+        u_flags = spin_lock_irq(&g_tty_lock);
         bool b_hung = t->b_hung;
         size_t sz_room = (t->p_end->room != NULL) ? t->p_end->room(t)
                                                   : SIZE_MAX;

@@ -146,7 +146,8 @@ terminal, with ``SIGTTIN``, and when it changes it, ``tcsetattr`` or
 continued. a group that ignores or blocks the signal is told ``-EIO`` for
 a read and is let make the change, which is how a shell, that ignores
 ``SIGTTOU``, hands the terminal from job to job. a group behind may write
-to it.
+to it, unless ``TOSTOP`` is set: then a write is a change like the others,
+and the group is stopped by ``SIGTTOU`` for it.
 
 with ``ISIG``, the ``VINTR``, ``VQUIT`` and ``VSUSP`` characters, ctrl+c,
 ctrl+\\ and ctrl+z unless a program changed them, are ``SIGINT``,

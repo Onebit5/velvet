@@ -16,7 +16,8 @@
 
 /*
  * a child in a group of its own, which does `what` once it is behind the
- * test's group, and is stopped for it
+ * test's group, and is stopped for it: 0 reads, 1 puts itself in front,
+ * 2 writes
  */
 static pid_t behind(int i_what)
 {
@@ -27,8 +28,10 @@ static pid_t behind(int i_what)
         setpgid(0, 0);
         if (i_what == 0) {
             read(0, &c_ch, 1);
-        } else {
+        } else if (i_what == 1) {
             tcsetpgrp(0, getpgrp());
+        } else {
+            write(1, "behind\n", 7);
         }
         _exit(0);
     }
@@ -54,7 +57,7 @@ int main(void)
     struct winsize size;
 
     ksft_print_header();
-    ksft_set_plan(9);
+    ksft_set_plan(10);
 
     /* run as a job of one, so its group is its pid */
     ksft_test_result(tcgetpgrp(0) == i_me,
@@ -99,6 +102,18 @@ int main(void)
                      "one that does not is stopped by SIGTTOU instead\n");
     ksft_test_result(stopped_by(behind(0), SIGTTIN),
                      "and a read from behind is stopped by SIGTTIN\n");
+
+    /* the terminal is the test's, so it is put back as it was at once */
+    struct termios mode, tostop;
+    tcgetattr(0, &mode);
+    tostop = mode;
+    tostop.c_lflag |= TOSTOP;
+    tcsetattr(0, TCSANOW, &tostop);
+    bool b_stopped = stopped_by(behind(2), SIGTTOU);
+    tcsetattr(0, TCSANOW, &mode);
+    ksft_test_result(b_stopped,
+                     "with TOSTOP a write from behind is stopped by "
+                     "SIGTTOU too\n");
 
     /* the size is written where it is asked for, so that has to be writable */
     static const struct winsize s_ro;

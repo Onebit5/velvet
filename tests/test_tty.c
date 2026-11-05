@@ -480,7 +480,22 @@ int main(void)
           && s_i_stopped_id == 55,
           "and changing who is in front from behind is SIGTTOU");
     process_signal(i_shell, SIGCONT);
+    struct termios tostop = mode;
+    tostop.c_lflag |= TOSTOP;
     signal_set_action(process_signal_state(i_shell), SIGTTOU, &ignore);
+    ctl(p_tty, TCSETS, &tostop);
+    struct sigaction dfl = { .sa_handler = SIG_DEFAULT };
+    signal_set_action(process_signal_state(i_shell), SIGTTOU, &dfl);
+    screens_clear();
+    CHECK(p_tty->p_ops->write(p_tty, "w", 1) == -ERESTARTSYS
+          && s_i_stopped_id == 55 && s_arr_shown[1] == 0,
+          "with TOSTOP a write from behind is SIGTTOU too, and not shown");
+    process_signal(i_shell, SIGCONT);
+    signal_set_action(process_signal_state(i_shell), SIGTTOU, &ignore);
+    CHECK(p_tty->p_ops->write(p_tty, "w", 1) == 1
+          && strcmp(s_arr_screen[1], "w") == 0,
+          "unless SIGTTOU is ignored, when it is written");
+    ctl(p_tty, TCSETS, &mode);
     CHECK(ctl(p_tty, TIOCSPGRP, &i_pgrp) == 0 && tty_foreground(1) == i_shell,
           "unless it ignores that, as a shell taking it back does");
 
