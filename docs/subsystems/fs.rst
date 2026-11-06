@@ -158,9 +158,9 @@ one whose number nothing answers to opens as nothing, ``ENXIO``. on ext4
 the number is kept where the inode's blocks would be, in the first word
 when both halves fit in a byte and the second when they do not, and the
 inode has no blocks, which the driver, the checker and ``readext4.py``
-all know. a fifo or a socket is refused, ``EPERM``, until something here
-opens one: a named pipe is only one when opening it waits for the other
-end.
+all know. a fifo is anyone's to make, ``mkfifo``, and is a pipe when it
+is opened, under `pipes and redirection`_; a socket is refused,
+``EPERM``, until something here opens one.
 
 the generator is ``drivers/random.c``: a chacha20 keystream whose key
 changes after every request, to the first block the old one makes, which
@@ -460,6 +460,19 @@ descriptors, so the reader sees end of file only when every descriptor on
 the writing end, in every process, has closed. ``lseek`` moves a file's
 position, within the file and no further, and is how a shell puts ``>>`` on
 the end of what is there rather than over its start.
+
+a **fifo** is a pipe with a name, for two programs that share nothing but
+the name. every open of the one node shares one pipe, made at the first
+open and freed with the last close, what was left in it going with it,
+and the fifos open are a table keyed by the node, its filesystem's kind,
+mount and inode. opening an end waits for the other, which is what makes
+it a pipe rather than a file: a reader for somebody to open it for
+writing, a writer for a reader, each waiting on the other end's count of
+opens, so one that opens and closes again in between still counts. a
+reader told ``O_NONBLOCK`` opens at once, and a writer told it with no
+reader there is ``-ENXIO``; one opened for both ends is both, and waits
+for nobody. the table has a lock of its own, below the pipes', since
+finding a fifo's pipe and taking an end of it is one step.
 
 growing a filesystem
 --------------------

@@ -455,6 +455,15 @@ struct file *tty_open_own(uint32_t u_mode)
     return NULL;
 }
 
+/* a fifo's pipe is fs/pipe.c's, and nothing here opens one */
+#include <velvet/pipe.h>
+struct file *fifo_file(const struct vfs_file *p_node, uint32_t u_mode)
+{
+    (void)p_node;
+    (void)u_mode;
+    return NULL;
+}
+
 /* the ptys are drivers/pty.c's, and nothing here mounts /dev/pts */
 #include <velvet/pty.h>
 struct file *pty_open_master(uint32_t u_mode)

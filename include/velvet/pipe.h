@@ -29,6 +29,10 @@ struct pipe {
     int      readers;
     int      writers;
 
+    /* how often each end has been opened, which a fifo's open waits on */
+    uint32_t u_read_opens;
+    uint32_t u_write_opens;
+
     struct waitq readable;      /* writers wake this */
     struct waitq writable;      /* readers wake this */
 };
@@ -74,6 +78,14 @@ struct file;
 
 /* a new pipe, as two files: one to read it and one to write it */
 bool pipe_open(struct file **pp_read, struct file **pp_write);
+
+struct vfs_file;
+
+/*
+ * a file on the fifo p_node is, for u_mode, which its open makes one of
+ * the fifo's ends: or NULL with no memory
+ */
+struct file *fifo_file(const struct vfs_file *p_node, uint32_t u_mode);
 
 size_t pipe_count(void);
 

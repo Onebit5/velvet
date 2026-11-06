@@ -249,9 +249,10 @@ static bool rdev_from(uint32_t u_dev, uint32_t *p_rdev)
 }
 
 /*
- * a file or a device, by the type in u_mode, 0 being a file. a device is
- * root's to make, since naming one is reaching it; a fifo or a socket is
- * refused, since nothing here opens one yet, and a directory is mkdir's
+ * a file, a fifo or a device, by the type in u_mode, 0 being a file. a
+ * device is root's to make, since naming one is reaching it, and a fifo
+ * anyone's; a socket is refused, since nothing here opens one yet, and
+ * a directory is mkdir's
  */
 int64_t sys_mknodat(int i_dirfd, uint64_t u_path, uint32_t u_mode,
                     uint32_t u_dev)
@@ -267,10 +268,10 @@ int64_t sys_mknodat(int i_dirfd, uint64_t u_path, uint32_t u_mode,
         && u_type != S_IFIFO && u_type != S_IFSOCK && u_type != S_IFDIR) {
         return -EINVAL;
     }
-    if (u_type == S_IFDIR || u_type == S_IFIFO || u_type == S_IFSOCK) {
+    if (u_type == S_IFDIR || u_type == S_IFSOCK) {
         return -EPERM;
     }
-    bool b_device = u_type != S_IFREG;
+    bool b_device = u_type == S_IFCHR || u_type == S_IFBLK;
     if (b_device && current_uid() != 0) {
         return -EPERM;
     }
@@ -288,12 +289,12 @@ int64_t sys_mknodat(int i_dirfd, uint64_t u_path, uint32_t u_mode,
     uint32_t u_perms = u_mode & ~((p != NULL) ? p->u_umask : 022) & 07777;
     uint32_t u_uid = (uint32_t)current_uid();
     uint32_t u_gid = (uint32_t)current_gid();
-    if (!b_device) {
+    if (u_type == S_IFREG) {
         struct vfs_file node;
         return vfs_create(arr_path, u_perms, u_uid, u_gid, &node) ? 0
                                                                   : -ENOSPC;
     }
-    /* a filesystem with nowhere to keep a device's number has none */
+    /* a filesystem with nowhere to keep a device or a fifo has neither */
     return vfs_mknod(arr_path, u_type | u_perms, u_uid, u_gid, u_rdev)
            ? 0 : -EPERM;
 }

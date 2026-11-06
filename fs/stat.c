@@ -96,11 +96,16 @@ static void fill_node(const struct vfs_file *p_node, const char *str_path,
     p_st->st_ctim = p_st->st_mtim;
 }
 
-/* and of one that has no name: a pipe, a terminal, a socket, a device */
+/*
+ * and of one that has no name: a pipe, a terminal, a socket, a device.
+ * a fifo is a pipe with a name, and is its node
+ */
 static void fill_file(const struct file *p_file, struct stat *p_st)
 {
     if (p_file->e_type == FILE_TYPE_REGULAR
-        || p_file->e_type == FILE_TYPE_DIR) {
+        || p_file->e_type == FILE_TYPE_DIR
+        || (p_file->e_type == FILE_TYPE_PIPE
+            && p_file->node.kind != VFS_NOWHERE)) {
         struct vfs_file node = p_file->node;
         vfs_refresh(&node);
         fill_node(&node, p_file->arr_path, p_st);

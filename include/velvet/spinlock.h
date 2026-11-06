@@ -37,11 +37,14 @@
 /* the order is not invented, it is read off the call graph. */
 enum lock_rank {
     /*
-     * a pipe is the lowest thing there is: it wakes threads and does
-     * nothing else at all, so it may be held while reaching up to the
-     * scheduler and there is nothing beneath it to reach down to
+     * a pipe is all but the lowest thing there is: it wakes threads and
+     * does nothing else at all, so it may be held while reaching up to
+     * the scheduler and there is nothing beneath it to reach down to.
+     * the one thing under it is the table of fifos, held while one of
+     * them has an end of its pipe taken
      */
-    LOCK_RANK_PIPE = 1,
+    LOCK_RANK_FIFO = 1,
+    LOCK_RANK_PIPE,
     LOCK_RANK_MOUNT,            /* the mount table, held to look a name up */
     LOCK_RANK_TTY,              /* a terminal, which takes keys out of input */
     LOCK_RANK_DEVICE,           /* input, pci, the disk, ramfs */

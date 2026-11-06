@@ -12,7 +12,8 @@
 #include <velvet/file.h>
 #include <velvet/sched.h>
 #include <velvet/thread.h>
-#include <uapi/velvet/errno.h>
+#include <velvet/vfs.h>
+#include <velvet/errno.h>
 #include <uapi/velvet/fcntl.h>
 #include <uapi/velvet/poll.h>
 
@@ -310,6 +311,168 @@ static const struct file_operations write_end_ops = {
     .release = end_release_write,
     .poll = end_poll_write,
 };
+
+/*
+ * a fifo is a pipe with a name. every open of the one node shares one
+ * pipe, made at the first open and freed with the last close, and what
+ * was left in it with it. opening an end waits for the other, which is
+ * what makes it a pipe rather than a file: a reader for a writer, a
+ * writer for a reader. a reader told O_NONBLOCK opens at once, and a
+ * writer told it with no reader there is told -ENXIO. one opened for
+ * both is both, and waits for nobody
+ */
+#define FIFO_MAX 32
+
+struct fifo {
+    enum vfs_kind e_kind;       /* which node it is the pipe of */
+    size_t sz_mount;
+    uint32_t u_ino;
+    struct pipe *p_pipe;        /* NULL for a slot nobody has */
+};
+
+static struct spinlock s_fifo_lock = SPINLOCK("fifo", LOCK_RANK_FIFO);
+static struct fifo s_arr_fifos[FIFO_MAX];
+
+/* the pipe a fifo node is, made at its first open: or NULL. the lock is held */
+static struct pipe *fifo_of(const struct vfs_file *p_node)
+{
+    struct fifo *p_free = NULL;
+    for (size_t sz_at = 0; sz_at < FIFO_MAX; sz_at++) {
+        struct fifo *p_f = &s_arr_fifos[sz_at];
+        if (p_f->p_pipe == NULL) {
+            p_free = (p_free == NULL) ? p_f : p_free;
+        } else if (p_f->e_kind == p_node->kind
+                   && p_f->sz_mount == p_node->mount
+                   && p_f->u_ino == p_node->u_ino) {
+            return p_f->p_pipe;
+        }
+    }
+    struct pipe *p = (p_free != NULL) ? pipe_create() : NULL;
+    if (p != NULL) {
+        p->readers = 0;
+        p->writers = 0;
+        p_free->e_kind = p_node->kind;
+        p_free->sz_mount = p_node->mount;
+        p_free->u_ino = p_node->u_ino;
+        p_free->p_pipe = p;
+    }
+    return p;
+}
+
+/*
+ * the ends a fifo's file opened let go of, and the fifo's pipe with the
+ * last of them, freed after both locks are let go of
+ */
+static void fifo_let_go(struct pipe *p, uint32_t u_mode)
+{
+    uint64_t u_flags = spin_lock_irq(&s_fifo_lock);
+    uint64_t u_pipe = spin_lock_irq(&p->lock);
+    p->readers -= (u_mode & FILE_READ) ? 1 : 0;
+    p->writers -= (u_mode & FILE_WRITE) ? 1 : 0;
+    waitq_wake_all(&p->readable);
+    waitq_wake_all(&p->writable);
+    bool b_gone = p->readers == 0 && p->writers == 0;
+    spin_unlock_irq(&p->lock, u_pipe);
+    for (size_t sz_at = 0; b_gone && sz_at < FIFO_MAX; sz_at++) {
+        if (s_arr_fifos[sz_at].p_pipe == p) {
+            s_arr_fifos[sz_at].p_pipe = NULL;
+        }
+    }
+    spin_unlock_irq(&s_fifo_lock, u_flags);
+    if (b_gone) {
+        live--;
+        kfree(p);
+    }
+}
+
+static int64_t fifo_open(struct file *p_file, int i_flags)
+{
+    bool b_read = (p_file->u_mode & FILE_READ) != 0;
+    bool b_write = (p_file->u_mode & FILE_WRITE) != 0;
+    bool b_nonblock = (i_flags & O_NONBLOCK) != 0;
+
+    uint64_t u_flags = spin_lock_irq(&s_fifo_lock);
+    struct pipe *p = fifo_of(&p_file->node);
+    if (p == NULL) {
+        spin_unlock_irq(&s_fifo_lock, u_flags);
+        return -ENFILE;
+    }
+    uint64_t u_pipe = spin_lock_irq(&p->lock);
+    bool b_refused = b_write && !b_read && b_nonblock && p->readers == 0;
+    if (!b_refused) {
+        p->readers += b_read ? 1 : 0;
+        p->u_read_opens += b_read ? 1 : 0;
+        p->writers += b_write ? 1 : 0;
+        p->u_write_opens += b_write ? 1 : 0;
+        waitq_wake_all(&p->readable);
+        waitq_wake_all(&p->writable);
+    }
+    spin_unlock_irq(&p->lock, u_pipe);
+    spin_unlock_irq(&s_fifo_lock, u_flags);
+    if (b_refused) {
+        fifo_let_go(p, 0);
+        return -ENXIO;
+    }
+    p_file->p_private = p;
+    if ((b_read && b_write) || (b_read && b_nonblock)) {
+        return 0;
+    }
+
+    /*
+     * nobody at the other end: wait until somebody opens it, which is
+     * that end's count of opens moving, whether or not they are still
+     * there by the time this looks
+     */
+    u_pipe = spin_lock_irq(&p->lock);
+    const uint32_t *p_opens = b_read ? &p->u_write_opens : &p->u_read_opens;
+    const int *p_there = b_read ? &p->writers : &p->readers;
+    uint32_t u_seen = *p_opens;
+    struct waitq *p_q = b_read ? &p->readable : &p->writable;
+    while (*p_there == 0 && *p_opens == u_seen) {
+        if (process_interrupt_pending(caller())) {
+            spin_unlock_irq(&p->lock, u_pipe);
+            return -ERESTARTSYS;
+        }
+        waitq_enqueue(p_q);
+        spin_unlock_irq(&p->lock, u_pipe);
+        waitq_sleep();
+        u_pipe = spin_lock_irq(&p->lock);
+    }
+    spin_unlock_irq(&p->lock, u_pipe);
+    return 0;
+}
+
+/* a file whose open was refused never had an end, and has none to let go */
+static void fifo_release(struct file *p_file)
+{
+    if (p_file->p_private != NULL) {
+        fifo_let_go(p_file->p_private, p_file->u_mode);
+    }
+}
+
+/* a fifo open for both is a readable end and a writable one at once */
+static uint32_t fifo_poll(struct file *p_file)
+{
+    return ((p_file->u_mode & FILE_READ) ? end_poll_read(p_file) : 0)
+           | ((p_file->u_mode & FILE_WRITE) ? end_poll_write(p_file) : 0);
+}
+
+static const struct file_operations fifo_ops = {
+    .read = end_read,
+    .write = end_write,
+    .poll = fifo_poll,
+    .open = fifo_open,
+    .release = fifo_release,
+};
+
+struct file *fifo_file(const struct vfs_file *p_node, uint32_t u_mode)
+{
+    struct file *p_file = file_alloc(&fifo_ops, u_mode, FILE_TYPE_PIPE);
+    if (p_file != NULL) {
+        p_file->node = *p_node;
+    }
+    return p_file;
+}
 
 bool pipe_open(struct file **pp_read, struct file **pp_write)
 {

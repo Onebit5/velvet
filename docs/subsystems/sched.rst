@@ -117,6 +117,7 @@ locks of *lower* rank. it is checked, not hoped for.
 
 ::
 
+    LOCK_RANK_FIFO      the fifos open, held to find or make one's pipe
     LOCK_RANK_PIPE      a pipe wakes threads and calls nothing below it
     LOCK_RANK_MOUNT     the mount table, held to look a name up
     LOCK_RANK_TTY       a terminal, which takes keys out of input

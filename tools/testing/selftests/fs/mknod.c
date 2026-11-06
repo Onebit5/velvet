@@ -120,11 +120,11 @@ int main(void)
 
     ksft_test_result(mknod(AT_NULL, S_IFCHR | 0666, makedev(1, 3)) == -1
                      && errno == EEXIST
-                     && mknod("/tmp/mknod-fifo", S_IFIFO | 0644, 0) == -1
+                     && mknod("/tmp/mknod-sock", S_IFSOCK | 0644, 0) == -1
                      && errno == EPERM
                      && mknod("/tmp/mknod-dir", S_IFDIR | 0755, 0) == -1
                      && errno == EPERM,
-                     "a name taken is not made again, and a fifo and a "
+                     "a name taken is not made again, and a socket and a "
                      "directory are not made at all\n");
 
     bool b_ram = mkdir(AT_RAM, 0755) == 0

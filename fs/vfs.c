@@ -19,6 +19,7 @@
 #include <velvet/process.h>
 #include <velvet/proc.h>
 #include <velvet/dev.h>
+#include <velvet/pipe.h>
 #include <velvet/pty.h>
 #include <velvet/spinlock.h>
 #include <velvet/string.h>
@@ -1428,10 +1429,14 @@ struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode)
     }
     /*
      * a node naming a device by its number opens that device, wherever
-     * the node is. a fifo or a socket opens as nothing here yet
+     * the node is, and a fifo opens as the pipe it is. a socket opens
+     * as nothing here yet
      */
     if (p_node->u_type == S_IFCHR || p_node->u_type == S_IFBLK) {
         return dev_open_rdev(p_node->u_rdev, u_mode);
+    }
+    if (p_node->u_type == S_IFIFO) {
+        return fifo_file(p_node, u_mode);
     }
     if (vfs_is_device(p_node)) {
         return NULL;

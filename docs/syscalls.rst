@@ -178,7 +178,8 @@ number  name             where                  notes
 234     tgkill           sched/sigcall.c
 257     openat           fs/open.c
 258     mkdirat          fs/namei.c
-259     mknodat          fs/namei.c             a file, or a device, root's; no fifos
+259     mknodat          fs/namei.c             a file, a fifo, or a device,
+                                                root's
 260     fchownat         fs/open.c
 262     newfstatat       fs/stat.c
 263     unlinkat         fs/namei.c

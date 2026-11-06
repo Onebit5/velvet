@@ -35,7 +35,11 @@ void kfree(void *p)
 #include <velvet/pipe.h>
 #include <velvet/file.h>
 #include <velvet/slab.h>
+#include <velvet/vfs.h>
 #include <uapi/velvet/errno.h>
+#include <uapi/velvet/fcntl.h>
+/* the host's S_IFIFO is the number the kernel's is */
+#include <sys/stat.h>
 
 static int failures = 0;
 #define CHECK(cond, msg) do { \
@@ -314,6 +318,50 @@ int main(void)
     pipe_put(&p, big, PIPE_BUF);
     CHECK(pipe_write(&p, 1, big, 1, true) == -EAGAIN,
           "and a full one written without waiting is too");
+
+    /* a fifo: a pipe with a name, one pipe for every open of one node */
+    {
+        size_t sz_before = pipe_count();
+        struct vfs_file node = {
+            .kind = VFS_RAMFS, .mount = 1, .u_ino = 40, .u_type = S_IFIFO,
+        };
+        struct vfs_file other = node;
+        other.u_ino = 41;
+
+        struct file *p_w = fifo_file(&node, FILE_WRITE);
+        CHECK(p_w->p_ops->open(p_w, O_WRONLY | O_NONBLOCK) == -ENXIO
+              && pipe_count() == sz_before,
+              "a writer told not to wait, with no reader, is ENXIO, and "
+              "leaves nothing behind");
+        file_put(p_w);
+        struct file *p_r = fifo_file(&node, FILE_READ);
+        CHECK(p_r->p_ops->open(p_r, O_RDONLY | O_NONBLOCK) == 0
+              && pipe_count() == sz_before + 1
+              && p_r->p_ops->read(p_r, out, sizeof out) == 0,
+              "a reader told not to wait opens at once, and reads the end "
+              "with nobody writing");
+        p_w = fifo_file(&node, FILE_WRITE);
+        CHECK(p_w->p_ops->open(p_w, O_WRONLY) == 0
+              && pipe_count() == sz_before + 1
+              && p_w->p_ops->write(p_w, "named", 5) == 5
+              && p_r->p_ops->read(p_r, out, sizeof out) == 5
+              && memcmp(out, "named", 5) == 0,
+              "a writer with a reader there opens at once, onto the same "
+              "pipe");
+        struct file *p_both = fifo_file(&other, FILE_READ | FILE_WRITE);
+        CHECK(p_both->p_ops->open(p_both, O_RDWR) == 0
+              && pipe_count() == sz_before + 2,
+              "another node is another fifo, and one opened for both ends "
+              "waits for nobody");
+        file_put(p_both);
+        CHECK(pipe_count() == sz_before + 1, "and goes with its last close");
+        file_put(p_w);
+        CHECK(p_r->p_ops->read(p_r, out, sizeof out) == 0,
+              "the writer gone, the reader reads the end");
+        file_put(p_r);
+        CHECK(pipe_count() == sz_before,
+              "and the last close of the fifo frees its pipe");
+    }
 
     if (failures == 0) printf("all good\n");
     return failures;
