@@ -48,27 +48,15 @@ to programs by people who have never heard of this kernel, and since
 0.4.5 that interface is this kernel's: the system calls every x86_64
 program and libc already makes, numbered and shaped the way they expect,
 the signals and the frame a handler is entered on, errno, the stack exec
-leaves, and floating point in ring 3, and since 0.4.6 a root of its own
-to mount things under and the drives and the network a client, an
-installer and a checker need. what is left of the series is the rest of
-what such a program takes for granted: terminals, threads, a `/proc`, a
-loader, and at the end somebody else's programs run unmodified. the
-reason is the one every checker in this project rests on, an outside
-answer: the same static binary run on both machines says, call by call,
-where this kernel differs.
-
-**0.4.7 a terminal, the way linux asks for one.** 0.4.5's terminals
-answer termios through `ioctl`, with sessions, a controlling terminal
-and job control. what a program written elsewhere also takes for granted
-is the rest of termios: output processing, `TOSTOP`, a session leader
-that gets its terminal by opening it, and `SIGHUP` when the terminal
-goes away. and then the layer this machine has always been missing: a
-pty, a terminal with nothing behind it but another program. a pty is
-what `script` and a multiplexer are, and it is the thing standing
-between this machine and anything remote. the fifo goes with it: `mknod`
-makes every node but that one, since a named pipe is only one when
-opening it waits for the other end, which is the same wait a pty's two
-sides make.
+leaves, and floating point in ring 3, since 0.4.6 a root of its own to
+mount things under and the drives and the network a client, an
+installer and a checker need, and since 0.4.7 terminals the way such a
+program asks for them, a pty among them, and fifos. what is left of the
+series is the rest of what such a program takes for granted: threads, a
+`/proc`, a loader, and at the end somebody else's programs run
+unmodified. the reason is the one every checker in this project rests
+on, an outside answer: the same static binary run on both machines
+says, call by call, where this kernel differs.
 
 **0.4.8 threads the way linux makes them.** `clone`, with the flags a
 pthread library passes (one address space, one descriptor table, one set

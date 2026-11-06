@@ -15,6 +15,66 @@ a kernel that booted.
 
 ---
 
+- **0.4.7**: a terminal, the way programs ask for one. **a pty.** every
+  terminal here had a keyboard behind it. a pty has a program there
+  instead, and it is what `script`, a terminal emulator and a multiplexer
+  are, and what stands between a machine and anything remote. opening
+  `/dev/ptmx` makes one and is its master, and the slave is
+  `/dev/pts/N`, a terminal like any other because it is one: what the
+  master writes is typed at it, ctrl+c a signal to the group in front,
+  and what the master reads is what it shows. the slave opens once the
+  master unlocks it, which with its number is all `unlockpt` and
+  `ptsname` ask, and `TIOCGPTPEER` opens it from the master. the master's
+  modes and size are the slave's, a size it sets is `SIGWINCH` to the
+  group in front, and with every slave closed it reads `EIO`. when the
+  master closes the slave is hung up: its session's leader gets `SIGHUP`
+  and `SIGCONT`, and a read is the end and a write `EIO`. `/dev/pts` is
+  devpts, which `/init` mounts on a directory `/dev` now has for it.
+  under it a terminal is a discipline between two ends, a struct
+  `tty_end` saying where what is typed comes from and where what is shown
+  goes: a console's ends are the keyboard and the screen, a pty's two
+  pipe rings.
+
+  **the rest of termios.** output processing: `ONLCR`, `OCRNL`, `ONOCR`,
+  `ONLRET`, `OLCUC` and `XTABS` on what is written and what is echoed
+  alike, the terminal keeping the column for the tabs. `TOSTOP`, which
+  stops a job behind its terminal when it writes. a session leader with
+  no terminal takes the one it opens, unless it says `O_NOCTTY`, through
+  a new operation a file has for being opened by name; `/dev/console`
+  never is. and lines typed ahead are each a read of their own, echoed
+  as they are taken rather than when the one before them is read, in one
+  buffer with the end of input a line of none.
+
+  **SIGHUP.** a session's end was found out by its terminal when it next
+  asked, and by nobody else. the leader's end is told now, and the group
+  that was in front gets `SIGHUP`; `TIOCNOTTY` from the leader sends it
+  `SIGHUP` and `SIGCONT`. the process table knows an orphaned group, one
+  with nobody left in its session to continue it: one orphaned with a
+  member stopped is sent `SIGHUP` and `SIGCONT`, a terminal's stops do
+  nothing to it, and its reads and changes of its terminal from behind
+  are `EIO`.
+
+  **fifos.** `mkfifo` makes one, and anyone may. every open of one node
+  shares one pipe, and opening an end waits for the other, a reader for
+  a writer and a writer for a reader, each on the count of the other
+  end's opens; a reader told `O_NONBLOCK` opens at once, and a writer
+  told it with no reader is `ENXIO`.
+
+  **what it found on the way.** two readers draining one console could
+  swap two keys, a key being taken out of input and put through the
+  discipline in two holds of the lock; the terminal has a rank of its
+  own now so that it is one. `access` called a device on a filesystem
+  nothing writes to read-only, which `/dev/pts/N` would have been. and
+  `/dev/tty` and `/dev/console` were the console's own number to `fstat`.
+
+  **the end of it** is a selftest with the pty at both ends, the way a
+  terminal emulator is: a line typed at the master and its echo, a
+  session on the slave told its size and killed by a ctrl+c the master
+  writes, a leader's end hanging up the job in front, an orphaned job
+  reading `EIO`, and the master closing on a leader that hears `SIGHUP`
+  and finds its terminal hung up. 45 selftests pass, on two cores and on
+  four.
+
 - **0.4.6**: a root of its own. **the archive is the root.** the kernel
   mounted the disk at `/` itself, the first partition it found with a
   filesystem and the next at `/work`, and hung the archive the loader

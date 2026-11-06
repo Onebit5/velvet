@@ -9,9 +9,11 @@ than to be the next linux. small enough to fit in one head.
 
 it speaks linux's interface to programs, all the same: since 0.4.5 its system calls,
 its signals and the layouts it hands back are the ones a static program built for linux
-on x86_64 already expects. not linux's insides: no modules, no driver api. what is left,
-threads, ptys, a loader and somebody else's programs running unmodified, is the rest of
-the 0.4.x series of [ROADMAP.md](ROADMAP.md), and the non-goals are at the top of it.
+on x86_64 already expects, and since 0.4.7 its terminals answer the way they expect too.
+not linux's insides: no modules, no driver api. what is left, threads, a `/proc` laid out
+the way programs read it, a loader and somebody else's programs running unmodified, is
+the rest of the 0.4.x series of [ROADMAP.md](ROADMAP.md), and the non-goals are at the
+top of it.
 
 it is a kernel and nothing more: what runs in ring 0. the loader that runs before it is
 [philemon](https://github.com/Onebit5/philemon), a project of his own, and the programs, a
@@ -22,7 +24,8 @@ virtual memory, with demand paging and copy on write; threads, processes, signal
 an init; smp with a scheduler on every core; a root in memory made of the archive the
 loader hands over, and mounts on it, moved and pivoted; fat32, and ext4 with extents and
 a journal; ahci, with the drives and their partitions as block devices, e1000, ps/2, the
-console and the serial line; and a tcp/ip stack, with an address a program sets. there is
+console and the serial line; terminals on the consoles and ptys, with sessions and job
+control, and fifos; and a tcp/ip stack, with an address a program sets. there is
 no shell in it: what the kernel has to say about itself is in `/proc` and the kernel log,
 for a program to read.
 
