@@ -93,6 +93,13 @@ void sched_set_stopped(int i_id, bool b_stopped)
     s_b_stopped = b_stopped;
 }
 
+/* a session's leader ending is told to the terminals, counted here */
+static int s_i_ended_sid;
+void tty_session_ended(int i_sid)
+{
+    s_i_ended_sid = i_sid;
+}
+
 int main(void)
 {
     /*
@@ -641,6 +648,63 @@ int main(void)
         CHECK(u_left == 400 && u_every == 500, "zero cancels, saying what was");
         process_check_alarms(30000);
         CHECK(!process_interrupt_pending(who), "and nothing fires after");
+    }
+
+    /*
+     * an orphaned group: none of it has a parent in another group of its
+     * session, so nobody is left who could put it in front or continue it
+     */
+    {
+        int i_lead = process_create("lead", 0, 0, false, 0);
+        int i_mid = process_create("mid", i_lead, 0, false, 0);
+        process_inherit(i_mid, i_lead);
+        int i_job = process_create("job", i_mid, 0, false, 0);
+        int i_idle = process_create("idle", i_mid, 0, false, 0);
+        process_inherit(i_job, i_mid);
+        process_inherit(i_idle, i_mid);
+        process_set_pgid(i_job, i_job);
+        process_set_pgid(i_idle, i_idle);
+        process_set_thread(i_job, 91);
+        set_handler(process_signal_state(i_job), SIGHUP, 0x1000);
+        set_handler(process_signal_state(i_idle), SIGHUP, 0x1000);
+        process_signal(i_job, SIGTSTP);
+        CHECK(!process_group_orphaned(i_job) && s_i_stopped_id == 91
+              && s_b_stopped,
+              "a job whose parent is in another group of its session is "
+              "not orphaned, and a terminal's stop stops it");
+
+        process_exited(i_mid, 0, 0);
+        struct signal_state *p_jsig = process_signal_state(i_job);
+        CHECK(process_group_orphaned(i_job) && !s_b_stopped
+              && (p_jsig->pending & SIGNAL_BIT(SIGHUP)),
+              "its parent gone, init has it, which is in no group of its "
+              "session: it is orphaned, and stopped, is sent SIGHUP and "
+              "continued to hear it");
+        CHECK(!(process_signal_state(i_idle)->pending & SIGNAL_BIT(SIGHUP)),
+              "and one orphaned with nothing stopped is told nothing");
+
+        s_i_stopped_id = 0;
+        process_signal(i_job, SIGTSTP);
+        CHECK(s_i_stopped_id == 0 && !(p_jsig->pending & SIGNAL_BIT(SIGTSTP)),
+              "a terminal's stop does nothing to an orphaned group");
+        process_signal(i_job, SIGSTOP);
+        CHECK(s_i_stopped_id == 91 && s_b_stopped,
+              "but SIGSTOP stops anything");
+        process_signal(i_job, SIGCONT);
+
+        s_i_ended_sid = 0;
+        process_fds_release(i_job);
+        CHECK(s_i_ended_sid == 0, "a process that leads no session ending "
+              "ends no session");
+        process_exited(i_lead, 0, 0);
+        process_fds_release(i_lead);
+        CHECK(s_i_ended_sid == i_lead, "and its leader's ending does");
+        process_exited(i_job, 0, 0);
+        process_exited(i_idle, 0, 0);
+        process_collect(i_mid, NULL);
+        process_collect(i_job, NULL);
+        process_collect(i_idle, NULL);
+        process_collect(i_lead, NULL);
     }
 
     if (!failures) printf("all good\n");

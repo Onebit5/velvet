@@ -52,4 +52,10 @@ struct file *tty_open_own(uint32_t u_mode);
 /* the group in front of a console's terminal, TTY_NOBODY for none */
 int tty_foreground(unsigned u_console);
 
+/*
+ * the leader of session i_sid has ended, and the session with it: its
+ * terminal is nobody's, and the group that was in front is sent SIGHUP
+ */
+void tty_session_ended(int i_sid);
+
 #endif

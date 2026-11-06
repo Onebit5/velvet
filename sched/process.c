@@ -15,6 +15,7 @@
 #include <uapi/velvet/fcntl.h>
 #include <velvet/thread.h>
 #include <velvet/usermode.h>
+#include <velvet/tty.h>
 #include <uapi/velvet/wait.h>
 
 /* a fixed table rather than a linked list of allocations. */
@@ -213,6 +214,100 @@ static void tell_parent(const struct child_news *p_news)
     }
 }
 
+/*
+ * a group is orphaned when none of its members has a parent in another
+ * group of the same session: there is nobody left with job control over
+ * it, nobody who could put it in front or continue it. one with no
+ * members left is not a group at all. the lock is held
+ */
+static bool group_orphaned(int i_pgid)
+{
+    bool b_any = false;
+    for (size_t sz_i = 0; sz_i < MAX_PROCESSES; sz_i++) {
+        const struct process *p = &table[sz_i];
+        if (p->pid == 0 || p->exited || p->pgid != i_pgid) {
+            continue;
+        }
+        b_any = true;
+        const struct process *p_parent = slot_for(p->parent);
+        if (p_parent != NULL && !p_parent->exited
+            && p_parent->pgid != i_pgid && p_parent->i_sid == p->i_sid) {
+            return false;
+        }
+    }
+    return b_any;
+}
+
+/* whether any of a group is stopped. the lock is held */
+static bool group_stopped(int i_pgid)
+{
+    for (size_t sz_i = 0; sz_i < MAX_PROCESSES; sz_i++) {
+        const struct process *p = &table[sz_i];
+        if (p->pid != 0 && !p->exited && p->pgid == i_pgid
+            && p->i_stopped_by != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool process_group_orphaned(int i_pgid)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    bool b_orphaned = group_orphaned(i_pgid);
+    spin_unlock_irq(&process_lock, u_flags);
+    return b_orphaned;
+}
+
+/*
+ * the groups p's end may orphan, into p_out: its own, when its parent
+ * is in another group of the session and so may have been all that kept
+ * it from being orphaned, and each of its children's that is another
+ * group of the session, since the child goes to init. how many. the
+ * lock is held, and p has not ended yet
+ */
+static size_t orphan_candidates(const struct process *p, int *p_out)
+{
+    size_t sz_count = 0;
+    const struct process *p_parent = slot_for(p->parent);
+    if (p_parent != NULL && p_parent->pgid != p->pgid
+        && p_parent->i_sid == p->i_sid) {
+        p_out[sz_count++] = p->pgid;
+    }
+    for (size_t sz_i = 0; sz_i < MAX_PROCESSES; sz_i++) {
+        const struct process *p_child = &table[sz_i];
+        if (p_child->pid == 0 || p_child->exited
+            || p_child->parent != p->pid || p_child->pgid == p->pgid
+            || p_child->i_sid != p->i_sid) {
+            continue;
+        }
+        bool b_seen = false;
+        for (size_t sz_at = 0; sz_at < sz_count; sz_at++) {
+            b_seen |= p_out[sz_at] == p_child->pgid;
+        }
+        if (!b_seen) {
+            p_out[sz_count++] = p_child->pgid;
+        }
+    }
+    return sz_count;
+}
+
+/*
+ * of those, the ones that are orphaned now with a member stopped, kept
+ * in place: how many. the lock is held
+ */
+static size_t still_stopped(int *p_groups, size_t sz_count)
+{
+    size_t sz_kept = 0;
+    for (size_t sz_at = 0; sz_at < sz_count; sz_at++) {
+        if (group_orphaned(p_groups[sz_at])
+            && group_stopped(p_groups[sz_at])) {
+            p_groups[sz_kept++] = p_groups[sz_at];
+        }
+    }
+    return sz_kept;
+}
+
 /* a parent that has said it will never wait for its children */
 static bool parent_detaches(const struct process *p)
 {
@@ -239,6 +334,8 @@ void process_exited(int pid, int code, uint64_t now_ms)
 {
     struct child_news news = { 0 };
     bool b_first = false;
+    int arr_groups[MAX_PROCESSES + 1];
+    size_t sz_groups = 0;
     uint64_t flags = spin_lock_irq(&process_lock);
     struct process *p = slot_for(pid);
     /*
@@ -246,6 +343,7 @@ void process_exited(int pid, int code, uint64_t now_ms)
      * already on its way out should not have its code overwritten
      */
     if (p != NULL && !p->exited) {
+        sz_groups = orphan_candidates(p, arr_groups);
         p->exited    = true;
         p->i_wait_status = code;
         b_first = true;
@@ -276,9 +374,19 @@ void process_exited(int pid, int code, uint64_t now_ms)
         child_news(p, (code & 0x7f) != 0 ? CLD_KILLED : CLD_EXITED,
                    (code & 0x7f) != 0 ? (code & 0x7f) : (code >> 8) & 0xff,
                    &news);
+        sz_groups = still_stopped(arr_groups, sz_groups);
     }
     spin_unlock_irq(&process_lock, flags);
     tell_parent(&news);
+
+    /*
+     * a stopped job nobody is left to continue would stay stopped for
+     * ever, so it is told it was hung up on, and continued to hear it
+     */
+    for (size_t sz_at = 0; sz_at < sz_groups; sz_at++) {
+        process_signal_group(arr_groups[sz_at], SIGHUP);
+        process_signal_group(arr_groups[sz_at], SIGCONT);
+    }
 }
 
 void process_account(int i_pid, uint64_t u_ticks)
@@ -428,6 +536,15 @@ static int settle_now(struct process *p, int i_sig)
     enum signal_action e_act = signal_action_for(&p->sig, i_sig);
     bool b_blocked = (p->sig.blocked & u_bit) != 0 && i_sig != SIGSTOP;
 
+    /*
+     * a stop from a terminal does nothing to an orphaned group, which
+     * nobody would ever continue: SIGSTOP alone is never refused
+     */
+    if (e_act == SIGNAL_ACTION_STOP && !b_blocked && i_sig != SIGSTOP
+        && group_orphaned(p->pgid)) {
+        p->sig.pending &= ~u_bit;
+        return 0;
+    }
     if (e_act == SIGNAL_ACTION_STOP && !b_blocked) {
         p->sig.pending &= ~u_bit;       /* acted on, nothing to deliver */
         p->i_stopped_by = i_sig;
@@ -669,6 +786,11 @@ enum signal_action process_take_signal(int pid, int *sig_out,
             a = signal_take(&p->sig, sig, act_out, old_mask_out, origin_out);
             if (sig_out != NULL) {
                 *sig_out = sig;
+            }
+            /* and one blocked when it was sent is no different later */
+            if (a == SIGNAL_ACTION_STOP && sig != SIGSTOP
+                && group_orphaned(p->pgid)) {
+                a = SIGNAL_ACTION_IGNORE;
             }
         }
         p->interrupted = signal_deliverable(&p->sig);
@@ -1076,9 +1198,21 @@ static void close_fds(int i_pid, uint64_t u_which)
     }
 }
 
+/*
+ * and a session's leader ending is its session's end, which is told to
+ * the session's terminal here, every way a process ends coming through
+ */
 void process_fds_release(int i_pid)
 {
     close_fds(i_pid, ~0ull);
+
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    const struct process *p = slot_for(i_pid);
+    bool b_leader = p != NULL && p->exited && p->i_sid == i_pid;
+    spin_unlock_irq(&process_lock, u_flags);
+    if (b_leader) {
+        tty_session_ended(i_pid);
+    }
 }
 
 void process_fds_exec(int i_pid)

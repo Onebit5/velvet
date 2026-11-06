@@ -130,11 +130,14 @@ close are done without the terminal's lock held.
 a terminal belongs to a **session**. a session leader with none takes
 one with ``TIOCSCTTY``, or by opening one nobody has, for reading and
 without ``O_NOCTTY``, and has it until it lets go with ``TIOCNOTTY`` or
-ends; root may take one from another session. ``/dev/console`` is never
-taken by being opened, being every session's to write to, and nor is a
-pty's master. every process of the
-session reaches it as ``/dev/tty``, and a process whose session has none
-is told ``-ENXIO`` there. the kernel starts ``/init`` on the first
+ends; root may take one from another session. when the leader ends,
+which every way a process ends tells the terminals, the terminal is
+nobody's and the group that was in front is sent ``SIGHUP``; letting go
+with ``TIOCNOTTY`` sends it ``SIGHUP`` and then ``SIGCONT``.
+``/dev/console`` is never taken by being opened, being every session's
+to write to, and nor is a pty's master. every process of the session
+reaches it as ``/dev/tty``, and a process whose session has none is told
+``-ENXIO`` there. the kernel starts ``/init`` on the first
 console, and an ``/init`` that wants it for its terminal takes it.
 
 the front of the terminal is a **group**, not a process. ``cat x | wc`` is
@@ -148,9 +151,10 @@ terminal, with ``SIGTTIN``, and when it changes it, ``tcsetattr`` or
 ``tcsetpgrp``, with ``SIGTTOU``; the call is made again once the group is
 continued. a group that ignores or blocks the signal is told ``-EIO`` for
 a read and is let make the change, which is how a shell, that ignores
-``SIGTTOU``, hands the terminal from job to job. a group behind may write
-to it, unless ``TOSTOP`` is set: then a write is a change like the others,
-and the group is stopped by ``SIGTTOU`` for it.
+``SIGTTOU``, hands the terminal from job to job. an orphaned group, which
+nobody would ever continue, is told ``-EIO`` rather than stopped. a group
+behind may write to it, unless ``TOSTOP`` is set: then a write is a change
+like the others, and the group is stopped by ``SIGTTOU`` for it.
 
 with ``ISIG``, the ``VINTR``, ``VQUIT`` and ``VSUSP`` characters, ctrl+c,
 ctrl+\\ and ctrl+z unless a program changed them, are ``SIGINT``,

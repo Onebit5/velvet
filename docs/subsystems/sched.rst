@@ -257,6 +257,17 @@ and waits for delivery like any other. the process remembers which signal
 stopped it, and ``wait`` with ``WUNTRACED`` tells a parent, once per
 stop, which is how a shell learns that ctrl+z happened to its job.
 
+a group is **orphaned** when none of its members has a parent in another
+group of the same session: nobody is left with job control over it,
+nobody who could put it in front or continue it. a session leader's own
+group always is, its parent being in another session. so a process
+ending looks at the groups its end may orphan, its own when its parent
+was in another group of the session and each of its children's, and one
+orphaned now with a member stopped is sent ``SIGHUP`` and then
+``SIGCONT``, or it would stay stopped for ever. ``SIGTSTP``, ``SIGTTIN``
+and ``SIGTTOU`` do nothing to a member of an orphaned group, at sending
+or at delivery; ``SIGSTOP`` stops anything.
+
 a program sends one with ``kill``, or ``tkill`` and ``tgkill``, which name
 a thread and here mean the same process, and only where it has a say: to
 a process of its own uid, ``SIGCONT`` to any process of its session, or

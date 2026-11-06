@@ -463,46 +463,62 @@ int main(void)
           "which no session has, so it reaches nobody");
     p_jsig->pending = 0;
 
-    /* a group behind its terminal is stopped when it reads, or changes it */
+    /*
+     * a group behind its terminal is stopped when it reads, or changes
+     * it. the job is the shell's, as a job behind a shell is: a session
+     * leader's own group has nobody in the session above it, and is
+     * orphaned
+     */
+    struct sigaction ignore = { .sa_handler = SIG_IGNORE };
+    struct sigaction dfl = { .sa_handler = SIG_DEFAULT };
     be(i_shell, 1);
+    signal_set_action(process_signal_state(i_shell), SIGTTOU, &ignore);
+    i_pgrp = i_shell;
+    ctl(p_tty, TIOCSPGRP, &i_pgrp);
+    be(i_job, 1);
     type(1, "x\r");
-    process_set_thread(i_shell, 55);
+    process_set_thread(i_job, 55);
     CHECK(rd(p_tty, arr_buf, sizeof arr_buf) == -ERESTARTSYS
           && s_i_stopped_id == 55,
           "a read from behind stops its group with SIGTTIN");
-    process_signal(i_shell, SIGCONT);
-    struct sigaction ignore = { .sa_handler = SIG_IGNORE };
-    signal_set_action(process_signal_state(i_shell), SIGTTIN, &ignore);
+    process_signal(i_job, SIGCONT);
+    signal_set_action(p_jsig, SIGTTIN, &ignore);
     CHECK(rd(p_tty, arr_buf, sizeof arr_buf) == -EIO,
           "or, ignoring SIGTTIN, is told EIO");
-    i_pgrp = i_shell;
+    i_pgrp = i_job;
     CHECK(ctl(p_tty, TIOCSPGRP, &i_pgrp) == -ERESTARTSYS
           && s_i_stopped_id == 55,
           "and changing who is in front from behind is SIGTTOU");
-    process_signal(i_shell, SIGCONT);
+    process_signal(i_job, SIGCONT);
     struct termios tostop = mode;
     tostop.c_lflag |= TOSTOP;
-    signal_set_action(process_signal_state(i_shell), SIGTTOU, &ignore);
+    signal_set_action(p_jsig, SIGTTOU, &ignore);
     ctl(p_tty, TCSETS, &tostop);
-    struct sigaction dfl = { .sa_handler = SIG_DEFAULT };
-    signal_set_action(process_signal_state(i_shell), SIGTTOU, &dfl);
+    signal_set_action(p_jsig, SIGTTOU, &dfl);
     screens_clear();
     CHECK(p_tty->p_ops->write(p_tty, "w", 1) == -ERESTARTSYS
           && s_i_stopped_id == 55 && s_arr_shown[1] == 0,
           "with TOSTOP a write from behind is SIGTTOU too, and not shown");
-    process_signal(i_shell, SIGCONT);
-    signal_set_action(process_signal_state(i_shell), SIGTTOU, &ignore);
+    process_signal(i_job, SIGCONT);
+    signal_set_action(p_jsig, SIGTTOU, &ignore);
     CHECK(p_tty->p_ops->write(p_tty, "w", 1) == 1
           && strcmp(s_arr_screen[1], "w") == 0,
           "unless SIGTTOU is ignored, when it is written");
     ctl(p_tty, TCSETS, &mode);
-    CHECK(ctl(p_tty, TIOCSPGRP, &i_pgrp) == 0 && tty_foreground(1) == i_shell,
-          "unless it ignores that, as a shell taking it back does");
+    CHECK(ctl(p_tty, TIOCSPGRP, &i_pgrp) == 0 && tty_foreground(1) == i_job,
+          "and a change is made, as a shell taking the terminal back does");
+    signal_set_action(p_jsig, SIGTTOU, &dfl);
 
     /* a session ends with its leader, and its terminal is nobody's */
+    i_pgrp = i_job;
+    ctl(p_tty, TIOCSPGRP, &i_pgrp);
+    p_jsig->pending = 0;
     process_exited(i_shell, 0, 10);
-    CHECK(tty_foreground(1) == TTY_NOBODY,
-          "the terminal of a session whose leader is gone is nobody's");
+    process_fds_release(i_shell);
+    CHECK(tty_foreground(1) == TTY_NOBODY
+          && (p_jsig->pending & SIGNAL_BIT(SIGHUP)),
+          "the terminal of a session whose leader is gone is nobody's, and "
+          "the group that was in front is sent SIGHUP");
 
     /* a pty: the same discipline, with a program at each end of it */
     int i_term = process_create("term", 0, 1000, false, 0);
@@ -692,6 +708,30 @@ int main(void)
     CHECK(p_third->p_ops->open(p_third, O_RDWR) == 0
           && tty_foreground(2) == i_lead,
           "and otherwise the leader takes it, its group in front");
+
+    /* a job its parent has left, which nobody can continue */
+    int i_orphan = process_create("orphan", i_kid, 0, false, 0);
+    process_inherit(i_orphan, i_kid);
+    process_set_pgid(i_orphan, i_orphan);
+    process_exited(i_kid, 0, 20);
+    process_fds_release(i_kid);
+    be(i_orphan, 2);
+    type(2, "x\r");
+    i_pgrp = i_orphan;
+    CHECK(rd(p_third, arr_buf, sizeof arr_buf) == -EIO
+          && ctl(p_third, TIOCSPGRP, &i_pgrp) == -EIO,
+          "an orphaned group behind its terminal is told EIO rather than "
+          "stopped, by a read or a change");
+    input_flush(2);
+
+    be(i_lead, 0);
+    i_pgrp = i_orphan;
+    struct signal_state *p_osig = process_signal_state(i_orphan);
+    CHECK(ctl(p_third, TIOCSPGRP, &i_pgrp) == 0
+          && ctl(p_third, TIOCNOTTY, NULL) == 0
+          && tty_foreground(2) == TTY_NOBODY
+          && (p_osig->pending & SIGNAL_BIT(SIGHUP)),
+          "a leader letting go of its terminal hangs up the group in front");
     file_put(p_wronly);
     file_put(p_third);
 

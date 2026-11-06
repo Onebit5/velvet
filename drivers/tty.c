@@ -68,31 +68,10 @@ static void forget(struct tty *t)
     t->sz_lines = 0;
 }
 
-/*
- * a session ends with its leader, and its terminal is nobody's after
- * that. asked whenever it matters rather than told at every exit, since
- * the answer is in the process table already. the lock is held
- */
-static void settle(struct tty *t)
-{
-    if (t->i_session == 0) {
-        return;
-    }
-    const struct process *p = process_find(t->i_session);
-    if (p == NULL || p->exited || p->i_sid != t->i_session) {
-        t->i_session = 0;
-        t->i_pgrp = TTY_NOBODY;
-    }
-}
-
 /* the session's terminal, if t is it. the lock is held */
-static bool is_of(struct tty *t, int i_sid)
+static bool is_of(const struct tty *t, int i_sid)
 {
-    if (t == NULL) {
-        return false;
-    }
-    settle(t);
-    return t->i_session != 0 && t->i_session == i_sid;
+    return t != NULL && t->i_session != 0 && t->i_session == i_sid;
 }
 
 /*
@@ -120,8 +99,39 @@ static struct tty *ctty_of(int i_pid)
 
 int tty_front(struct tty *t)
 {
-    settle(t);
     return t->i_pgrp;
+}
+
+/*
+ * a session's terminal let go of, the lock held: nobody's, with the
+ * group that was in front, TTY_NOBODY for none
+ */
+static int let_go_of(struct tty *t)
+{
+    int i_pgrp = t->i_pgrp;
+    t->i_session = 0;
+    t->i_pgrp = TTY_NOBODY;
+    return i_pgrp;
+}
+
+void tty_session_ended(int i_sid)
+{
+    int i_pgrp = TTY_NOBODY;
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
+    struct tty *t = NULL;
+    for (unsigned u_at = 0; u_at < VCONSOLE_COUNT && t == NULL; u_at++) {
+        t = is_of(tty_at(u_at), i_sid) ? tty_at(u_at) : NULL;
+    }
+    for (size_t sz_at = 0; sz_at < PTY_MAX && t == NULL; sz_at++) {
+        t = is_of(pty_tty_at(sz_at), i_sid) ? pty_tty_at(sz_at) : NULL;
+    }
+    if (t != NULL) {
+        i_pgrp = let_go_of(t);
+    }
+    spin_unlock_irq(&g_tty_lock, u_flags);
+    if (i_pgrp != TTY_NOBODY) {
+        process_signal_group(i_pgrp, SIGHUP);
+    }
 }
 
 /* a console's terminal: what is typed at that console, onto its screen */
@@ -456,7 +466,8 @@ static int64_t take_ready(struct tty *t, void *p_buf, size_t sz_len)
  * a read from a group behind the one in front of its own terminal stops
  * that group, the way a job put in the background stops when it wants
  * the keyboard, and the read is made again once it is continued. a group
- * that would not stop, ignoring or blocking SIGTTIN, is told -EIO
+ * that would not stop, ignoring or blocking SIGTTIN, is told -EIO, and
+ * so is an orphaned one, which nobody would continue
  */
 static int64_t may_read(struct tty *t)
 {
@@ -465,7 +476,6 @@ static int64_t may_read(struct tty *t)
         return 0;
     }
     uint64_t u_flags = spin_lock_irq(&g_tty_lock);
-    settle(t);
     const struct process *p = process_find(i_pid);
     bool b_behind = p != NULL && t->i_session != 0
                     && t->i_session == p->i_sid && t->i_pgrp != p->pgid;
@@ -477,7 +487,8 @@ static int64_t may_read(struct tty *t)
     const struct signal_state *p_sig = process_signal_state(i_pid);
     if (p_sig == NULL
         || signal_action_for(p_sig, SIGTTIN) == SIGNAL_ACTION_IGNORE
-        || (p_sig->blocked & SIGNAL_BIT(SIGTTIN))) {
+        || (p_sig->blocked & SIGNAL_BIT(SIGTTIN))
+        || process_group_orphaned(i_pgid)) {
         return -EIO;
     }
     process_signal_group(i_pgid, SIGTTIN);
@@ -487,13 +498,13 @@ static int64_t may_read(struct tty *t)
 /*
  * a change to a terminal from a group behind the one in front of it, its
  * own terminal, stops that group, unless it ignores or blocks SIGTTOU:
- * which is how a shell, which does, hands the terminal from job to job
+ * which is how a shell, which does, hands the terminal from job to job.
+ * an orphaned group that would be stopped is told -EIO instead
  */
 static int64_t may_change(struct tty *t)
 {
     int i_pid = current_pid();
     uint64_t u_flags = spin_lock_irq(&g_tty_lock);
-    settle(t);
     const struct process *p = process_find(i_pid);
     bool b_behind = p != NULL && t->i_session != 0
                     && t->i_session == p->i_sid && t->i_pgrp != p->pgid;
@@ -504,6 +515,9 @@ static int64_t may_change(struct tty *t)
         || signal_action_for(p_sig, SIGTTOU) == SIGNAL_ACTION_IGNORE
         || (p_sig->blocked & SIGNAL_BIT(SIGTTOU))) {
         return 0;
+    }
+    if (process_group_orphaned(i_pgid)) {
+        return -EIO;
     }
     process_signal_group(i_pgid, SIGTTOU);
     return -ERESTARTSYS;
@@ -759,7 +773,11 @@ static int64_t set_front(struct tty *t, uint64_t u_arg)
     return i_result;
 }
 
-/* the caller's session lets go of its terminal */
+/*
+ * the caller's session lets go of its terminal, which only its leader
+ * can say, and the group in front hears it hung up on and is continued
+ * to hear it
+ */
 static int64_t let_go(struct tty *t)
 {
     int64_t i_why = check_own(t);
@@ -767,12 +785,16 @@ static int64_t let_go(struct tty *t)
         return i_why;
     }
     const struct process *p = process_find(current_pid());
+    int i_pgrp = TTY_NOBODY;
     uint64_t u_flags = spin_lock_irq(&g_tty_lock);
     if (p != NULL && p->i_sid == p->pid) {
-        t->i_session = 0;
-        t->i_pgrp = TTY_NOBODY;
+        i_pgrp = let_go_of(t);
     }
     spin_unlock_irq(&g_tty_lock, u_flags);
+    if (i_pgrp != TTY_NOBODY) {
+        process_signal_group(i_pgrp, SIGHUP);
+        process_signal_group(i_pgrp, SIGCONT);
+    }
     return 0;
 }
 
@@ -984,11 +1006,9 @@ int tty_foreground(unsigned u_console)
 void tty_hangup(struct tty *t)
 {
     uint64_t u_flags = spin_lock_irq(&g_tty_lock);
-    settle(t);
     int i_leader = t->i_session;
     t->b_hung = true;
-    t->i_session = 0;
-    t->i_pgrp = TTY_NOBODY;
+    let_go_of(t);
     forget(t);
     spin_unlock_irq(&g_tty_lock, u_flags);
     if (i_leader != 0) {

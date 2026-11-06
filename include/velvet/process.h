@@ -143,6 +143,12 @@ void process_set_pgid(int pid, int pgid);
 /* the live members of a group, by pid: how many, up to `sz_max` */
 size_t process_group_pids(int i_pgid, int *p_pids, size_t sz_max);
 
+/*
+ * whether no member of a group has a parent in another group of its
+ * session, which leaves nobody with job control over it
+ */
+bool process_group_orphaned(int i_pgid);
+
 void process_set_thread(int pid, int thread_id);
 
 int  process_thread(int pid);
