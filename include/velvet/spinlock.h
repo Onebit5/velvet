@@ -47,6 +47,11 @@ enum lock_rank {
     LOCK_RANK_PIPE,
     LOCK_RANK_MOUNT,            /* the mount table, held to look a name up */
     LOCK_RANK_TTY,              /* a terminal, which takes keys out of input */
+    /*
+     * a program's memory, which a fault takes wherever the kernel reaches
+     * into ring 3, and which takes nothing but the memory under it
+     */
+    LOCK_RANK_MM,
     LOCK_RANK_DEVICE,           /* input, pci, the disk, ramfs */
 
     LOCK_RANK_CLOCK,
@@ -74,6 +79,14 @@ struct spinlock {
 #define SPINLOCK(nm, rk) { 0, nm, rk, ~0u, 0, false, 0 }
 
 void spin_init(struct spinlock *l, const char *name, enum lock_rank rank);
+
+/*
+ * the same for a lock inside something that is made and freed again, an
+ * address space's among them: checked like any other and never listed,
+ * since the list would outlive it
+ */
+void spin_init_unlisted(struct spinlock *l, const char *name,
+                        enum lock_rank rank);
 
 /*
  * the workhorse: interrupts off *and* the lock held, because a section

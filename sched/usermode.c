@@ -360,7 +360,7 @@ static int64_t image_build(const char *str_path,
     if (!elf_describe(image, image_size, segs, ELF_SEGMENTS_MAX, &seg_count,
                       &loaded.entry, &loaded.brk, &why)) {
         vfs_release(image, owned);
-        addrspace_destroy(space);
+        addrspace_put(space);
         *pp_error = why;
         return -ENOEXEC;
     }
@@ -379,7 +379,7 @@ static int64_t image_build(const char *str_path,
                                   lazy ? segs[sz_at].offset : 0,
                                   lazy ? segs[sz_at].file_end : 0)) {
             vfs_release(image, owned);
-            addrspace_destroy(space);
+            addrspace_put(space);
             *pp_error = "no room to describe the program";
             return -ENOMEM;
         }
@@ -401,7 +401,7 @@ static int64_t image_build(const char *str_path,
     }
 
     if (!loaded.ok) {
-        addrspace_destroy(space);
+        addrspace_put(space);
         *pp_error = (loaded.error != NULL) ? loaded.error : why;
         return -ENOEXEC;
     }
@@ -418,7 +418,7 @@ static int64_t image_build(const char *str_path,
 
     if (!addrspace_add_region(space, stack_base, USER_STACK_TOP,
                               stack_flags, VMA_ANON, NULL, 0, 0)) {
-        addrspace_destroy(space);
+        addrspace_put(space);
         *pp_error = "no room to describe a stack";
         return -ENOMEM;
     }
@@ -426,7 +426,7 @@ static int64_t image_build(const char *str_path,
     uint64_t eager_base = USER_STACK_TOP - sz_eager * PAGE_SIZE;
     uint64_t stack_phys = pmm_alloc_pages(sz_eager);
     if (stack_phys == 0) {
-        addrspace_destroy(space);
+        addrspace_put(space);
         *pp_error = "no memory for a user stack";
         return -ENOMEM;
     }
@@ -435,7 +435,7 @@ static int64_t image_build(const char *str_path,
     if (!vmm_map_range(space->pml4, eager_base, stack_phys,
                        sz_eager * PAGE_SIZE, stack_flags)) {
         pmm_free_pages(stack_phys, sz_eager);
-        addrspace_destroy(space);
+        addrspace_put(space);
         *pp_error = "could not map a user stack";
         return -ENOMEM;
     }
@@ -460,7 +460,7 @@ int user_spawn(const char *path, const struct exec_args *p_args,
     struct addrspace *space = img.p_space;
     struct user_start *start = kmalloc(sizeof *start);
     if (start == NULL) {
-        addrspace_destroy(space);
+        addrspace_put(space);
         *error = "no memory";
         return 0;
     }
@@ -487,7 +487,7 @@ int user_spawn(const char *path, const struct exec_args *p_args,
             process_collect(pid, NULL);
         }
         kfree(start);
-        addrspace_destroy(space);
+        addrspace_put(space);
         *error = (pid == 0) ? "the process table is full"
                             : "no memory for a terminal";
         return 0;
@@ -523,7 +523,7 @@ int user_spawn(const char *path, const struct exec_args *p_args,
         process_fds_release(pid);
         process_collect(pid, NULL);
         kfree(start);
-        addrspace_destroy(space);
+        addrspace_put(space);
         *error = "no memory for a thread";
         return 0;
     }
@@ -568,7 +568,7 @@ int64_t user_exec(const char *str_path, const struct exec_args *p_args,
     p_me->space = img.p_space;
     addrspace_switch(img.p_space);
     irq_restore(u_flags);
-    addrspace_destroy(p_old);
+    addrspace_put(p_old);
 
     signal_exec(process_signal_state(p_me->pid),
                 process_thread_signals(p_me->i_tid));

@@ -169,9 +169,41 @@ dereferencing nonsense are told apart.
   writable page is marked read-only and ``PTE_COW``, the frame gains a
   second holder, and the first write on either side faults and becomes
   private. see `fork and copy on write <sched.rst>`_.
-- ``addrspace_destroy()`` frees the lower half only, and only once nothing
-  is running on it. the reaper does it from another thread after the
-  switch away has happened.
+- ``addrspace_put()`` lets go of one use of a space, and the last frees
+  the lower half, only once nothing is running on it. the reaper does it
+  from another thread after the switch away has happened.
+
+a space has a use for each thread running in it, which every thread of a
+process is, and they change it at once from as many cores: a fault, a
+mapping, a fork, each under the space's lock, so that two threads
+touching one page at once make it once. three things follow from more
+than one core translating through the same tables.
+
+- a fault can be about something another thread has answered already:
+  the page made while this one waited for the lock, or made writable while
+  this core still held a translation saying read-only, which the fault
+  threw away. either is the access made again, and is decided by what the
+  table says now rather than by what the fault said it found.
+- a frame taken out of a space is given back only once every core has
+  thrown away its translations, since a thread on another core could
+  write through one into whatever the allocator handed the frame to next.
+  unmapping a range collects its frames, a batch at a time, and lets go of
+  them after the shootdown.
+- a change that takes a right away, a copy made for a write, a range made
+  read-only, a fork, is not done until every core has thrown away the
+  translation that still allowed it. the call does not return before, and
+  a copy's write is not let through before, so the threads of a process
+  see every write in one order.
+
+the shootdowns are made after the lock is let go, so the space's other
+threads wait on it for the change and no longer, the one exception being
+a range with more pages in it than a batch holds. and only a space some
+other core has loaded is shot down at all: a core that has not holds no
+translation into it, having thrown every one away when it loaded the
+tables it has now, and one that loads it after the change reads the
+tables as they already are. a program with one thread never has
+another core running its space, so nothing it does is ever told to
+another core.
 
 running out of memory
 ---------------------
@@ -270,16 +302,21 @@ program going wrong.
 ``struct addrspace *addrspace_create(uint64_t kernel_pml4)``
     a new space with the kernel half already visible and nothing else.
 
-``struct addrspace *addrspace_fork(const struct addrspace *from, uint64_t kernel_pml4)``
+``struct addrspace *addrspace_fork(from, kernel_pml4)``
     a copy that shares every page with the original rather than copying any
-    of them, with copy on write doing the rest.
+    of them, with copy on write doing the rest. a thread of ``from`` that
+    writes while it is made, through a translation from before it, is the
+    child seeing a write made before its fork.
 
-``void addrspace_destroy(struct addrspace *as)``
-    free the lower half: the program's pages, its stack, and the tables that
-    described them. the upper half is shared by everybody and is not this
-    space's to free. only safe once nothing is running on it, which is why
-    the reaper does it from another thread after the switch away has already
-    happened.
+``struct addrspace *addrspace_get(struct addrspace *as)``
+    another use of a space, for another thread to run in it.
+
+``void addrspace_put(struct addrspace *as)``
+    one use let go of, and with the last, the lower half freed: the
+    program's pages, its stack, and the tables that described them. the
+    upper half is shared by everybody and is not this space's to free.
+    only safe once nothing is running on it, which is why the reaper does
+    it from another thread after the switch away has already happened.
 
 ``void addrspace_switch(struct addrspace *as)``
     make this the live space on this core.

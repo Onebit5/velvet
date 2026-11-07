@@ -12,6 +12,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <velvet/spinlock.h>
 
 /*
  * a private view of memory: the lower half belongs to the program, the
@@ -45,6 +46,18 @@ struct vma {
 };
 
 struct addrspace {
+    /*
+     * the tables and the regions, which every thread of a process changes
+     * at once: a fault, a mapping and a fork each hold this, so that two
+     * threads touching one page at once make it once. the shootdowns
+     * that follow a change are made after it is let go, so the space's
+     * other threads wait on it for the change and no longer
+     */
+    struct spinlock lock;
+
+    /* the threads using the space: the last to let go of it frees it */
+    uint32_t u_users;
+
     uint64_t pages_in_use;
 
     uint64_t pml4;      /* physical address of the top level table */
@@ -107,10 +120,23 @@ bool addrspace_discard(struct addrspace *p_as, uint64_t u_start,
 uint64_t addrspace_brk(struct addrspace *p_as, uint64_t u_want,
                        uint64_t u_flags);
 
+/* a space of nothing but the kernel's half, with one user, its maker */
 struct addrspace *addrspace_create(uint64_t kernel_pml4);
 
-struct addrspace *addrspace_fork(const struct addrspace *from,
+/*
+ * a copy of one, made as it is written: both sides' pages read-only
+ * until the first write makes the copy. the threads of `from` that are
+ * writing while it is made are the copy's linearization: a write that
+ * gets in before the shootdown at the end is in both
+ */
+struct addrspace *addrspace_fork(struct addrspace *from,
                                  uint64_t kernel_pml4);
+
+/* another user of a space, a thread that shares it: the space */
+struct addrspace *addrspace_get(struct addrspace *as);
+
+/* one user let go of it, and the space freed with the last */
+void addrspace_put(struct addrspace *as);
 
 /*
  * a fault. one of two things, and the difference is `present`:
@@ -122,13 +148,17 @@ struct addrspace *addrspace_fork(const struct addrspace *from,
  *   inside a region this space agreed to, make one; otherwise it is a
  *   wild pointer and always was.
  *
- * returns false if it was neither, which means the fault was a real one
- * and the caller should treat it as such
+ * or a third, once a space has more than one thread: what the fault was
+ * about another thread of the space has answered already, making the
+ * page while this one waited for the lock, or making it writable while
+ * this core still held a translation that said read-only. the access is
+ * simply made again.
+ *
+ * returns false if it was none of these, which means the fault was a
+ * real one and the caller should treat it as such
  */
 bool addrspace_fault(struct addrspace *as, uint64_t virt, bool write,
                      bool present);
-
-void addrspace_destroy(struct addrspace *as);
 
 void addrspace_switch(struct addrspace *as);
 

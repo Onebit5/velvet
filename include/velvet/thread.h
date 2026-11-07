@@ -52,7 +52,8 @@ struct thread {
     /*
      * ring 3 threads only. the address space owns every page in its
      * lower half, the program's image and its stack alike, so
-     * there is nothing else to free by hand
+     * there is nothing else to free by hand. each thread of a process
+     * holds a use of the one space they share
      */
     struct addrspace *space;
 

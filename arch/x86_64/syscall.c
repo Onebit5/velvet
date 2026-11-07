@@ -504,7 +504,7 @@ static int64_t copy_process(struct pt_regs *p_regs, uint64_t u_flags,
                        : NULL;
     if (t == NULL) {
         kfree(p_start);
-        addrspace_destroy(p_space);
+        addrspace_put(p_space);
         process_exited(i_pid, PROCESS_KILLED, pit_uptime_ms());
         process_fds_release(i_pid);
         process_collect(i_pid, NULL);

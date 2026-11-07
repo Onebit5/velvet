@@ -223,10 +223,11 @@ void thread_free_stack(struct thread *t)
 {
     /*
      * the address space owns the program's pages and its user stack, so
-     * letting it go reclaims all of them at once
+     * the last of its threads letting go of it reclaims all of them at
+     * once
      */
     if (t->space != NULL) {
-        addrspace_destroy(t->space);
+        addrspace_put(t->space);
         t->space = NULL;
     }
     if (t->stack_phys == 0) {

@@ -59,6 +59,18 @@ void spin_init(struct spinlock *l, const char *name, enum lock_rank rank)
     remember(l);
 }
 
+void spin_init_unlisted(struct spinlock *l, const char *name,
+                        enum lock_rank rank)
+{
+    l->held = 0;
+    l->name = name;
+    l->rank = rank;
+    l->owner = ~0u;
+    l->contended = 0;
+    l->warned = false;
+    l->listed = 1;          /* so remember() passes it by */
+}
+
 /* set when the machine is on its way down. */
 static volatile bool abandoned;
 

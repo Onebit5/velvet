@@ -121,6 +121,7 @@ locks of *lower* rank. it is checked, not hoped for.
     LOCK_RANK_PIPE      a pipe wakes threads and calls nothing below it
     LOCK_RANK_MOUNT     the mount table, held to look a name up
     LOCK_RANK_TTY       a terminal, which takes keys out of input
+    LOCK_RANK_MM        a program's memory, which a fault takes
     LOCK_RANK_DEVICE    input, pci, the disk
     LOCK_RANK_CLOCK     the cmos clock, a leaf: anything may ask it
     LOCK_RANK_SCHED     the run queue
@@ -140,6 +141,11 @@ of input and put through the terminal's discipline under one hold of the
 terminal's lock, so that two readers draining one terminal at once cannot
 swap two keys, and that means holding the terminal's lock while taking
 input's, which was the same rank.
+
+an address space got one in 0.4.8, when a process's threads came to
+share one. a fault takes its lock wherever the kernel reaches into ring
+3, so it sits below everything a copy to or from a program may be made
+under, and it takes nothing itself but the memory under it.
 
 processes
 ---------

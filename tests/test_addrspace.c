@@ -12,6 +12,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <pthread.h>
 
 #define ARENA_PAGES 8192
 static uint8_t *arena;
@@ -125,9 +126,17 @@ uint64_t pmm_hhdm_offset(void)
     return (uint64_t)arena;
 }
 
-/* on a machine with one core there is nobody to tell */
+/*
+ * on a machine with one core there is nobody to tell, but a frame let go
+ * of before the telling would be one another core could still write
+ * through, so each says how many frames were out when it was made
+ */
+static int s_i_shootdowns;
+static uint64_t s_u_out_at_shootdown;
 void smp_tlb_shootdown(void)
 {
+    s_i_shootdowns++;
+    s_u_out_at_shootdown = outstanding;
 }
 void kprintf(const char *f, ...)
 {
@@ -155,12 +164,21 @@ static int failures;
 static uint64_t kernel_space;
 
 /*
- * addrspace_switch is the only part that touches a real cpu, so the
- * kernel build keeps it and the host build supplies this instead
+ * another core, which is another host thread: each has a core of its
+ * own here, and this one loads a space on it and leaves it there, as a
+ * core running another thread of the space has it
  */
-void addrspace_switch(struct addrspace *as)
+static void *load_it(void *p_arg)
 {
-    (void)as;
+    addrspace_switch(p_arg);
+    return NULL;
+}
+
+static void run_elsewhere(struct addrspace *p_sp)
+{
+    pthread_t other;
+    pthread_create(&other, NULL, load_it, p_sp);
+    pthread_join(other, NULL);
 }
 
 /* a program's page is refused when it would take the machine below its reserve. */
@@ -210,7 +228,7 @@ int main(void)
     CHECK(vmm_translate(a->pml4, 0xffff800000400000ull) == late,
           "a later kernel mapping shows up in a space made before it");
 
-    addrspace_destroy(a);
+    addrspace_put(a);
 
     /*
      * everything outstanding now belongs to the kernel and nothing
@@ -243,7 +261,7 @@ int main(void)
 
 
     uint64_t before = outstanding;
-    addrspace_destroy(y);
+    addrspace_put(y);
     CHECK(outstanding < before, "destroying a space returns frames");
 
     CHECK(vmm_translate(x->pml4, 0x400000) == page_x,
@@ -251,7 +269,7 @@ int main(void)
     CHECK(vmm_translate(x->pml4, 0xffff800000000000ull) == 0,
           "and the shared kernel half was not freed with y");
 
-    addrspace_destroy(x);
+    addrspace_put(x);
     CHECK(outstanding == kernel_only,
           "with both spaces gone the pmm is exactly level again, nothing "
           "leaked, and nothing shared was taken with them");
@@ -364,8 +382,8 @@ int main(void)
         CHECK(!addrspace_fault(p, 0x401000, false, true),
               "a read never needs one of these");
 
-        addrspace_destroy(c);
-        addrspace_destroy(p);
+        addrspace_put(c);
+        addrspace_put(p);
         CHECK(outstanding == level,
               "and with both gone the books are level, a shared frame "
               "freed twice is the failure this is really looking for");
@@ -381,7 +399,7 @@ int main(void)
                              VMA_ANON, NULL, 0, 0);
 
         struct addrspace *c = addrspace_fork(p, kernel_space);
-        addrspace_destroy(c);
+        addrspace_put(c);
         CHECK(vmm_translate(p->pml4, 0x400000) == page,
               "a child that never wrote leaves the parent's page alone");
 
@@ -390,7 +408,7 @@ int main(void)
         CHECK(vmm_translate(p->pml4, 0x400000) == page,
               "the same frame it always had");
 
-        addrspace_destroy(p);
+        addrspace_put(p);
         CHECK(outstanding == level, "with nothing left over");
     }
 
@@ -415,7 +433,7 @@ int main(void)
         struct addrspace *c = addrspace_fork(p, kernel_space);
         CHECK(c == NULL, "a fork with no memory left fails");
         budget = -1;
-        addrspace_destroy(p);
+        addrspace_put(p);
         CHECK(outstanding == level,
               "and leaves nothing behind, the half-built tree is nobody's "
               "to free but its own");
@@ -428,7 +446,7 @@ int main(void)
         CHECK(addrspace_fork(p, kernel_space) == NULL,
               "a fork with nowhere to count holders is refused");
         can_share = true;
-        addrspace_destroy(p);
+        addrspace_put(p);
     }
 
     /* a fault could already mean "copy this page". */
@@ -512,7 +530,7 @@ int main(void)
               && outstanding == before_drop - 1,
               "taking it back twice is nothing to take back, not an error");
 
-        addrspace_destroy(p);
+        addrspace_put(p);
         CHECK(outstanding == level, "and nothing leaked");
     }
 
@@ -551,7 +569,7 @@ int main(void)
               "and zeroes past where the file stopped, one page being both "
               "is exactly what the end of a segment looks like");
 
-        addrspace_destroy(p);
+        addrspace_put(p);
         CHECK(outstanding == level, "with nothing left over");
     }
 
@@ -595,7 +613,7 @@ int main(void)
         CHECK(!addrspace_fault(p, b + 50 * 4096, true, false),
               "after which it is nobody's memory again");
 
-        addrspace_destroy(p);
+        addrspace_put(p);
         CHECK(outstanding == level, "with nothing leaked");
     }
 
@@ -618,8 +636,8 @@ int main(void)
         CHECK(vmm_translate(p->pml4, 0x707000) == VMM_NO_MAPPING,
               "which the parent knows nothing about");
 
-        addrspace_destroy(c);
-        addrspace_destroy(p);
+        addrspace_put(c);
+        addrspace_put(p);
         CHECK(outstanding == level, "and nothing leaked");
     }
 
@@ -714,16 +732,16 @@ int main(void)
               && addrspace_brk(p_kid, 0x502000, u_rw) == 0x502000,
               "a forked child's break is where its parent's was, and "
               "grows from there");
-        addrspace_destroy(p_kid);
+        addrspace_put(p_kid);
 
         struct addrspace *p_none = addrspace_create(kernel_space);
         CHECK(addrspace_brk(p_none, 0x2000, u_rw) == 0
               && regions(p_none) == 0,
               "a space with no break has none to grow, least of all from "
               "address 0");
-        addrspace_destroy(p_none);
+        addrspace_put(p_none);
 
-        addrspace_destroy(p_sp);
+        addrspace_put(p_sp);
         CHECK(outstanding == u_level, "with nothing leaked");
     }
 
@@ -747,8 +765,8 @@ int main(void)
               "and made writable again, it is still shared until a write "
               "makes the copy");
 
-        addrspace_destroy(p_child);
-        addrspace_destroy(p_parent);
+        addrspace_put(p_child);
+        addrspace_put(p_parent);
         CHECK(outstanding == u_level, "and nothing leaked");
     }
 
@@ -768,12 +786,107 @@ int main(void)
               "so with no room, a hole is refused and nothing changes");
         CHECK(addrspace_unmap(p_sp, u_big, 4096),
               "while trimming an end needs no room at all");
-        addrspace_destroy(p_sp);
+        addrspace_put(p_sp);
+    }
+
+    /*
+     * a space a process's threads share: a use each, the faults one
+     * thread makes about what another has already answered, and a frame
+     * let go of only once no core can still be translating to it
+     */
+    {
+        uint64_t u_rw = PTE_USER | PTE_WRITE;
+        before = outstanding;
+        struct addrspace *p_sp = addrspace_create(kernel_space);
+        uint64_t u_at = addrspace_map_anon(p_sp, 0, 160 * 4096, u_rw, false);
+        addrspace_fault(p_sp, u_at + 150 * 4096, true, false);
+        int i_alone = s_i_shootdowns;
+        CHECK(addrspace_unmap(p_sp, u_at + 150 * 4096, 4096)
+              && s_i_shootdowns == i_alone,
+              "a space no other core is running tells no core anything, "
+              "none of them holding a translation into it");
+        run_elsewhere(p_sp);
+        CHECK(addrspace_fault(p_sp, u_at, true, false), "a page is made");
+        uint64_t u_phys = vmm_translate(p_sp->pml4, u_at);
+        *(uint8_t *)pmm_phys_to_virt(u_phys) = 0x5a;
+        uint64_t u_made = outstanding;
+        CHECK(addrspace_fault(p_sp, u_at, true, false)
+              && outstanding == u_made
+              && vmm_translate(p_sp->pml4, u_at) == u_phys
+              && *(uint8_t *)pmm_phys_to_virt(u_phys) == 0x5a,
+              "a second thread's fault on it, from before it was made, "
+              "finds it there and makes no second one over what the first "
+              "wrote");
+        CHECK(addrspace_fault(p_sp, u_at, false, false)
+              && outstanding == u_made,
+              "and so does a read that found nothing there");
+        CHECK(addrspace_fault(p_sp, u_at, true, true),
+              "and a write fault on a page already writable is a "
+              "translation from before, made again");
+        CHECK(!addrspace_fault(p_sp, u_at, false, true),
+              "while a read of a present page is still a real fault");
+
+        int i_shot = s_i_shootdowns;
+        CHECK(addrspace_unmap(p_sp, u_at + 40 * 4096, 4096)
+              && s_i_shootdowns == i_shot,
+              "dropping a page that was never made tells no core anything");
+
+        for (uint64_t u_page = 1; u_page < 150; u_page++) {
+            addrspace_fault(p_sp, u_at + u_page * 4096, true, false);
+        }
+        uint64_t u_full = outstanding;
+        i_shot = s_i_shootdowns;
+        CHECK(addrspace_unmap(p_sp, u_at, 10 * 4096)
+              && outstanding == u_full - 10
+              && s_i_shootdowns == i_shot + 1
+              && s_u_out_at_shootdown == u_full,
+              "and dropping some tells every core before one frame of "
+              "them is given back");
+        i_shot = s_i_shootdowns;
+        CHECK(addrspace_unmap(p_sp, u_at + 10 * 4096, 150 * 4096)
+              && outstanding == u_full - 149
+              && s_i_shootdowns == i_shot + 3,
+              "more than one batch is told a batch at a time");
+
+        CHECK(addrspace_get(p_sp) == p_sp && p_sp->u_users == 2,
+              "a second thread is a second use of the space");
+        addrspace_put(p_sp);
+        CHECK(p_sp->u_users == 1 && outstanding > before,
+              "and the first to let go leaves it to the other");
+        addrspace_put(p_sp);
+        CHECK(outstanding == before, "which frees it with the last");
+    }
+
+    /* a copy made for a write is told to every core before the write */
+    {
+        uint64_t u_rw = PTE_USER | PTE_WRITE;
+        struct addrspace *p_par = addrspace_create(kernel_space);
+        uint64_t u_at = addrspace_map_anon(p_par, 0, 4096, u_rw, false);
+        addrspace_fault(p_par, u_at, true, false);
+        run_elsewhere(p_par);
+        run_elsewhere(p_par);
+        struct addrspace *p_kid = addrspace_fork(p_par, kernel_space);
+        run_elsewhere(p_kid);
+        uint64_t u_shared = vmm_translate(p_par->pml4, u_at);
+        int i_shot = s_i_shootdowns;
+        CHECK(addrspace_fault(p_par, u_at, true, true)
+              && vmm_translate(p_par->pml4, u_at) != u_shared
+              && s_i_shootdowns == i_shot + 1,
+              "a write to a page a fork shares makes a copy, and every "
+              "core forgets the shared one before the write is let "
+              "through");
+        CHECK(addrspace_fault(p_kid, u_at, true, true)
+              && vmm_translate(p_kid->pml4, u_at) == u_shared
+              && s_i_shootdowns == i_shot + 1,
+              "and the last holder takes it back where it is, with "
+              "nobody to tell");
+        addrspace_put(p_kid);
+        addrspace_put(p_par);
     }
 
     before = outstanding;
     struct addrspace *empty = addrspace_create(kernel_space);
-    addrspace_destroy(empty);
+    addrspace_put(empty);
     CHECK(outstanding == before, "an unused space costs nothing once freed");
 
     if (!failures) printf("all good\n");

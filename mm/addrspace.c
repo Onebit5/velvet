@@ -27,6 +27,38 @@ static uint64_t *table_at(uint64_t phys)
     return pmm_phys_to_virt(phys);
 }
 
+/*
+ * whether a core other than this one has the space loaded. one that has
+ * not holds no translation into it, having thrown every one away when
+ * it loaded the tables it has now, and one that loads it after this
+ * looks reads the tables as they already are: the change was made
+ * before the look, the fence orders the two, and loading a table is a
+ * fence of its own. so a change is told to the other cores only when
+ * one of them is running the space, which a program of one thread
+ * never has them doing
+ */
+static bool loaded_elsewhere(const struct addrspace *as)
+{
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    uint32_t u_me = cpu_id();
+    for (uint32_t u_at = 0; u_at < CPU_MAX; u_at++) {
+        if (u_at != u_me
+            && __atomic_load_n(&live_pml4[u_at], __ATOMIC_RELAXED)
+               == as->pml4) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* every other core told to throw away what it holds of the space */
+static void shoot(const struct addrspace *as)
+{
+    if (loaded_elsewhere(as)) {
+        smp_tlb_shootdown();
+    }
+}
+
 static struct slab_cache addrspace_cache;
 
 struct addrspace *addrspace_create(uint64_t kernel_pml4)
@@ -45,6 +77,8 @@ struct addrspace *addrspace_create(uint64_t kernel_pml4)
      * every field here has to be set on purpose
      */
     memset(as, 0, sizeof *as);
+    spin_init_unlisted(&as->lock, "addrspace", LOCK_RANK_MM);
+    as->u_users = 1;
 
     as->pml4 = vmm_new_address_space();
     if (as->pml4 == 0) {
@@ -112,7 +146,9 @@ static uint64_t copy_level(uint64_t phys, int level)
     return fresh;
 }
 
-struct addrspace *addrspace_fork(const struct addrspace *from,
+static void destroy(struct addrspace *as);
+
+struct addrspace *addrspace_fork(struct addrspace *from,
                                  uint64_t kernel_pml4)
 {
     if (from == NULL) {
@@ -128,6 +164,12 @@ struct addrspace *addrspace_fork(const struct addrspace *from,
         return NULL;
     }
 
+    /*
+     * the parent's tables are rewritten as they are copied, and its
+     * other threads fault on them meanwhile: they wait here for the copy
+     * to be whole
+     */
+    uint64_t u_flags = spin_lock_irq(&from->lock);
     const uint64_t *parent = table_at(from->pml4);
     uint64_t *mine = table_at(as->pml4);
 
@@ -137,7 +179,9 @@ struct addrspace *addrspace_fork(const struct addrspace *from,
         }
         uint64_t child = copy_level(parent[i] & PTE_ADDR_MASK, 3);
         if (child == 0) {
-            addrspace_destroy(as);
+            spin_unlock_irq(&from->lock, u_flags);
+            shoot(from);
+            destroy(as);
             return NULL;
         }
         mine[i] = child | (parent[i] & ~PTE_ADDR_MASK);
@@ -163,26 +207,35 @@ struct addrspace *addrspace_fork(const struct addrspace *from,
     if (live_pml4[cpu_id()] == from->pml4) {
         mmu_load_table(from->pml4);
     }
+    spin_unlock_irq(&from->lock, u_flags);
 
     /*
      * the parent's own entries just changed under it, and every core
-     * that has run it may be holding a translation that still says
-     * writable
+     * running another of its threads may be holding a translation that
+     * still says writable. until this is done such a thread writes
+     * through it into the page the child now shares, which is the child
+     * seeing a write made before its fork; the first write after makes
+     * a copy that is the parent's alone. a thread with no translation
+     * faults, and waited above for the copy to be whole. so the fork is
+     * one moment, here, for every thread of the parent, and the call
+     * does not return before it
      */
-    /*
-     * XXX: those entries were rewritten with nothing holding them.
-     * copy_level() clears PTE_WRITE and sets PTE_COW in the parent's own
-     * tables, and another core running a thread of the parent can be
-     * faulting on the same tables, or writing through a translation
-     * that still says writable until the shootdown below. a write in
-     * that window is not copied, so the child sees it. a single threaded
-     * process never reaches it; the failure mode is a parent that forks
-     * while another of its threads is writing. quiesce the address space
-     * first, or take a per address space lock and make the shootdown
-     * fence the writers.
-     */
-    smp_tlb_shootdown();
+    shoot(from);
     return as;
+}
+
+struct addrspace *addrspace_get(struct addrspace *as)
+{
+    __atomic_fetch_add(&as->u_users, 1, __ATOMIC_ACQ_REL);
+    return as;
+}
+
+void addrspace_put(struct addrspace *as)
+{
+    if (as != NULL
+        && __atomic_sub_fetch(&as->u_users, 1, __ATOMIC_ACQ_REL) == 0) {
+        destroy(as);
+    }
 }
 
 /*
@@ -225,23 +278,24 @@ static struct vma *region_for(struct addrspace *as, uint64_t virt)
     return NULL;
 }
 
-bool addrspace_add_region(struct addrspace *as, uint64_t start, uint64_t end,
-                          uint64_t flags, enum vma_kind kind,
-                          const uint8_t *image, uint64_t image_offset,
-                          uint64_t file_end)
+/* the lock is held */
+static bool add_region(struct addrspace *as, uint64_t u_start, uint64_t u_end,
+                       uint64_t u_flags, enum vma_kind e_kind,
+                       const uint8_t *p_image, uint64_t u_image_offset,
+                       uint64_t u_file_end)
 {
-    if (as == NULL || end <= start) {
+    if (u_end <= u_start) {
         return false;
     }
 
-    start &= ~(PAGE_SIZE - 1);
-    end = (end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    u_start &= ~(PAGE_SIZE - 1);
+    u_end = (u_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 
-    struct vma *slot = NULL;
+    struct vma *p_slot = NULL;
     for (size_t i = 0; i < VMA_MAX; i++) {
         if (as->vmas[i].kind == VMA_NONE) {
-            if (slot == NULL) {
-                slot = &as->vmas[i];
+            if (p_slot == NULL) {
+                p_slot = &as->vmas[i];
             }
             continue;
         }
@@ -249,22 +303,37 @@ bool addrspace_add_region(struct addrspace *as, uint64_t start, uint64_t end,
          * two records disagreeing about one address is worse than
          * refusing to make the second
          */
-        if (start < as->vmas[i].end && end > as->vmas[i].start) {
+        if (u_start < as->vmas[i].end && u_end > as->vmas[i].start) {
             return false;
         }
     }
-    if (slot == NULL) {
+    if (p_slot == NULL) {
         return false;
     }
 
-    slot->kind = kind;
-    slot->start = start;
-    slot->end = end;
-    slot->flags = flags;
-    slot->image = image;
-    slot->image_offset = image_offset;
-    slot->file_end = file_end;
+    p_slot->kind = e_kind;
+    p_slot->start = u_start;
+    p_slot->end = u_end;
+    p_slot->flags = u_flags;
+    p_slot->image = p_image;
+    p_slot->image_offset = u_image_offset;
+    p_slot->file_end = u_file_end;
     return true;
+}
+
+bool addrspace_add_region(struct addrspace *as, uint64_t start, uint64_t end,
+                          uint64_t flags, enum vma_kind kind,
+                          const uint8_t *image, uint64_t image_offset,
+                          uint64_t file_end)
+{
+    if (as == NULL) {
+        return false;
+    }
+    uint64_t u_flags = spin_lock_irq(&as->lock);
+    bool b_added = add_region(as, start, end, flags, kind, image,
+                              image_offset, file_end);
+    spin_unlock_irq(&as->lock, u_flags);
+    return b_added;
 }
 
 /*
@@ -383,18 +452,55 @@ static void cut_at_edges(struct addrspace *p_as, uint64_t u_start,
     }
 }
 
-/* every page made in [start, end) given back */
+/*
+ * frames taken out of a space and not given back yet. a core running
+ * another thread of the space may still be holding a translation to one,
+ * and a frame given back to the allocator while it is would be some
+ * other program's memory written through it, so each is let go of only
+ * once every core has thrown its translations away
+ */
+#define DROPPED_MAX 64
+
+struct dropped {
+    size_t sz_count;
+    uint64_t arr_phys[DROPPED_MAX];
+    bool b_changed;             /* an entry some core may hold changed */
+};
+
+/* every core's translations thrown away, and then the frames let go of */
+static void let_go(const struct addrspace *p_as, struct dropped *p_drop)
+{
+    if (p_drop->b_changed) {
+        shoot(p_as);
+    }
+    for (size_t sz_at = 0; sz_at < p_drop->sz_count; sz_at++) {
+        pmm_unref(p_drop->arr_phys[sz_at]);
+    }
+    p_drop->sz_count = 0;
+    p_drop->b_changed = false;
+}
+
+/*
+ * every page made in [start, end) taken out, into p_drop. one range with
+ * more pages in it than that holds is let go of a batch at a time with
+ * the lock still held, the one shootdown made under it, which holds up
+ * the space's other threads for as long as it takes, so only a range
+ * that big pays that. the lock is held
+ */
 static void drop_pages(struct addrspace *p_as, uint64_t u_start,
-                       uint64_t u_end)
+                       uint64_t u_end, struct dropped *p_drop)
 {
     for (uint64_t u_addr = u_start; u_addr < u_end; u_addr += PAGE_SIZE) {
         uint64_t *p_pte = leaf_for(p_as->pml4, u_addr);
         if (p_pte == NULL || !(*p_pte & PTE_PRESENT)) {
             continue;
         }
-        uint64_t u_phys = *p_pte & PTE_ADDR_MASK;
+        if (p_drop->sz_count == DROPPED_MAX) {
+            let_go(p_as, p_drop);
+        }
+        p_drop->arr_phys[p_drop->sz_count++] = *p_pte & PTE_ADDR_MASK;
+        p_drop->b_changed = true;
         *p_pte = 0;
-        pmm_unref(u_phys);
         vmm_flush_page(u_addr);
         if (p_as->pages_in_use > 0) {
             p_as->pages_in_use--;
@@ -402,9 +508,11 @@ static void drop_pages(struct addrspace *p_as, uint64_t u_start,
     }
 }
 
-bool addrspace_unmap(struct addrspace *p_as, uint64_t u_start, uint64_t u_len)
+/* the lock is held, and what is dropped is the caller's to let go of */
+static bool unmap(struct addrspace *p_as, uint64_t u_start, uint64_t u_len,
+                  struct dropped *p_drop)
 {
-    if (p_as == NULL || u_len == 0 || (u_start & (PAGE_SIZE - 1)) != 0
+    if (u_len == 0 || (u_start & (PAGE_SIZE - 1)) != 0
         || u_start + PAGE_UP(u_len) < u_start) {
         return false;
     }
@@ -441,9 +549,21 @@ bool addrspace_unmap(struct addrspace *p_as, uint64_t u_start, uint64_t u_len)
             p_vma->kind = VMA_NONE;
         }
     }
-    drop_pages(p_as, u_start, u_end);
-    smp_tlb_shootdown();
+    drop_pages(p_as, u_start, u_end, p_drop);
     return true;
+}
+
+bool addrspace_unmap(struct addrspace *p_as, uint64_t u_start, uint64_t u_len)
+{
+    if (p_as == NULL) {
+        return false;
+    }
+    struct dropped drop = { 0 };
+    uint64_t u_flags = spin_lock_irq(&p_as->lock);
+    bool b_done = unmap(p_as, u_start, u_len, &drop);
+    spin_unlock_irq(&p_as->lock, u_flags);
+    let_go(p_as, &drop);
+    return b_done;
 }
 
 /*
@@ -462,10 +582,11 @@ static uint64_t reprotect(uint64_t u_pte, uint64_t u_flags)
     return u_kept | u_want | PTE_PRESENT;
 }
 
-bool addrspace_protect(struct addrspace *p_as, uint64_t u_start,
-                       uint64_t u_len, uint64_t u_flags)
+/* the lock is held */
+static bool protect(struct addrspace *p_as, uint64_t u_start, uint64_t u_len,
+                    uint64_t u_flags, struct dropped *p_drop)
 {
-    if (p_as == NULL || u_len == 0 || (u_start & (PAGE_SIZE - 1)) != 0
+    if (u_len == 0 || (u_start & (PAGE_SIZE - 1)) != 0
         || u_start + PAGE_UP(u_len) < u_start) {
         return false;
     }
@@ -488,11 +609,30 @@ bool addrspace_protect(struct addrspace *p_as, uint64_t u_start,
             if (p_pte != NULL && (*p_pte & PTE_PRESENT)) {
                 *p_pte = reprotect(*p_pte, u_flags);
                 vmm_flush_page(u_addr);
+                p_drop->b_changed = true;
             }
         }
     }
-    smp_tlb_shootdown();
     return true;
+}
+
+/*
+ * a thread of the space running on another core may write through a
+ * translation that still says writable until the shootdown, so the call
+ * is not done until it is
+ */
+bool addrspace_protect(struct addrspace *p_as, uint64_t u_start,
+                       uint64_t u_len, uint64_t u_flags)
+{
+    if (p_as == NULL) {
+        return false;
+    }
+    struct dropped drop = { 0 };
+    uint64_t u_lock = spin_lock_irq(&p_as->lock);
+    bool b_done = protect(p_as, u_start, u_len, u_flags, &drop);
+    spin_unlock_irq(&p_as->lock, u_lock);
+    let_go(p_as, &drop);
+    return b_done;
 }
 
 bool addrspace_discard(struct addrspace *p_as, uint64_t u_start,
@@ -503,12 +643,15 @@ bool addrspace_discard(struct addrspace *p_as, uint64_t u_start,
         return false;
     }
     uint64_t u_end = u_start + PAGE_UP(u_len);
-    if (!range_covered(p_as, u_start, u_end)) {
-        return false;
+    struct dropped drop = { 0 };
+    uint64_t u_flags = spin_lock_irq(&p_as->lock);
+    bool b_covered = range_covered(p_as, u_start, u_end);
+    if (b_covered) {
+        drop_pages(p_as, u_start, u_end, &drop);
     }
-    drop_pages(p_as, u_start, u_end);
-    smp_tlb_shootdown();
-    return true;
+    spin_unlock_irq(&p_as->lock, u_flags);
+    let_go(p_as, &drop);
+    return b_covered;
 }
 
 /*
@@ -546,8 +689,7 @@ static bool add_anon(struct addrspace *p_as, uint64_t u_start,
         p_above->start = u_start;
         return true;
     }
-    return addrspace_add_region(p_as, u_start, u_end, u_flags, VMA_ANON,
-                                NULL, 0, 0);
+    return add_region(p_as, u_start, u_end, u_flags, VMA_ANON, NULL, 0, 0);
 }
 
 /* the lowest free stretch of u_len in the mmap area, or 0 */
@@ -571,10 +713,12 @@ static uint64_t find_room(const struct addrspace *p_as, uint64_t u_len)
     return u_at;
 }
 
-uint64_t addrspace_map_anon(struct addrspace *p_as, uint64_t u_hint,
-                            uint64_t u_len, uint64_t u_flags, bool b_fixed)
+/* the lock is held */
+static uint64_t map_anon(struct addrspace *p_as, uint64_t u_hint,
+                         uint64_t u_len, uint64_t u_flags, bool b_fixed,
+                         struct dropped *p_drop)
 {
-    if (p_as == NULL || u_len == 0 || PAGE_UP(u_len) < u_len) {
+    if (u_len == 0 || PAGE_UP(u_len) < u_len) {
         return 0;
     }
     u_len = PAGE_UP(u_len);
@@ -582,7 +726,7 @@ uint64_t addrspace_map_anon(struct addrspace *p_as, uint64_t u_hint,
     if (b_fixed) {
         if ((u_hint & (PAGE_SIZE - 1)) != 0 || u_hint < MAP_MIN
             || u_hint + u_len < u_hint || u_hint + u_len > USER_TOP
-            || !addrspace_unmap(p_as, u_hint, u_len)) {
+            || !unmap(p_as, u_hint, u_len, p_drop)) {
             return 0;
         }
         return add_anon(p_as, u_hint, u_hint + u_len, u_flags) ? u_hint : 0;
@@ -600,12 +744,24 @@ uint64_t addrspace_map_anon(struct addrspace *p_as, uint64_t u_hint,
     return add_anon(p_as, u_at, u_at + u_len, u_flags) ? u_at : 0;
 }
 
-uint64_t addrspace_brk(struct addrspace *p_as, uint64_t u_want,
-                       uint64_t u_flags)
+uint64_t addrspace_map_anon(struct addrspace *p_as, uint64_t u_hint,
+                            uint64_t u_len, uint64_t u_flags, bool b_fixed)
 {
     if (p_as == NULL) {
         return 0;
     }
+    struct dropped drop = { 0 };
+    uint64_t u_lock = spin_lock_irq(&p_as->lock);
+    uint64_t u_at = map_anon(p_as, u_hint, u_len, u_flags, b_fixed, &drop);
+    spin_unlock_irq(&p_as->lock, u_lock);
+    let_go(p_as, &drop);
+    return u_at;
+}
+
+/* the lock is held */
+static uint64_t brk(struct addrspace *p_as, uint64_t u_want,
+                    uint64_t u_flags, struct dropped *p_drop)
+{
     /*
      * a space with no break has none to move, and growing one from 0
      * would put memory where NULL points
@@ -622,12 +778,26 @@ uint64_t addrspace_brk(struct addrspace *p_as, uint64_t u_want,
             return p_as->u_brk;
         }
     } else if (u_new_top < u_old_top) {
-        if (!addrspace_unmap(p_as, u_new_top, u_old_top - u_new_top)) {
+        if (!unmap(p_as, u_new_top, u_old_top - u_new_top, p_drop)) {
             return p_as->u_brk;
         }
     }
     p_as->u_brk = u_want;
     return u_want;
+}
+
+uint64_t addrspace_brk(struct addrspace *p_as, uint64_t u_want,
+                       uint64_t u_flags)
+{
+    if (p_as == NULL) {
+        return 0;
+    }
+    struct dropped drop = { 0 };
+    uint64_t u_lock = spin_lock_irq(&p_as->lock);
+    uint64_t u_at = brk(p_as, u_want, u_flags, &drop);
+    spin_unlock_irq(&p_as->lock, u_lock);
+    let_go(p_as, &drop);
+    return u_at;
 }
 
 /* give a not-present address the page it was always going to have */
@@ -673,41 +843,16 @@ static bool populate(struct addrspace *as, struct vma *v, uint64_t virt)
     return true;
 }
 
-bool addrspace_fault(struct addrspace *as, uint64_t virt, bool write,
-                     bool present)
+/*
+ * a write to a page a fork left shared: a copy of its own for this
+ * space, or the page itself made writable when this space is the last
+ * holder. the frame the copy leaves behind goes in *p_old, for the caller
+ * to let go of once no core is translating to it. the lock is held
+ */
+static bool copy_on_write(struct addrspace *as, uint64_t *p_pte,
+                          uint64_t u_virt, uint64_t *p_old)
 {
-    if (as == NULL) {
-        return false;
-    }
-
-    if (!present) {
-        /*
-         * nothing here yet. the only thing that makes this answerable
-         * rather than fatal is a record saying the range was agreed to
-         */
-        struct vma *v = region_for(as, virt);
-        if (v == NULL) {
-            return false;
-        }
-        /*
-         * a region that allows nothing is there to be in the way, and a
-         * page made for it would only fault again
-         */
-        if (!(v->flags & PTE_USER)) {
-            return false;
-        }
-        if (write && !(v->flags & PTE_WRITE)) {
-            return false;   /* a write to a region that was never writable */
-        }
-        return populate(as, v, virt);
-    }
-
-    if (!write) {
-        return false;       /* a read of a present page never faults on the kernel */
-    }
-
-    uint64_t *pte = leaf_for(as->pml4, virt);
-    if (pte == NULL || !(*pte & PTE_PRESENT) || !(*pte & PTE_COW)) {
+    if (!(*p_pte & PTE_COW)) {
         return false;       /* not the kernel's. a real fault */
     }
 
@@ -715,12 +860,12 @@ bool addrspace_fault(struct addrspace *as, uint64_t virt, bool write,
      * shared after a fork, and its region since made read-only: the copy
      * would hand the program a writable page it was told it may not have
      */
-    const struct vma *p_region = region_for(as, virt);
+    const struct vma *p_region = region_for(as, u_virt);
     if (p_region == NULL || !(p_region->flags & PTE_WRITE)) {
         return false;
     }
 
-    uint64_t old = *pte & PTE_ADDR_MASK;
+    uint64_t u_old = *p_pte & PTE_ADDR_MASK;
 
     /*
      * FIXME: the count is read under the pmm lock and acted on after it
@@ -734,24 +879,100 @@ bool addrspace_fault(struct addrspace *as, uint64_t virt, bool write,
      * caller is now the only holder.
      */
     /* the last holder does not need a copy of anything. */
-    if (pmm_shares(old) == 0) {
-        *pte = (*pte | PTE_WRITE) & ~PTE_COW;
-        vmm_flush_page(virt);
+    if (pmm_shares(u_old) == 0) {
+        *p_pte = (*p_pte | PTE_WRITE) & ~PTE_COW;
+        vmm_flush_page(u_virt);
         return true;
     }
 
-    uint64_t fresh = pmm_alloc_pages(1);
-    if (fresh == 0) {
+    uint64_t u_fresh = pmm_alloc_pages(1);
+    if (u_fresh == 0) {
         return false;       /* out of memory. it really is a fault now */
     }
-    memcpy(table_at(fresh), table_at(old), PAGE_SIZE);
+    memcpy(table_at(u_fresh), table_at(u_old), PAGE_SIZE);
 
-    *pte = fresh | ((*pte & ~PTE_ADDR_MASK) | PTE_WRITE);
-    *pte &= ~PTE_COW;
-
-    pmm_unref(old);
-    vmm_flush_page(virt);
+    *p_pte = u_fresh | ((*p_pte & ~PTE_ADDR_MASK) | PTE_WRITE);
+    *p_pte &= ~PTE_COW;
+    vmm_flush_page(u_virt);
+    *p_old = u_old;
     return true;
+}
+
+/* the fault, with the lock held */
+static bool fault(struct addrspace *as, uint64_t u_virt, bool b_write,
+                  bool b_present, uint64_t *p_old)
+{
+    uint64_t *p_pte = leaf_for(as->pml4, u_virt);
+    if (p_pte != NULL && (*p_pte & PTE_PRESENT)) {
+        /*
+         * there, though it was not when the access was tried: another
+         * thread of the space made it while this one waited for the
+         * lock. tried again, an access the page does not allow faults
+         * again, on a page that is present this time
+         */
+        if (!b_present) {
+            return true;
+        }
+        if (!b_write || !(*p_pte & PTE_USER)) {
+            return false;   /* a read of a page there is never the kernel's */
+        }
+
+        /*
+         * writable already: another thread made its copy, or made it
+         * writable as its last holder, while this core still held a
+         * translation saying read-only, which the fault threw away
+         */
+        if (*p_pte & PTE_WRITE) {
+            return true;
+        }
+        return copy_on_write(as, p_pte, u_virt, p_old);
+    }
+
+    /*
+     * nothing here yet. the only thing that makes this answerable rather
+     * than fatal is a record saying the range was agreed to
+     */
+    struct vma *p_vma = region_for(as, u_virt);
+    if (p_vma == NULL) {
+        return false;
+    }
+    /*
+     * a region that allows nothing is there to be in the way, and a page
+     * made for it would only fault again
+     */
+    if (!(p_vma->flags & PTE_USER)) {
+        return false;
+    }
+    if (b_write && !(p_vma->flags & PTE_WRITE)) {
+        return false;       /* a write to a region that was never writable */
+    }
+    return populate(as, p_vma, u_virt);
+}
+
+bool addrspace_fault(struct addrspace *as, uint64_t virt, bool write,
+                     bool present)
+{
+    if (as == NULL) {
+        return false;
+    }
+    uint64_t u_old = 0;
+    uint64_t u_flags = spin_lock_irq(&as->lock);
+    bool b_answered = fault(as, virt, write, present, &u_old);
+    spin_unlock_irq(&as->lock, u_flags);
+
+    /*
+     * the copy is this thread's own now, and another thread of the space
+     * on another core may still be reading the page it was copied from
+     * through a translation from before, missing every write made to the
+     * copy. the write that faulted is not made until every core has
+     * thrown that away, and the frame is let go of after, for the reason
+     * any is
+     */
+    if (u_old != 0) {
+        shoot(as);
+        pmm_unref(u_old);
+    }
+    return b_answered;
 }
 
 /* free a table's children and then the table itself. */
@@ -781,27 +1002,30 @@ static uint64_t free_level(uint64_t phys, int level)
     return freed + 1;
 }
 
-void addrspace_destroy(struct addrspace *as)
+/* the last user has let go */
+static void destroy(struct addrspace *as)
 {
-    if (as == NULL) {
-        return;
-    }
     /* if this is somehow still loaded, get off it first. */
     if (live_pml4[cpu_id()] == as->pml4) {
         addrspace_switch(NULL);
     }
 
     /*
-     * every core that ever ran a thread in this space may still be
-     * holding translations out of tables the kernel is about to hand back to the
+     * a core still running a thread in this space may be holding
+     * translations out of tables the kernel is about to hand back to the
      * allocator
      */
-    smp_tlb_shootdown();
+    shoot(as);
 
     free_level(as->pml4, 4);
     slab_free(as);
 }
 
+/*
+ * counted without the lock, for ps, which says what it saw: another
+ * thread may be making or dropping a page while it counts, and the
+ * tables it walks are freed only with the space
+ */
 uint64_t addrspace_frames(struct addrspace *as)
 {
     if (as == NULL) {
@@ -838,8 +1062,6 @@ uint64_t addrspace_frames(struct addrspace *as)
     return count;
 }
 
-#ifndef VELVET_HOSTED
-
 void addrspace_switch(struct addrspace *as)
 {
     uint64_t want = (as != NULL) ? as->pml4 : vmm_kernel_pml4();
@@ -858,4 +1080,4 @@ void addrspace_switch(struct addrspace *as)
     mmu_load_table(want);
 }
 
-#endif
+
