@@ -140,7 +140,7 @@ int64_t sys_clock_nanosleep(int i_clock, int i_flags, uint64_t u_req,
     bool b_absolute = (i_flags & TIMER_ABSTIME) != 0;
     uint64_t u_until = b_absolute ? u_want : u_now + u_want;
 
-    int i_me = current_pid();
+    int i_me = current_tid();
     for (;;) {
         read_clock(i_clock, &u_now);
         if (u_now >= u_until) {

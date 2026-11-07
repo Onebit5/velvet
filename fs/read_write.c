@@ -139,7 +139,7 @@ static int64_t write_from(struct file *p_file, uint64_t u_buf,
         return (int64_t)u_done;
     }
     if (i_result == -EPIPE) {
-        process_signal(current_pid(), SIGPIPE);
+        process_tkill(current_tid(), SIGPIPE, NULL);
     }
     return restartable(i_result);
 }

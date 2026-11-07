@@ -228,12 +228,25 @@ as though it succeeded. so a blocked thread carrying a deliverable signal is
 distinction has to reach the program, because a read that returns 0 on an
 interrupt is indistinguishable from end of file.
 
-the state lives in ``struct signal_state``: a pending set, a blocked set, a
-handler table, and which signal is currently running. the last one matters:
-a handler runs with its own signal blocked, so a SIGINT inside the SIGINT
-handler waits rather than nesting, without it, ctrl+c held down is a stack
-that grows until it hits the guard page. see `sigsuspend` and the rest in
-`the system calls <../syscalls.rst>`_.
+the state is in two halves. a process's, ``struct signal_state``, is what
+each signal does, which every thread of the process shares, and the set
+raised at the process as a whole, by ``kill`` or a child ending, for
+whichever of its threads takes one first. a thread's, ``struct
+signal_thread``, is what that thread has blocked, the set raised at it
+alone, by a fault it made or a ``tkill``, and where its handlers run. a
+thread takes its own before its process's: a fault has to be the next
+thing it hears of, since the instruction that made it is the next thing
+it would run. a handler runs with its own signal blocked, so a SIGINT
+inside the SIGINT handler waits rather than nesting, without it, ctrl+c
+held down is a stack that grows until it hits the guard page. see
+`sigsuspend` and the rest in `the system calls <../syscalls.rst>`_.
+
+one raised at a process is for one of its threads, not all of them: the
+first thread when it does not block it, and otherwise the first that does
+not, and that thread is the one woken. the process has a signal blocked
+when every one of its threads blocks it, which is when it waits, pending,
+for whichever unblocks it first, and when an ignored one is not simply
+gone as it is sent.
 
 signals are delivered on every way back to ring 3, from a call, an
 interrupt or a fault, since each leaves the same frame and the kernel has
@@ -269,10 +282,10 @@ orphaned now with a member stopped is sent ``SIGHUP`` and then
 and ``SIGTTOU`` do nothing to a member of an orphaned group, at sending
 or at delivery; ``SIGSTOP`` stops anything.
 
-a program sends one with ``kill``, or ``tkill`` and ``tgkill``, which name
-a thread and here mean the same process, and only where it has a say: to
-a process of its own uid, ``SIGCONT`` to any process of its session, or
-to anybody's when it is root. the kernel raises signals
+a program sends one with ``kill``, or with ``tkill`` and ``tgkill``,
+which raise it at one thread, and only where it has a say: to a process
+of its own uid, ``SIGCONT`` to any process of its session, or to
+anybody's when it is root. the kernel raises signals
 of its own, ctrl+c and a pipe with no reader among them, and those go
 wherever they are due; the rule is about one program reaching another.
 a guest able to stop root's programs, init among them, would be a guest
@@ -396,11 +409,9 @@ the table means.
 ``bool     announce;``
     whether to narrate this one's comings and goings.
 
-``bool     interrupted;``
-    an interrupt has been delivered and not yet looked at.
-
 ``struct signal_state sig;``
-    the real thing. handlers, a mask, and a pending set
+    the process's half of its signals: what each does, and those raised
+    at the process as a whole.
 
 ``uint64_t sig_trampoline;``
     where a handler returns to, in the program's own text.
@@ -429,11 +440,17 @@ the table means.
 ``int  process_pgid(int pid);``
     a job is a group, and everything the terminal does it does to a whole one: the keys belong to a group, ctrl+c reaches a group, ctrl+z stops a group
 
-``void process_set_thread(int pid, int thread_id);``
-    note which thread is running it, once there is one
+``struct task``
+    a thread of a process: its tid, the process it is a thread of, the
+    scheduler's thread running it, whether it has a signal to look at,
+    the word its end clears, and its half of the signal state. a
+    process's first thread has the process's pid for its tid.
 
-``int  process_thread(int pid);``
-    which thread is running it, or 0.
+``void process_set_thread(int i_tid, int i_thread);``
+    note which of the scheduler's threads runs a thread, once there is one.
+
+``int  process_thread(int i_tid);``
+    which of the scheduler's threads runs it, or 0.
 
 ``void process_exited(int pid, int code, uint64_t now_ms);``
     it finished. the slot stays occupied, holding the code, until somebody collects it
@@ -447,12 +464,13 @@ the table means.
 ``const char *process_name(int pid);``
     what it is called. a forked child takes its parent's name, since it is the same program
 
-``void process_inherit(int i_child, int i_parent);``
-    a forked child made its parent's copy: the group and session, who it
-    runs as, its umask and limits, the working directory, and the signal
-    actions, mask and alternate stack. not what is pending: a child is not
-    born owing its parent's interrupts. the environment is not here: it
-    is in the program's own memory, which fork copies with the rest
+``void process_inherit(int i_child, int i_from);``
+    a forked child made a copy of the process thread ``i_from`` is in:
+    the group and session, who it runs as, its umask and limits, the
+    working directory, the signal actions, and that thread's mask and
+    alternate stack. not what is pending: a child is not born owing its
+    parent's interrupts. the environment is not here: it is in the
+    program's own memory, which fork copies with the rest
 
 ``void process_interrupt(int pid);``
     deliver an interrupt.
@@ -475,10 +493,11 @@ the table means.
 ``void process_check_alarms(uint64_t now_ms);``
     raise SIGALRM on anything whose deadline has passed.
 
-``bool process_interrupt_pending(int pid);``
-    is one waiting, unlooked-at? asking does not consume it
+``bool process_interrupt_pending(int i_tid);``
+    whether a thread has a signal to look at, which is what ends a call
+    that would otherwise wait. asking does not consume it
 
-``bool process_take_interrupt(int pid);``
+``bool process_take_interrupt(int i_tid);``
     take it, clearing the flag. true if there was one
 
 ``int process_fd_add(int i_pid, struct file *p_file, int i_from, bool b_cloexec);``
@@ -522,28 +541,52 @@ and the two that may not be caught are what keeps a machine recoverable from
 outside.
 
 ``#define SIG_DEFAULT 0``
-    what a handler value of 0 or 1 means, matching every unix since the seventh edition.
+    what a handler value of 0 or 1 means, matching every unix since the
+    seventh edition.
 
-``uint64_t handler[SIGNAL_MAX];``
-    SIG_DEFAULT, SIG_IGNORE, or an address in the program
+``struct signal_set``
+    the signals raised and not taken, ``u_pending``, one bit each, and
+    who raised each one, ``arr_origin``.
 
-``int      running;``
-    what is being run right now, and what the mask was before it.
+``struct signal_state``
+    a process's half: ``arr_action``, what each signal does for every
+    thread of the process, and ``shared``, the set raised at the
+    process as a whole.
 
-``int signal_next(const struct signal_state *s);``
-    which signal should be delivered now, or 0.
+``struct signal_thread``
+    a thread's half: ``u_blocked``, its mask; ``own``, the set raised at
+    it alone; ``altstack``; and the mask a ``sigsuspend`` replaced, kept
+    for the handler that ends the wait to go back to.
 
-``enum signal_action signal_action_for(const struct signal_state *s, int sig);``
-    what to do about `sig`, given this process's handlers
+``bool signal_raise(s, p_set, u_blocked, sig, origin)``
+    raise one into a set, for a thread with ``u_blocked`` blocked. one
+    that would be ignored and is not blocked is gone as it is raised,
+    so it can cut no wait short.
 
-``enum signal_action signal_take(struct signal_state *s, int sig, uint64_t *handler_out);``
-    take it off the pending set and, for a handler, block it for the duration.
+``int signal_next(s, t)``
+    which signal ``t`` takes next: its own lowest, then its process's
+    lowest, of those it does not block. 0 for none.
 
-``void signal_handler_returned(struct signal_state *s);``
-    a handler has returned: put the mask back
+``enum signal_action signal_action_for(s, sig)``
+    what to do about ``sig``, given the process's actions.
 
-``bool signal_deliverable(const struct signal_state *s);``
-    is there anything to deliver: the question the syscall return path asks, and the one a blocking call asks to decide whether to give up
+``enum signal_action signal_take(s, t, sig, act, old_mask, origin)``
+    take it off the thread's set, or its process's, and for a handler
+    block what the action says to for the duration, handing back the
+    mask the handler's frame puts back.
+
+``bool signal_set_action(s, sig, act)``
+    an action, refused for ``SIGKILL`` and ``SIGSTOP``. one ignored from
+    now on is gone from the process's set; ``process_set_action`` takes
+    it out of every thread's too.
+
+``void signal_set_mask(t, mask)``
+    a thread's mask, ``SIGKILL`` and ``SIGSTOP`` silently left out of it.
+
+``bool signal_deliverable(s, t)``
+    whether ``t`` has anything to take: the question the way back to
+    ring 3 asks, and the one a blocking call asks to decide whether to
+    give up.
 
 
 the init interface

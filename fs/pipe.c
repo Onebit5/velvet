@@ -155,7 +155,7 @@ size_t pipe_count(void)
 
 
 
-int64_t pipe_read(struct pipe *p, int pid, void *buf, uint64_t len,
+int64_t pipe_read(struct pipe *p, int i_tid, void *buf, uint64_t len,
                   bool b_nonblock)
 {
     if (p == NULL || len == 0) {
@@ -176,7 +176,7 @@ int64_t pipe_read(struct pipe *p, int pid, void *buf, uint64_t len,
             spin_unlock_irq(&p->lock, flags);
             return -EAGAIN;
         }
-        if (process_interrupt_pending(pid)) {
+        if (process_interrupt_pending(i_tid)) {
             spin_unlock_irq(&p->lock, flags);
             return -EINTR;
         }
@@ -196,7 +196,7 @@ int64_t pipe_read(struct pipe *p, int pid, void *buf, uint64_t len,
     return (int64_t)n;
 }
 
-int64_t pipe_write(struct pipe *p, int pid, const void *buf, uint64_t len,
+int64_t pipe_write(struct pipe *p, int i_tid, const void *buf, uint64_t len,
                    bool b_nonblock)
 {
     if (p == NULL || len == 0) {
@@ -219,7 +219,7 @@ int64_t pipe_write(struct pipe *p, int pid, const void *buf, uint64_t len,
                 spin_unlock_irq(&p->lock, flags);
                 return (done > 0) ? (int64_t)done : -EAGAIN;
             }
-            if (process_interrupt_pending(pid)) {
+            if (process_interrupt_pending(i_tid)) {
                 spin_unlock_irq(&p->lock, flags);
                 return (done > 0) ? (int64_t)done : -EINTR;
             }
@@ -249,7 +249,7 @@ int64_t pipe_write(struct pipe *p, int pid, const void *buf, uint64_t len,
 static int caller(void)
 {
     struct thread *p_me = sched_current();
-    return (p_me != NULL) ? p_me->pid : 0;
+    return (p_me != NULL) ? p_me->i_tid : 0;
 }
 
 static int64_t end_read(struct file *p_file, void *p_buf, size_t sz_len)

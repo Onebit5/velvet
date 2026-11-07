@@ -150,7 +150,7 @@ bool input_wait(unsigned u_console)
 {
     struct ring *r = ring_of(u_console);
     struct thread *p_me = sched_current();
-    int i_pid = (p_me != NULL) ? p_me->pid : 0;
+    int i_tid = (p_me != NULL) ? p_me->i_tid : 0;
 
     for (;;) {
         uint64_t flags = spin_lock_irq(&input_lock);
@@ -164,7 +164,7 @@ bool input_wait(unsigned u_console)
          * reader that had no key: the wait ends with no key taken, so
          * the next one typed is there for whoever reads next
          */
-        if (i_pid != 0 && process_interrupt_pending(i_pid)) {
+        if (i_tid != 0 && process_interrupt_pending(i_tid)) {
             spin_unlock_irq(&input_lock, flags);
             return false;
         }

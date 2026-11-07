@@ -24,8 +24,8 @@
 static void clear_child_tid(void)
 {
     uint64_t u_flags;
-    struct process *p = process_lock_slot(current_pid(), &u_flags);
-    uint64_t u_tid = (p != NULL) ? p->u_clear_tid : 0;
+    struct task *t = process_lock_task(current_tid(), &u_flags);
+    uint64_t u_tid = (t != NULL) ? t->u_clear_tid : 0;
     process_unlock_slot(u_flags);
     if (u_tid != 0) {
         put_user_i32(u_tid, 0);
@@ -48,13 +48,13 @@ int64_t sys_exit_group(int i_code)
 int64_t sys_set_tid_address(uint64_t u_tid)
 {
     uint64_t u_flags;
-    int i_pid = current_pid();
-    struct process *p = process_lock_slot(i_pid, &u_flags);
-    if (p != NULL) {
-        p->u_clear_tid = u_tid;
+    int i_me = current_tid();
+    struct task *t = process_lock_task(i_me, &u_flags);
+    if (t != NULL) {
+        t->u_clear_tid = u_tid;
     }
     process_unlock_slot(u_flags);
-    return i_pid;
+    return i_me;
 }
 
 #define WAIT_OPTIONS (WNOHANG | WUNTRACED | WCONTINUED | WNOWAIT)
@@ -111,7 +111,7 @@ int64_t sys_wait4(int i_pid, uint64_t u_status, int i_options,
         if (i_options & WNOHANG) {
             return 0;
         }
-        if (process_interrupt_pending(i_me)) {
+        if (process_interrupt_pending(current_tid())) {
             return -ERESTARTSYS;
         }
         sleep_ms(10);

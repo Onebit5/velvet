@@ -74,12 +74,12 @@ struct tty *pty_tty_at(size_t sz_index)
  */
 static bool nap(struct waitq *p_q, bool b_ready, uint64_t u_flags)
 {
-    int i_pid = current_pid();
+    int i_tid = current_tid();
     if (b_ready) {
         spin_unlock_irq(&g_tty_lock, u_flags);
         return true;
     }
-    if (i_pid != 0 && process_interrupt_pending(i_pid)) {
+    if (i_tid != 0 && process_interrupt_pending(i_tid)) {
         spin_unlock_irq(&g_tty_lock, u_flags);
         return false;
     }

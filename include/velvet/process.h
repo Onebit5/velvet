@@ -21,6 +21,9 @@ struct pipe;
 #define MAX_PROCESSES   32
 #define PROC_NAME_MAX   24
 
+/* the most threads there may be, every process's together */
+#define MAX_THREADS     64
+
 /* the supplementary groups one process may be in */
 #define NGROUPS_MAX     16
 
@@ -63,23 +66,19 @@ struct process {
     struct rlimit arr_limits[RLIM_NLIMITS];
 
     bool     announce;
-    int      thread_id;         /* the thread running it, while it lives */
     char     name[PROC_NAME_MAX];
     bool     exited;
     bool     b_detached;        /* its parent ignores SIGCHLD: nobody waits */
     int      i_wait_status;     /* what wait4 reports: W_EXITCODE */
 
-    bool     interrupted;
-
     int      i_stopped_by;      /* the signal that stopped it, 0 running */
     bool     b_stop_told;       /* and whether a wait has said so yet */
     bool     b_continued;       /* continued and not yet told so */
 
-    struct signal_state sig;
+    struct signal_state sig;    /* every thread's actions, and its pending */
 
     uint64_t alarm_at;          /* when ITIMER_REAL is due, ms since boot */
     uint64_t u_alarm_every;     /* and how often after that, 0 for once */
-    uint64_t u_clear_tid;       /* where exit writes 0, set_tid_address's */
     bool     b_vforked;         /* its parent waits until it execs or ends */
 
     uint64_t started_ms;
@@ -109,8 +108,26 @@ struct process {
     char arr_root[PATH_MAX];
 };
 
+/*
+ * a thread of a process, as the table keeps it: what is the thread's own
+ * rather than its process's. a process's first thread has the process's
+ * pid for its tid, and every other is numbered out of the same count, so
+ * a tid is never somebody else's pid
+ */
+struct task {
+    int      i_tid;             /* 0 means the slot is free */
+    int      i_pid;             /* the process it is a thread of */
+    int      i_thread;          /* the scheduler's thread, 0 until it has one */
+    bool     b_interrupted;     /* a signal it has to look at */
+    uint64_t u_clear_tid;       /* where its end writes 0, set_tid_address's */
+    struct signal_thread sig;
+};
+
 /* the process the running thread belongs to, 0 for a kernel thread */
 int current_pid(void);
+
+/* and which of its threads that is, 0 for a kernel thread */
+int current_tid(void);
 
 const char *process_cwd(int pid);
 void        process_set_cwd(int pid, const char *path);
@@ -129,12 +146,12 @@ int  process_uid(int pid);
 int  process_pgid(int pid);
 
 /*
- * a forked child made its parent's copy: the group and session, who it
- * runs as, its umask and limits, the working directory, and the signal
- * actions, mask and alternate stack. not what is pending: a child is not
- * born owing its parent's interrupts
+ * a forked child made a copy of thread i_from's process: the group and
+ * session, who it runs as, its umask and limits, the working directory,
+ * the signal actions, and that thread's mask and alternate stack. not
+ * what is pending: a child is not born owing its parent's interrupts
  */
-void process_inherit(int i_child, int i_parent);
+void process_inherit(int i_child, int i_from);
 
 /* who a process runs as from now on. whether it may is the caller's question */
 void process_set_uid(int i_pid, int i_uid);
@@ -149,9 +166,18 @@ size_t process_group_pids(int i_pgid, int *p_pids, size_t sz_max);
  */
 bool process_group_orphaned(int i_pgid);
 
-void process_set_thread(int pid, int thread_id);
+/* which of the scheduler's threads runs thread i_tid, and which that is */
+void process_set_thread(int i_tid, int i_thread);
+int  process_thread(int i_tid);
 
-int  process_thread(int pid);
+/* the process thread i_tid is a thread of, 0 for none */
+int  process_pid_of(int i_tid);
+
+/*
+ * the scheduler's threads of every thread of i_pid, stopped or let go,
+ * which is what stopping or continuing a process is
+ */
+void process_set_stopped(int i_pid, bool b_stopped);
 
 /*
  * a process that has ended and not been collected is holding a slot, and
@@ -204,11 +230,17 @@ bool process_send_signal(int pid, int sig,
                          const struct signal_origin *origin);
 
 /*
- * a fault's signal, which a handler may catch and nothing may refuse,
- * with where and why the fault was
+ * a fault's signal, raised at the thread that made it, which a handler
+ * may catch and nothing may refuse, with where and why the fault was
  */
-void process_force_signal(int pid, int sig,
+void process_force_signal(int i_tid, int sig,
                           const struct signal_origin *origin);
+
+/*
+ * one raised at a single thread rather than its whole process, as tkill
+ * and a write to a pipe nobody reads send one
+ */
+bool process_tkill(int i_tid, int i_sig, const struct signal_origin *origin);
 
 /*
  * a vfork's child has let its parent go, by running another program or
@@ -234,26 +266,51 @@ void process_stopped(int i_pid, int i_sig);
 int process_reportable(int i_parent, int i_selector, int i_options,
                        int *p_status, bool *p_ended);
 
+/* a process's half of its signal state, and a thread's */
 struct signal_state *process_signal_state(int pid);
+struct signal_thread *process_thread_signals(int i_tid);
 
 /*
- * i_pid's signal mask set to u_mask: the one it replaced. b_suspend also
- * keeps that one for whichever handler ends the wait to go back to, as
- * sigsuspend, ppoll and pselect6 wait. what the new mask lets through
- * that was already pending interrupts the wait at once
+ * an action set for every thread of i_pid, with the one it replaced in
+ * *p_old: 0, or -EINVAL for one a signal may not have. one ignored from
+ * now on is gone from every set it was pending in
  */
-uint64_t process_set_mask(int i_pid, uint64_t u_mask, bool b_suspend);
+int process_set_action(int i_pid, int i_sig, const struct sigaction *p_act,
+                       struct sigaction *p_old);
+
+/*
+ * thread i_tid's signal mask set to u_mask: the one it replaced.
+ * b_suspend also keeps that one for whichever handler ends the wait to
+ * go back to, as sigsuspend, ppoll and pselect6 wait. what the new mask
+ * lets through that was already pending interrupts the wait at once
+ */
+uint64_t process_set_mask(int i_tid, uint64_t u_mask, bool b_suspend);
+
+/*
+ * the mask a wait put in place given back, with no handler having run to
+ * give it back on returning: what a wait does that ends some other way
+ */
+void process_unsuspend(int i_tid);
+
+/* what is pending for thread i_tid and blocked, which sigpending tells */
+uint64_t process_pending(int i_tid);
+
+/*
+ * whether thread i_tid would be stopped by, or would have to handle, a
+ * signal sent to it: one it neither blocks nor ignores
+ */
+bool process_would_take(int i_tid, int i_sig);
 
 /*
  * the lowest pending signal that is in u_set taken off without being
  * delivered, as sigtimedwait takes one, with who sent it: which, or 0
  * when none of them is pending
  */
-int process_take_from(int i_pid, uint64_t u_set,
+int process_take_from(int i_tid, uint64_t u_set,
                       struct signal_origin *p_origin);
 
-/* the next deliverable signal taken off, as signal_take takes it */
-enum signal_action process_take_signal(int pid, int *sig_out,
+/* the next signal thread i_tid takes, taken off as signal_take takes it */
+enum signal_action process_take_signal(int i_tid, int *sig_out,
                                        struct sigaction *act_out,
                                        uint64_t *old_mask_out,
                                        struct signal_origin *origin_out);
@@ -270,9 +327,13 @@ void process_set_timer(int i_pid, uint64_t u_value_ms, uint64_t u_every_ms,
 void process_check_alarms(uint64_t now_ms);
 
 
-bool process_interrupt_pending(int pid);
+/*
+ * whether thread i_tid has a signal to look at, which is what ends a
+ * call that would otherwise wait, and the same with the flag cleared
+ */
+bool process_interrupt_pending(int i_tid);
 
-bool process_take_interrupt(int pid);
+bool process_take_interrupt(int i_tid);
 
 /*
  * a process's slot with the table locked, to read or change what has no
@@ -282,6 +343,9 @@ bool process_take_interrupt(int pid);
  */
 struct process *process_lock_slot(int i_pid, uint64_t *p_flags);
 void process_unlock_slot(uint64_t u_flags);
+
+/* and a thread's, the same way, let go of with process_unlock_slot */
+struct task *process_lock_task(int i_tid, uint64_t *p_flags);
 
 /*
  * a descriptor's close-on-exec bit: what it was, 0 or 1, set to i_set

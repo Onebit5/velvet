@@ -323,7 +323,7 @@ static void interrupt_handle(struct pt_regs *f)
             kprintf(", address %p", (void *)read_cr2());
         }
         kprintf("\n");
-        process_force_signal(me->pid, i_sig, &origin);
+        process_force_signal(me->i_tid, i_sig, &origin);
         return;
     }
 

@@ -218,10 +218,14 @@ int current_gid(void)
 static int failures;
 #define CHECK(c, m) do { if (!(c)) { printf("FAIL: %s\n", m); failures++; } } while (0)
 
-/* the calling thread becomes process i_pid's, on console u_console */
+/*
+ * the calling thread becomes process i_pid's first thread, on console
+ * u_console
+ */
 static void be(int i_pid, unsigned u_console)
 {
     this_thread.pid = i_pid;
+    this_thread.i_tid = i_pid;
     this_thread.console = u_console;
 }
 
@@ -441,7 +445,8 @@ int main(void)
     ctl(p_tty, TCSETS, &raw);
     s_u_shown = 1;
     struct signal_state *p_ssig = process_signal_state(i_shell);
-    CHECK(!tty_intercept(0x03) && !(p_ssig->pending & SIGNAL_BIT(SIGINT)),
+    CHECK(!tty_intercept(0x03)
+          && !(p_ssig->shared.u_pending & SIGNAL_BIT(SIGINT)),
           "with ISIG off ctrl+c is a byte like any other");
     ctl(p_tty, TCSETS, &mode);
     i_pgrp = i_job;
@@ -453,15 +458,17 @@ int main(void)
     struct signal_state *p_jsig = process_signal_state(i_job);
     type(1, "unfinished");
     rd(p_tty, arr_buf, 0);
-    CHECK(tty_intercept(0x03) && (p_jsig->pending & SIGNAL_BIT(SIGINT)),
+    CHECK(tty_intercept(0x03)
+          && (p_jsig->shared.u_pending & SIGNAL_BIT(SIGINT)),
           "ctrl+c is SIGINT to the group in front");
     CHECK(!input_waiting(1), "and throws away what was typed");
-    p_jsig->pending = 0;
+    p_jsig->shared.u_pending = 0;
     s_u_shown = 0;
-    CHECK(tty_intercept(0x03) && !(p_jsig->pending & SIGNAL_BIT(SIGINT)),
+    CHECK(tty_intercept(0x03)
+          && !(p_jsig->shared.u_pending & SIGNAL_BIT(SIGINT)),
           "and typed at another console it is that one's terminal's, "
           "which no session has, so it reaches nobody");
-    p_jsig->pending = 0;
+    p_jsig->shared.u_pending = 0;
 
     /*
      * a group behind its terminal is stopped when it reads, or changes
@@ -512,11 +519,11 @@ int main(void)
     /* a session ends with its leader, and its terminal is nobody's */
     i_pgrp = i_job;
     ctl(p_tty, TIOCSPGRP, &i_pgrp);
-    p_jsig->pending = 0;
+    p_jsig->shared.u_pending = 0;
     process_exited(i_shell, 0, 10);
     process_fds_release(i_shell);
     CHECK(tty_foreground(1) == TTY_NOBODY
-          && (p_jsig->pending & SIGNAL_BIT(SIGHUP)),
+          && (p_jsig->shared.u_pending & SIGNAL_BIT(SIGHUP)),
           "the terminal of a session whose leader is gone is nobody's, and "
           "the group that was in front is sent SIGHUP");
 
@@ -617,22 +624,22 @@ int main(void)
     struct winsize ws = { .ws_row = 50, .ws_col = 132 };
     struct winsize ws_got;
     CHECK(ctl(p_master, TIOCSWINSZ, &ws) == 0
-          && (p_shsig->pending & SIGNAL_BIT(SIGWINCH))
+          && (p_shsig->shared.u_pending & SIGNAL_BIT(SIGWINCH))
           && ctl(p_slave, TIOCGWINSZ, &ws_got) == 0 && ws_got.ws_col == 132
           && ws_got.ws_row == 50,
           "a size the master sets is SIGWINCH to the group in front, and "
           "what the slave is told");
-    p_shsig->pending = 0;
-    CHECK(ctl(p_master, TIOCSWINSZ, &ws) == 0 && p_shsig->pending == 0,
+    p_shsig->shared.u_pending = 0;
+    CHECK(ctl(p_master, TIOCSWINSZ, &ws) == 0 && p_shsig->shared.u_pending == 0,
           "the same size again changes nothing, and nobody hears of it");
     CHECK(p_master->p_ops->write(p_master, "x\x03", 2) == 2
-          && (p_shsig->pending & SIGNAL_BIT(SIGINT))
+          && (p_shsig->shared.u_pending & SIGNAL_BIT(SIGINT))
           && rd(p_slave, arr_buf, sizeof arr_buf) == -EAGAIN
           && rd(p_master, arr_buf, sizeof arr_buf) == 2
           && strcmp(arr_buf, "^C") == 0,
           "ctrl+c written to the master is SIGINT to the group in front, "
           "and throws away what was typed before it");
-    p_shsig->pending = 0;
+    p_shsig->shared.u_pending = 0;
     int32_t i_front = -1;
     CHECK(ctl(p_master, TIOCGPGRP, &i_front) == 0 && i_front == i_sh,
           "the master is told who is in front, though it is not its "
@@ -658,7 +665,7 @@ int main(void)
     file_put(p_other);
 
     file_put(p_master);
-    CHECK(p_shsig->pending & SIGNAL_BIT(SIGHUP),
+    CHECK(p_shsig->shared.u_pending & SIGNAL_BIT(SIGHUP),
           "closing the master is SIGHUP to the slave's session leader");
     struct termios hung;
     CHECK(rd(p_slave, arr_buf, sizeof arr_buf) == 0
@@ -730,7 +737,7 @@ int main(void)
     CHECK(ctl(p_third, TIOCSPGRP, &i_pgrp) == 0
           && ctl(p_third, TIOCNOTTY, NULL) == 0
           && tty_foreground(2) == TTY_NOBODY
-          && (p_osig->pending & SIGNAL_BIT(SIGHUP)),
+          && (p_osig->shared.u_pending & SIGNAL_BIT(SIGHUP)),
           "a leader letting go of its terminal hangs up the group in front");
     file_put(p_wronly);
     file_put(p_third);

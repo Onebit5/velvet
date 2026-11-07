@@ -36,10 +36,10 @@ int64_t sys_getpid(void)
     return current_pid();
 }
 
-/* one thread to a process, so its thread is the process */
+/* the first thread's is the process's pid, and every other is its own */
 int64_t sys_gettid(void)
 {
-    return current_pid();
+    return current_tid();
 }
 
 int64_t sys_getppid(void)

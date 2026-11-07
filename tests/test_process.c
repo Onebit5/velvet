@@ -205,19 +205,22 @@ int main(void)
     {
         int i_busy = process_create("busy", 0, 0, false, 600);
         struct signal_state *p_sig = process_signal_state(i_busy);
+        struct signal_thread *p_thr = process_thread_signals(i_busy);
 
         set_handler(p_sig, SIGSEGV, SIG_IGNORE);
         process_force_signal(i_busy, SIGSEGV, NULL);
         CHECK(signal_action_for(p_sig, SIGSEGV) == SIGNAL_ACTION_TERMINATE
-              && (p_sig->pending & SIGNAL_BIT(SIGSEGV)),
+              && (p_thr->own.u_pending & SIGNAL_BIT(SIGSEGV)),
               "an ignored SIGSEGV is raised all the same, to end it");
-        p_sig->pending = 0;
-        p_sig->blocked |= SIGNAL_BIT(SIGILL);
+        CHECK(p_sig->shared.u_pending == 0,
+              "at the thread that made the fault, not at its process");
+        p_thr->own.u_pending = 0;
+        p_thr->u_blocked |= SIGNAL_BIT(SIGILL);
         process_force_signal(i_busy, SIGILL, NULL);
-        CHECK(!(p_sig->blocked & SIGNAL_BIT(SIGILL))
+        CHECK(!(p_thr->u_blocked & SIGNAL_BIT(SIGILL))
               && process_interrupt_pending(i_busy),
               "a blocked SIGILL is unblocked and delivered");
-        p_sig->pending = 0;
+        p_thr->own.u_pending = 0;
         set_handler(p_sig, SIGFPE, 0x401000);
         process_force_signal(i_busy, SIGFPE, NULL);
         CHECK(signal_action_for(p_sig, SIGFPE) == SIGNAL_ACTION_HANDLER,
@@ -241,7 +244,8 @@ int main(void)
         process_signal(i_job, SIGSTOP);
         CHECK(s_i_stopped_id == 77 && s_b_stopped,
               "SIGSTOP stops the thread when it is sent");
-        CHECK(!(process_signal_state(i_job)->pending & SIGNAL_BIT(SIGSTOP)),
+        CHECK(!(process_signal_state(i_job)->shared.u_pending
+                & SIGNAL_BIT(SIGSTOP)),
               "and leaves nothing pending to act on again");
         CHECK(process_reportable(i_parent, -1, WUNTRACED | WNOWAIT, &i_status,
                                  &b_ended) == i_job
@@ -267,10 +271,11 @@ int main(void)
         process_signal(i_job, SIGTSTP);
         CHECK(s_i_stopped_id == 0, "an ignored SIGTSTP stops nothing");
         set_handler(process_signal_state(i_job), SIGTSTP, SIG_DEFAULT);
-        process_signal_state(i_job)->blocked |= SIGNAL_BIT(SIGTSTP);
+        process_thread_signals(i_job)->u_blocked |= SIGNAL_BIT(SIGTSTP);
         process_signal(i_job, SIGTSTP);
         CHECK(s_i_stopped_id == 0
-              && (process_signal_state(i_job)->pending & SIGNAL_BIT(SIGTSTP)),
+              && (process_signal_state(i_job)->shared.u_pending
+                  & SIGNAL_BIT(SIGTSTP)),
               "and a blocked one waits, pending, for delivery");
 
         CHECK(process_reportable(i_parent, 4040, WUNTRACED, &i_status,
@@ -307,7 +312,7 @@ int main(void)
         process_unlock_slot(u_flags);
         set_handler(p_parent, SIGINT, SIG_IGNORE);
         set_handler(p_parent, SIGUSR1, 0x401234);
-        p_parent->blocked = SIGNAL_BIT(SIGALRM);
+        process_thread_signals(i_parent)->u_blocked = SIGNAL_BIT(SIGALRM);
         process_signal(i_parent, SIGTERM);
 
         process_inherit(i_child, i_parent);
@@ -321,11 +326,14 @@ int main(void)
               && p_kid->arr_limits[RLIMIT_NOFILE].rlim_cur == 20
               && p_kid->i_groups == 1 && p_kid->arr_groups[0] == 50,
               "with its umask, limits and groups");
-        CHECK(p_child->action[SIGINT].sa_handler == SIG_IGNORE
-              && p_child->action[SIGUSR1].sa_handler == 0x401234
-              && p_child->blocked == SIGNAL_BIT(SIGALRM),
+        CHECK(p_child->arr_action[SIGINT].sa_handler == SIG_IGNORE
+              && p_child->arr_action[SIGUSR1].sa_handler == 0x401234
+              && process_thread_signals(i_child)->u_blocked
+                 == SIGNAL_BIT(SIGALRM),
               "and what it does with each signal");
-        CHECK(p_child->pending == 0, "but nothing that was pending");
+        CHECK(p_child->shared.u_pending == 0
+              && process_thread_signals(i_child)->own.u_pending == 0,
+              "but nothing that was pending");
 
         process_exited(i_child, 0, 710);
         process_collect(i_child, NULL);
@@ -343,7 +351,7 @@ int main(void)
     CHECK(!p->exited, "and it has not finished");
 
     process_set_thread(pid, 7);
-    CHECK(process_find(pid)->thread_id == 7, "the test can note which thread runs it");
+    CHECK(process_thread(pid) == 7, "the test can note which thread runs it");
 
     /* collecting one that is still running must not succeed */
     int code = 999;
@@ -356,7 +364,7 @@ int main(void)
     p = process_find(pid);
     CHECK(p->exited && p->i_wait_status == 42, "the code is recorded");
     CHECK(p->ended_ms == 1500, "and when");
-    CHECK(p->thread_id == 0, "and the thread is forgotten, being gone");
+    CHECK(process_thread(pid) == 0, "and the thread is forgotten, being gone");
     CHECK(process_count() == 1,
           "the slot stays occupied, this is the zombie, and the point");
 
@@ -629,7 +637,7 @@ int main(void)
               "and the new one fires when it is due");
 
         (void)process_take_interrupt(who);
-        process_signal_state(who)->pending = 0;
+        process_signal_state(who)->shared.u_pending = 0;
         process_check_alarms(20000);
         CHECK(!process_interrupt_pending(who),
               "one set once fires once and then is gone");
@@ -637,12 +645,12 @@ int main(void)
         process_set_timer(who, 1000, 500, 20000, NULL, NULL);
         process_check_alarms(21000);
         (void)process_take_interrupt(who);
-        process_signal_state(who)->pending = 0;
+        process_signal_state(who)->shared.u_pending = 0;
         process_check_alarms(21500);
         CHECK(process_interrupt_pending(who),
               "one with an interval goes on firing, as often as it says");
         (void)process_take_interrupt(who);
-        process_signal_state(who)->pending = 0;
+        process_signal_state(who)->shared.u_pending = 0;
 
         process_set_timer(who, 0, 0, 21600, &u_left, &u_every);
         CHECK(u_left == 400 && u_every == 500, "zero cancels, saying what was");
@@ -676,16 +684,18 @@ int main(void)
         process_exited(i_mid, 0, 0);
         struct signal_state *p_jsig = process_signal_state(i_job);
         CHECK(process_group_orphaned(i_job) && !s_b_stopped
-              && (p_jsig->pending & SIGNAL_BIT(SIGHUP)),
+              && (p_jsig->shared.u_pending & SIGNAL_BIT(SIGHUP)),
               "its parent gone, init has it, which is in no group of its "
               "session: it is orphaned, and stopped, is sent SIGHUP and "
               "continued to hear it");
-        CHECK(!(process_signal_state(i_idle)->pending & SIGNAL_BIT(SIGHUP)),
+        CHECK(!(process_signal_state(i_idle)->shared.u_pending
+                & SIGNAL_BIT(SIGHUP)),
               "and one orphaned with nothing stopped is told nothing");
 
         s_i_stopped_id = 0;
         process_signal(i_job, SIGTSTP);
-        CHECK(s_i_stopped_id == 0 && !(p_jsig->pending & SIGNAL_BIT(SIGTSTP)),
+        CHECK(s_i_stopped_id == 0
+              && !(p_jsig->shared.u_pending & SIGNAL_BIT(SIGTSTP)),
               "a terminal's stop does nothing to an orphaned group");
         process_signal(i_job, SIGSTOP);
         CHECK(s_i_stopped_id == 91 && s_b_stopped,

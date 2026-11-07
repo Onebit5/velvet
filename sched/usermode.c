@@ -529,6 +529,7 @@ int user_spawn(const char *path, const struct exec_args *p_args,
     }
     t->space = space;
     t->pid   = pid;
+    t->i_tid = pid;
     process_set_thread(pid, t->id);
 
     if (announce) {
@@ -569,7 +570,8 @@ int64_t user_exec(const char *str_path, const struct exec_args *p_args,
     irq_restore(u_flags);
     addrspace_destroy(p_old);
 
-    signal_exec(process_signal_state(p_me->pid));
+    signal_exec(process_signal_state(p_me->pid),
+                process_thread_signals(p_me->i_tid));
     process_vfork_done(p_me->pid);
 
     /*
@@ -601,11 +603,11 @@ bool user_collect(int i_pid, int *p_code)
     return process_collect(i_pid, p_code);
 }
 
-/* let a spawned process actually begin. */
+/* let a spawned process actually begin: its first thread is its pid */
 void user_start(int pid)
 {
-    const struct process *p = process_find(pid);
-    if (p != NULL && p->thread_id != 0) {
-        sched_wake_thread(p->thread_id);
+    int i_thread = process_thread(pid);
+    if (i_thread != 0) {
+        sched_wake_thread(i_thread);
     }
 }

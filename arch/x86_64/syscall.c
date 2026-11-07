@@ -409,7 +409,7 @@ static void fork_child_start(void *arg)
 
     /* in its own space now, the word is the child's own copy */
     if (u_tid_at != 0) {
-        put_user_i32(u_tid_at, current_pid());
+        put_user_i32(u_tid_at, current_tid());
     }
     fork_return(&local);
 }
@@ -470,7 +470,7 @@ static int64_t copy_process(struct pt_regs *p_regs, uint64_t u_flags,
         kfree(p_start);
         return -EAGAIN;
     }
-    process_inherit(i_pid, i_parent);
+    process_inherit(i_pid, p_me->i_tid);
 
     /*
      * written before the copy is made, so the parent's word and the
@@ -512,6 +512,7 @@ static int64_t copy_process(struct pt_regs *p_regs, uint64_t u_flags,
     }
     t->space = p_space;
     t->pid = i_pid;
+    t->i_tid = i_pid;
 
     /*
      * and the registers the frame does not hold: the fpu's as they are
@@ -526,10 +527,12 @@ static int64_t copy_process(struct pt_regs *p_regs, uint64_t u_flags,
     uint64_t u_slot_flags;
     struct process *p_child = process_lock_slot(i_pid, &u_slot_flags);
     if (p_child != NULL) {
-        if (u_flags & CLONE_CHILD_CLEARTID) {
-            p_child->u_clear_tid = u_child_tid;
-        }
         p_child->b_vforked = (u_flags & CLONE_VFORK) != 0;
+    }
+    process_unlock_slot(u_slot_flags);
+    struct task *p_task = process_lock_task(i_pid, &u_slot_flags);
+    if (p_task != NULL && (u_flags & CLONE_CHILD_CLEARTID)) {
+        p_task->u_clear_tid = u_child_tid;
     }
     process_unlock_slot(u_slot_flags);
 
@@ -759,7 +762,7 @@ static bool enter_handler(struct pt_regs *p_regs, int i_sig,
     if (!(p_act->sa_flags & SA_RESTORER) || p_act->sa_restorer == 0) {
         return false;
     }
-    const struct signal_state *p_sig = process_signal_state(current_pid());
+    const struct signal_thread *p_sig = process_thread_signals(current_tid());
     stack_t alt = p_sig->altstack;
     bool b_on_alt = !(alt.ss_flags & SS_DISABLE) && p_regs->rsp > alt.ss_sp
                     && p_regs->rsp <= alt.ss_sp + alt.ss_size;
@@ -843,7 +846,7 @@ static int64_t do_rt_sigreturn(struct pt_regs *p_regs)
     uint64_t u_frame = p_regs->rsp - 8;
     struct ucontext uc;
     struct fpu_state *p_fpu = kmalloc(sizeof *p_fpu);
-    int i_me = current_pid();
+    int i_me = current_tid();
     struct signal_origin origin = { .i_code = SI_KERNEL };
 
     if (p_fpu == NULL
@@ -947,6 +950,7 @@ static void restart(struct pt_regs *p_regs)
 static void deliver_signals(struct pt_regs *p_regs, bool b_call)
 {
     int i_pid = current_pid();
+    int i_tid = current_tid();
     if (i_pid <= 0) {
         return;
     }
@@ -957,7 +961,7 @@ static void deliver_signals(struct pt_regs *p_regs, bool b_call)
         struct sigaction act;
         uint64_t u_old_mask = 0;
         struct signal_origin origin;
-        enum signal_action e_act = process_take_signal(i_pid, &i_sig, &act,
+        enum signal_action e_act = process_take_signal(i_tid, &i_sig, &act,
                                                        &u_old_mask, &origin);
         switch (e_act) {
         case SIGNAL_ACTION_NONE:
@@ -969,12 +973,12 @@ static void deliver_signals(struct pt_regs *p_regs, bool b_call)
         case SIGNAL_ACTION_STOP:
             /* a stop that was blocked when sent, and is not any more */
             process_stopped(i_pid, i_sig);
-            sched_set_stopped(process_thread(i_pid), true);
+            process_set_stopped(i_pid, true);
             sched_yield();
             continue;
 
         case SIGNAL_ACTION_CONTINUE:
-            sched_set_stopped(process_thread(i_pid), false);
+            process_set_stopped(i_pid, false);
             continue;
 
         case SIGNAL_ACTION_HANDLER:
@@ -1001,7 +1005,7 @@ static void deliver_signals(struct pt_regs *p_regs, bool b_call)
             if (i_sig == SIGSEGV) {
                 thread_exit(SIGSEGV);
             }
-            process_force_signal(i_pid, SIGSEGV, &origin);
+            process_force_signal(i_tid, SIGSEGV, &origin);
             continue;
 
         case SIGNAL_ACTION_TERMINATE:
@@ -1015,14 +1019,7 @@ static void deliver_signals(struct pt_regs *p_regs, bool b_call)
      * as it would have when the handler returned, and the call is made
      * again, which is all its being cut short meant
      */
-    uint64_t u_flags;
-    struct process *p = process_lock_slot(i_pid, &u_flags);
-    if (p != NULL && p->sig.b_suspended) {
-        signal_set_mask(&p->sig, p->sig.u_suspend_mask);
-        p->sig.b_suspended = false;
-        p->interrupted = signal_deliverable(&p->sig);
-    }
-    process_unlock_slot(u_flags);
+    process_unsuspend(i_tid);
     if (b_restart) {
         restart(p_regs);
     }

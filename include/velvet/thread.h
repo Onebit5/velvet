@@ -72,6 +72,7 @@ struct thread {
     struct thread *wait_next;
 
     int pid;
+    int i_tid;                  /* which of the process's threads it is */
 
     /* where this thread's kprintf goes instead of the screen, while set. */
     struct kcapture *p_capture;

@@ -484,10 +484,7 @@ static int64_t may_read(struct tty *t)
     if (!b_behind) {
         return 0;
     }
-    const struct signal_state *p_sig = process_signal_state(i_pid);
-    if (p_sig == NULL
-        || signal_action_for(p_sig, SIGTTIN) == SIGNAL_ACTION_IGNORE
-        || (p_sig->blocked & SIGNAL_BIT(SIGTTIN))
+    if (!process_would_take(current_tid(), SIGTTIN)
         || process_group_orphaned(i_pgid)) {
         return -EIO;
     }
@@ -510,10 +507,7 @@ static int64_t may_change(struct tty *t)
                     && t->i_session == p->i_sid && t->i_pgrp != p->pgid;
     int i_pgid = (p != NULL) ? p->pgid : 0;
     spin_unlock_irq(&g_tty_lock, u_flags);
-    const struct signal_state *p_sig = process_signal_state(i_pid);
-    if (!b_behind || p_sig == NULL
-        || signal_action_for(p_sig, SIGTTOU) == SIGNAL_ACTION_IGNORE
-        || (p_sig->blocked & SIGNAL_BIT(SIGTTOU))) {
+    if (!b_behind || !process_would_take(current_tid(), SIGTTOU)) {
         return 0;
     }
     if (process_group_orphaned(i_pgid)) {
@@ -575,7 +569,7 @@ static int64_t tty_read(struct file *p_file, void *p_buf, size_t sz_len)
             return -EAGAIN;
         }
         if (b_timed) {
-            if (process_interrupt_pending(current_pid())) {
+            if (process_interrupt_pending(current_tid())) {
                 return -ERESTARTSYS;
             }
             sleep_ms(TTY_SLICE_MS);

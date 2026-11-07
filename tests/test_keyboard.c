@@ -55,15 +55,15 @@ void waitq_wake_all(struct waitq *q)
 
 /* a reader, and whether its process has been interrupted */
 #include <velvet/thread.h>
-static struct thread s_reader = { .pid = 7 };
+static struct thread s_reader = { .pid = 7, .i_tid = 7 };
 static bool s_b_interrupted;
 struct thread *sched_current(void)
 {
     return &s_reader;
 }
-bool process_interrupt_pending(int i_pid)
+bool process_interrupt_pending(int i_tid)
 {
-    return i_pid == s_reader.pid && s_b_interrupted;
+    return i_tid == s_reader.i_tid && s_b_interrupted;
 }
 
 /*

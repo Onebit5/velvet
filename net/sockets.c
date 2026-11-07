@@ -97,7 +97,7 @@ static int64_t wait_more(const struct file *p_file, int i_flags,
     if (u_now >= u_deadline) {
         return -EAGAIN;
     }
-    if (process_interrupt_pending(current_pid())) {
+    if (process_interrupt_pending(current_tid())) {
         return -ERESTARTSYS;
     }
     uint64_t u_left = u_deadline - u_now;
@@ -249,7 +249,7 @@ static int64_t send_stream(struct file *p_file, struct sock *p_sock,
                 break;
             }
             if (!(i_flags & MSG_NOSIGNAL)) {
-                process_signal(current_pid(), SIGPIPE);
+                process_tkill(current_tid(), SIGPIPE, NULL);
             }
             return -EPIPE;
         }

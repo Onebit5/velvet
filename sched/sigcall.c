@@ -30,18 +30,8 @@ int64_t sys_rt_sigaction(int i_sig, uint64_t u_act, uint64_t u_old,
     if (u_act != 0 && copy_from_user(&act, u_act, sizeof act) != 0) {
         return -EFAULT;
     }
-    uint64_t u_flags;
-    struct process *p = process_lock_slot(current_pid(), &u_flags);
-    int64_t i_result = 0;
-    if (p == NULL) {
-        i_result = -ESRCH;
-    } else {
-        old = p->sig.action[i_sig];
-        if (u_act != 0 && !signal_set_action(&p->sig, i_sig, &act)) {
-            i_result = -EINVAL;
-        }
-    }
-    process_unlock_slot(u_flags);
+    int64_t i_result = process_set_action(current_pid(), i_sig,
+                                          (u_act != 0) ? &act : NULL, &old);
     if (i_result == 0 && u_old != 0
         && copy_to_user(u_old, &old, sizeof old) != 0) {
         i_result = -EFAULT;
@@ -66,19 +56,15 @@ int64_t sys_rt_sigprocmask(int i_how, uint64_t u_set, uint64_t u_old,
         }
     }
     uint64_t u_flags;
-    struct process *p = process_lock_slot(current_pid(), &u_flags);
-    uint64_t u_was = 0;
-    if (p != NULL) {
-        u_was = signal_get_mask(&p->sig);
-        if (u_set != 0) {
-            uint64_t u_mask = (i_how == SIG_BLOCK) ? (u_was | u_new)
-                            : (i_how == SIG_UNBLOCK) ? (u_was & ~u_new)
-                            : u_new;
-            signal_set_mask(&p->sig, u_mask);
-            p->interrupted = signal_deliverable(&p->sig);
-        }
-    }
+    struct task *t = process_lock_task(current_tid(), &u_flags);
+    uint64_t u_was = (t != NULL) ? signal_get_mask(&t->sig) : 0;
     process_unlock_slot(u_flags);
+    if (t != NULL && u_set != 0) {
+        uint64_t u_mask = (i_how == SIG_BLOCK) ? (u_was | u_new)
+                        : (i_how == SIG_UNBLOCK) ? (u_was & ~u_new)
+                        : u_new;
+        process_set_mask(current_tid(), u_mask, false);
+    }
     if (u_old != 0 && put_user_u64(u_old, u_was) != 0) {
         return -EFAULT;
     }
@@ -91,10 +77,7 @@ int64_t sys_rt_sigpending(uint64_t u_set, uint64_t u_setsize)
     if (u_setsize != SIGSET_BYTES) {
         return -EINVAL;
     }
-    uint64_t u_flags;
-    struct process *p = process_lock_slot(current_pid(), &u_flags);
-    uint64_t u_pending = (p != NULL) ? (p->sig.pending & p->sig.blocked) : 0;
-    process_unlock_slot(u_flags);
+    uint64_t u_pending = process_pending(current_tid());
     return (put_user_u64(u_set, u_pending) == 0) ? 0 : -EFAULT;
 }
 
@@ -105,7 +88,7 @@ int64_t sys_rt_sigpending(uint64_t u_set, uint64_t u_setsize)
  */
 static void wait_for_signal(void)
 {
-    int i_me = current_pid();
+    int i_me = current_tid();
     while (!process_interrupt_pending(i_me)) {
         sleep_ms(WAIT_SLICE_MS);
     }
@@ -125,7 +108,7 @@ int64_t sys_rt_sigsuspend(uint64_t u_set, uint64_t u_setsize)
     if (get_user_u64(&u_mask, u_set) != 0) {
         return -EFAULT;
     }
-    process_set_mask(current_pid(), u_mask, true);
+    process_set_mask(current_tid(), u_mask, true);
     wait_for_signal();
     return -ERESTARTNOHAND;
 }
@@ -166,9 +149,11 @@ int64_t sys_rt_sigtimedwait(uint64_t u_set, uint64_t u_info,
                      + ((uint64_t)ts.tv_nsec + 999999) / 1000000;
     }
 
-    int i_me = current_pid();
-    const struct signal_state *p_sig = process_signal_state(i_me);
-    uint64_t u_was = (p_sig != NULL) ? signal_get_mask(p_sig) : 0;
+    int i_me = current_tid();
+    uint64_t u_flags;
+    const struct task *t = process_lock_task(i_me, &u_flags);
+    uint64_t u_was = (t != NULL) ? signal_get_mask(&t->sig) : 0;
+    process_unlock_slot(u_flags);
     process_set_mask(i_me, u_was & ~u_want, false);
 
     struct signal_origin origin;
@@ -215,7 +200,7 @@ int64_t sys_sigaltstack(uint64_t u_new, uint64_t u_old, uint64_t u_sp)
         return -EFAULT;
     }
     uint64_t u_flags;
-    struct process *p = process_lock_slot(current_pid(), &u_flags);
+    struct task *p = process_lock_task(current_tid(), &u_flags);
     stack_t was = { 0, SS_DISABLE, 0, 0 };
     int64_t i_result = 0;
     if (p != NULL) {
@@ -260,6 +245,15 @@ static bool may_signal(const struct process *p_from,
 {
     return p_from->uid == 0 || p_from->uid == p_to->uid
            || (i_sig == SIGCONT && p_from->i_sid == p_to->i_sid);
+}
+
+/* a sender that stopped itself stops here, not some instructions on */
+static void stop_here(void)
+{
+    struct thread *p_self = sched_current();
+    if (p_self != NULL && p_self->stopped) {
+        sched_yield();
+    }
 }
 
 /*
@@ -318,13 +312,39 @@ static int64_t send(int i_pid, int i_sig, int i_code)
             process_send_signal(p->pid, i_sig, &origin);
         }
     }
-
-    /* a sender that stopped itself stops here, not some instructions on */
-    struct thread *p_self = sched_current();
-    if (p_self != NULL && p_self->stopped) {
-        sched_yield();
-    }
+    stop_here();
     return b_sent ? 0 : b_found ? -EPERM : -ESRCH;
+}
+
+/*
+ * to one thread, raised at it rather than at its process: named alone,
+ * or with the process it has to be a thread of, -ESRCH when it is not.
+ * who may send one is kill's rule, said of the thread's process
+ */
+static int64_t send_thread(int i_tgid, int i_tid, int i_sig)
+{
+    if (i_sig < 0 || i_sig >= SIGNAL_MAX) {
+        return -EINVAL;
+    }
+    int i_me = current_pid();
+    const struct process *p_me = process_find(i_me);
+    int i_pid = process_pid_of(i_tid);
+    const struct process *p = process_find(i_pid);
+    if (p_me == NULL || p == NULL || p->exited
+        || (i_tgid > 0 && i_pid != i_tgid)) {
+        return -ESRCH;
+    }
+    if (!may_signal(p_me, p, i_sig)) {
+        return -EPERM;
+    }
+    struct signal_origin origin = {
+        .i_code = SI_TKILL, .i_pid = i_me, .u_uid = (uint32_t)p_me->uid,
+    };
+    if (i_sig != 0) {
+        process_tkill(i_tid, i_sig, &origin);
+    }
+    stop_here();
+    return 0;
 }
 
 int64_t sys_kill(int i_pid, int i_sig)
@@ -332,18 +352,17 @@ int64_t sys_kill(int i_pid, int i_sig)
     return send(i_pid, i_sig, SI_USER);
 }
 
-/* a thread is its process, so a thread group is one thread */
 int64_t sys_tgkill(int i_tgid, int i_tid, int i_sig)
 {
     if (i_tgid <= 0 || i_tid <= 0) {
         return -EINVAL;
     }
-    return (i_tgid == i_tid) ? send(i_tid, i_sig, SI_TKILL) : -ESRCH;
+    return send_thread(i_tgid, i_tid, i_sig);
 }
 
 int64_t sys_tkill(int i_tid, int i_sig)
 {
-    return (i_tid <= 0) ? -EINVAL : send(i_tid, i_sig, SI_TKILL);
+    return (i_tid <= 0) ? -EINVAL : send_thread(0, i_tid, i_sig);
 }
 
 /* ITIMER_REAL, in ms: a whole second for what is left of one */

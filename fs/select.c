@@ -77,17 +77,15 @@ static int64_t wait_under(uint64_t u_mask, uint64_t u_size)
     if (copy_from_user(&u_set, u_mask, sizeof u_set) != 0) {
         return -EFAULT;
     }
-    process_set_mask(current_pid(), u_set, true);
+    process_set_mask(current_tid(), u_set, true);
     return 0;
 }
 
 /* the wait over with nothing interrupting it: the mask it replaced back */
 static void done_waiting(int64_t i_result)
 {
-    struct signal_state *p_sig = process_signal_state(current_pid());
-    if (p_sig->b_suspended && i_result != -ERESTARTNOHAND) {
-        p_sig->b_suspended = false;
-        process_set_mask(current_pid(), p_sig->u_suspend_mask, false);
+    if (i_result != -ERESTARTNOHAND) {
+        process_unsuspend(current_tid());
     }
 }
 
@@ -117,7 +115,7 @@ static int64_t poll_wait(struct pollfd *p_fds, uint64_t u_count,
         if (u_now >= u_deadline) {
             return 0;
         }
-        if (process_interrupt_pending(current_pid())) {
+        if (process_interrupt_pending(current_tid())) {
             return -ERESTARTNOHAND;
         }
         uint64_t u_left = u_deadline - u_now;
@@ -256,7 +254,7 @@ static int64_t select_wait(int i_count, uint64_t u_read, uint64_t u_write,
             }
             return i_ready;
         }
-        if (process_interrupt_pending(current_pid())) {
+        if (process_interrupt_pending(current_tid())) {
             return -ERESTARTNOHAND;
         }
         uint64_t u_left = u_deadline - u_now;

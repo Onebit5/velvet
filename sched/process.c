@@ -25,6 +25,9 @@ static struct spinlock process_lock = SPINLOCK("process", LOCK_RANK_PROCESS);
 static struct process table[MAX_PROCESSES];
 static int next_pid = 1;
 
+/* and every process's threads, under the same lock */
+static struct task s_arr_tasks[MAX_THREADS];
+
 static struct process *slot_for(int pid)
 {
     if (pid <= 0) {
@@ -38,10 +41,90 @@ static struct process *slot_for(int pid)
     return NULL;
 }
 
+static struct task *task_for(int i_tid)
+{
+    if (i_tid <= 0) {
+        return NULL;
+    }
+    for (size_t sz_i = 0; sz_i < MAX_THREADS; sz_i++) {
+        if (s_arr_tasks[sz_i].i_tid == i_tid) {
+            return &s_arr_tasks[sz_i];
+        }
+    }
+    return NULL;
+}
+
+/* a free slot for a thread, or NULL. the lock is held */
+static struct task *free_task(void)
+{
+    for (size_t sz_i = 0; sz_i < MAX_THREADS; sz_i++) {
+        if (s_arr_tasks[sz_i].i_tid == 0) {
+            return &s_arr_tasks[sz_i];
+        }
+    }
+    return NULL;
+}
+
+/*
+ * what every thread of p blocks, which is what the process as a whole
+ * has blocked: a signal raised at it waits only when there is no thread
+ * of it that could take it now. the lock is held
+ */
+static uint64_t blocked_by_all(const struct process *p)
+{
+    uint64_t u_all = ~0ull;
+    bool b_any = false;
+    for (size_t sz_i = 0; sz_i < MAX_THREADS; sz_i++) {
+        const struct task *t = &s_arr_tasks[sz_i];
+        if (t->i_tid != 0 && t->i_pid == p->pid) {
+            u_all &= t->sig.u_blocked;
+            b_any = true;
+        }
+    }
+    return b_any ? u_all : 0;
+}
+
+/*
+ * the thread of p that a signal raised at the process as a whole is
+ * for: its first thread when that one does not block it, as a program
+ * with one thread taking signals and the rest blocking them expects,
+ * and otherwise the first that does not. NULL when every one blocks it,
+ * and it waits for whichever unblocks it first. the lock is held
+ */
+static struct task *taker_of(const struct process *p, int i_sig)
+{
+    struct task *p_main = task_for(p->pid);
+    uint64_t u_bit = SIGNAL_BIT(i_sig);
+    if (p_main != NULL && !(p_main->sig.u_blocked & u_bit)) {
+        return p_main;
+    }
+    for (size_t sz_i = 0; sz_i < MAX_THREADS; sz_i++) {
+        struct task *t = &s_arr_tasks[sz_i];
+        if (t->i_tid != 0 && t->i_pid == p->pid
+            && !(t->sig.u_blocked & u_bit)) {
+            return t;
+        }
+    }
+    return NULL;
+}
+
+/* whether t has a signal to look at now. the lock is held */
+static void recalc(struct task *t)
+{
+    const struct process *p = slot_for(t->i_pid);
+    t->b_interrupted = p != NULL && signal_deliverable(&p->sig, &t->sig);
+}
+
 int current_pid(void)
 {
     struct thread *p_me = sched_current();
     return (p_me != NULL) ? p_me->pid : 0;
+}
+
+int current_tid(void)
+{
+    struct thread *p_me = sched_current();
+    return (p_me != NULL) ? p_me->i_tid : 0;
 }
 
 const char *process_cwd(int pid)
@@ -99,7 +182,9 @@ int process_create(const char *name, int parent, int uid, bool announce,
         parent = INIT_PID;
     }
 
-    for (size_t i = 0; i < MAX_PROCESSES; i++) {
+    /* a process is never without its first thread, so it needs room for one */
+    struct task *t = free_task();
+    for (size_t i = 0; i < MAX_PROCESSES && t != NULL; i++) {
         if (table[i].pid != 0) {
             continue;
         }
@@ -134,6 +219,11 @@ int process_create(const char *name, int parent, int uid, bool announce,
         p->announce   = announce;
         signal_reset(&p->sig);
         p->started_ms = now_ms;
+
+        memset(t, 0, sizeof *t);
+        t->i_tid = p->pid;
+        t->i_pid = p->pid;
+        signal_reset_thread(&t->sig);
 
         /*
          * nothing open: whoever makes a process hands it what it starts
@@ -196,7 +286,7 @@ static void child_news(const struct process *p, int i_code, int i_status,
         return;
     }
     if (i_code == CLD_STOPPED
-        && (p_parent->sig.action[SIGCHLD].sa_flags & SA_NOCLDSTOP)) {
+        && (p_parent->sig.arr_action[SIGCHLD].sa_flags & SA_NOCLDSTOP)) {
         return;
     }
     p_out->i_parent = p_parent->pid;
@@ -315,19 +405,59 @@ static bool parent_detaches(const struct process *p)
     if (p_parent == NULL) {
         return false;
     }
-    const struct sigaction *p_act = &p_parent->sig.action[SIGCHLD];
+    const struct sigaction *p_act = &p_parent->sig.arr_action[SIGCHLD];
     return p_act->sa_handler == SIG_IGNORE
            || (p_act->sa_flags & SA_NOCLDWAIT) != 0;
 }
 
-void process_set_thread(int pid, int thread_id)
+void process_set_thread(int i_tid, int i_thread)
 {
-    uint64_t flags = spin_lock_irq(&process_lock);
-    struct process *p = slot_for(pid);
-    if (p != NULL) {
-        p->thread_id = thread_id;
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct task *t = task_for(i_tid);
+    if (t != NULL) {
+        t->i_thread = i_thread;
     }
-    spin_unlock_irq(&process_lock, flags);
+    spin_unlock_irq(&process_lock, u_flags);
+}
+
+int process_pid_of(int i_tid)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    const struct task *t = task_for(i_tid);
+    int i_pid = (t != NULL) ? t->i_pid : 0;
+    spin_unlock_irq(&process_lock, u_flags);
+    return i_pid;
+}
+
+/* the scheduler's threads of p's threads, into p_ids. the lock is held */
+static size_t threads_of(const struct process *p, int *p_ids)
+{
+    size_t sz_count = 0;
+    for (size_t sz_i = 0; sz_i < MAX_THREADS; sz_i++) {
+        const struct task *t = &s_arr_tasks[sz_i];
+        if (t->i_tid != 0 && t->i_pid == p->pid && t->i_thread != 0) {
+            p_ids[sz_count++] = t->i_thread;
+        }
+    }
+    return sz_count;
+}
+
+/* each of them stopped or let go, which reaches the scheduler: no lock */
+static void stop_threads(const int *p_ids, size_t sz_count, bool b_stopped)
+{
+    for (size_t sz_i = 0; sz_i < sz_count; sz_i++) {
+        sched_set_stopped(p_ids[sz_i], b_stopped);
+    }
+}
+
+void process_set_stopped(int i_pid, bool b_stopped)
+{
+    int arr_ids[MAX_THREADS];
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    const struct process *p = slot_for(i_pid);
+    size_t sz_count = (p != NULL) ? threads_of(p, arr_ids) : 0;
+    spin_unlock_irq(&process_lock, u_flags);
+    stop_threads(arr_ids, sz_count, b_stopped);
 }
 
 void process_exited(int pid, int code, uint64_t now_ms)
@@ -348,7 +478,13 @@ void process_exited(int pid, int code, uint64_t now_ms)
         p->i_wait_status = code;
         b_first = true;
         p->ended_ms  = now_ms;
-        p->thread_id = 0;
+
+        /* and its threads are gone with it */
+        for (size_t sz_i = 0; sz_i < MAX_THREADS; sz_i++) {
+            if (s_arr_tasks[sz_i].i_pid == pid) {
+                s_arr_tasks[sz_i].i_tid = 0;
+            }
+        }
         /*
          * what it had open stays in its slots. closing a pipe's end wakes
          * whoever waits at the other, which reaches the scheduler, and
@@ -440,12 +576,16 @@ size_t process_interrupt_all(void)
     size_t n = 0;
 
     for (size_t i = 0; i < MAX_PROCESSES; i++) {
-        if (table[i].pid == 0 || table[i].exited
-            || table[i].pid == INIT_PID) {
+        struct process *p = &table[i];
+        if (p->pid == 0 || p->exited || p->pid == INIT_PID) {
             continue;
         }
-        signal_raise(&table[i].sig, SIGINT, NULL);
-        table[i].interrupted = true;
+        signal_raise(&p->sig, &p->sig.shared, blocked_by_all(p), SIGINT,
+                     NULL);
+        struct task *t = taker_of(p, SIGINT);
+        if (t != NULL) {
+            t->b_interrupted = true;
+        }
         n++;
     }
 
@@ -458,12 +598,14 @@ size_t process_running_threads(int *ids, size_t max)
     uint64_t flags = spin_lock_irq(&process_lock);
     size_t n = 0;
 
-    for (size_t i = 0; i < MAX_PROCESSES && n < max; i++) {
-        if (table[i].pid == 0 || table[i].exited
-            || table[i].pid == INIT_PID || table[i].thread_id == 0) {
+    for (size_t i = 0; i < MAX_THREADS && n < max; i++) {
+        const struct task *t = &s_arr_tasks[i];
+        const struct process *p = slot_for(t->i_pid);
+        if (t->i_tid == 0 || t->i_thread == 0 || p == NULL || p->exited
+            || p->pid == INIT_PID) {
             continue;
         }
-        ids[n++] = table[i].thread_id;
+        ids[n++] = t->i_thread;
     }
 
     spin_unlock_irq(&process_lock, flags);
@@ -530,11 +672,12 @@ void process_interrupt(int pid)
  * returns what the thread should become: 1 stopped, -1 running, 0 as
  * it is
  */
-static int settle_now(struct process *p, int i_sig)
+static int settle_now(struct process *p, struct signal_set *p_set,
+                      uint64_t u_blocked, int i_sig)
 {
     uint64_t u_bit = SIGNAL_BIT(i_sig);
     enum signal_action e_act = signal_action_for(&p->sig, i_sig);
-    bool b_blocked = (p->sig.blocked & u_bit) != 0 && i_sig != SIGSTOP;
+    bool b_blocked = (u_blocked & u_bit) != 0 && i_sig != SIGSTOP;
 
     /*
      * a stop from a terminal does nothing to an orphaned group, which
@@ -542,11 +685,11 @@ static int settle_now(struct process *p, int i_sig)
      */
     if (e_act == SIGNAL_ACTION_STOP && !b_blocked && i_sig != SIGSTOP
         && group_orphaned(p->pgid)) {
-        p->sig.pending &= ~u_bit;
+        p_set->u_pending &= ~u_bit;
         return 0;
     }
     if (e_act == SIGNAL_ACTION_STOP && !b_blocked) {
-        p->sig.pending &= ~u_bit;       /* acted on, nothing to deliver */
+        p_set->u_pending &= ~u_bit;     /* acted on, nothing to deliver */
         p->i_stopped_by = i_sig;
         p->b_stop_told = false;
         return 1;
@@ -555,7 +698,7 @@ static int settle_now(struct process *p, int i_sig)
     /* and a kill, which a stopped process has to be running to die of */
     if (i_sig == SIGCONT || i_sig == SIGKILL) {
         if (e_act == SIGNAL_ACTION_CONTINUE) {
-            p->sig.pending &= ~u_bit;   /* continuing was all it meant */
+            p_set->u_pending &= ~u_bit; /* continuing was all it meant */
         }
         if (p->i_stopped_by != 0 && i_sig == SIGCONT) {
             p->b_continued = true;
@@ -566,12 +709,6 @@ static int settle_now(struct process *p, int i_sig)
     return 0;
 }
 
-/*
- * a fault's own signal, which cannot be refused: blocked or ignored, it
- * goes back to its default first. a program that ignores SIGSEGV and
- * then dereferences null would otherwise return to the same instruction
- * forever, faulting each time
- */
 void process_vfork_done(int i_pid)
 {
     uint64_t u_flags = spin_lock_irq(&process_lock);
@@ -588,80 +725,142 @@ bool process_vforking(int i_pid)
     return p != NULL && p->b_vforked && !p->exited;
 }
 
-void process_force_signal(int i_pid, int i_sig,
+/*
+ * a fault's own signal, which cannot be refused: blocked or ignored, it
+ * goes back to its default first. a program that ignores SIGSEGV and
+ * then dereferences null would otherwise return to the same instruction
+ * forever, faulting each time
+ */
+void process_force_signal(int i_tid, int i_sig,
                           const struct signal_origin *origin)
 {
     uint64_t u_flags = spin_lock_irq(&process_lock);
-    struct process *p = slot_for(i_pid);
+    struct task *t = task_for(i_tid);
+    struct process *p = (t != NULL) ? slot_for(t->i_pid) : NULL;
     if (p != NULL && !p->exited && i_sig > 0 && i_sig < SIGNAL_MAX) {
         uint64_t u_bit = SIGNAL_BIT(i_sig);
-        if (p->sig.action[i_sig].sa_handler == SIG_IGNORE
-            || (p->sig.blocked & u_bit) != 0) {
-            p->sig.action[i_sig].sa_handler = SIG_DEFAULT;
-            p->sig.blocked &= ~u_bit;
+        if (p->sig.arr_action[i_sig].sa_handler == SIG_IGNORE
+            || (t->sig.u_blocked & u_bit) != 0) {
+            p->sig.arr_action[i_sig].sa_handler = SIG_DEFAULT;
+            t->sig.u_blocked &= ~u_bit;
         }
-        signal_raise(&p->sig, i_sig, origin);
-        p->interrupted = true;
+        signal_raise(&p->sig, &t->sig.own, t->sig.u_blocked, i_sig, origin);
+        t->b_interrupted = true;
     }
     spin_unlock_irq(&process_lock, u_flags);
 }
 
-bool process_send_signal(int pid, int sig,
-                         const struct signal_origin *origin)
+/* what sending a signal leaves to be done once the lock is let go */
+struct after_send {
+    struct child_news news;
+    int i_become;               /* 1 stopped, -1 running, 0 as it was */
+    int arr_threads[MAX_THREADS];
+    size_t sz_threads;
+    int i_wake;                 /* the scheduler's thread to wake, or 0 */
+};
+
+/*
+ * sig raised at p, or at its thread t alone, and what that changes: a
+ * stop or a continue acted on at once, the parent told, and the thread
+ * that is to take it marked to be woken, all of which reaches the
+ * scheduler and is left in *p_after. the lock is held
+ */
+static bool raise_at(struct process *p, struct task *t, int i_sig,
+                     const struct signal_origin *origin,
+                     struct after_send *p_after)
 {
-    struct child_news news = { 0 };
-    uint64_t flags = spin_lock_irq(&process_lock);
-    struct process *p = slot_for(pid);
-    bool ok = false;
-    int i_become = 0;
+    memset(p_after, 0, sizeof *p_after);
+
     /*
      * init takes only what it has a handler for: one it left to the
      * default would end, or stop, the process the machine needs. sent
      * all the same, as far as the sender can tell
      */
-    bool b_init_ignores = p != NULL && p->pid == INIT_PID && sig > 0
-                          && sig < SIGNAL_MAX
-                          && p->sig.action[sig].sa_handler == SIG_DEFAULT;
-    if (b_init_ignores) {
-        ok = true;
-    } else if (p != NULL && !p->exited) {
-        ok = signal_raise(&p->sig, sig, origin);
-        if (ok) {
-            i_become = settle_now(p, sig);
-            if (i_become > 0) {
-                child_news(p, CLD_STOPPED, sig, &news);
-            } else if (i_become < 0 && sig == SIGCONT) {
-                child_news(p, CLD_CONTINUED, SIGCONT, &news);
-            }
-        }
-
-        /*
-         * whether anything is pending and unblocked: what a blocking
-         * call stops waiting for. an ignored one was dropped as it was
-         * raised, so it is not among them
-         */
-        p->interrupted = signal_deliverable(&p->sig);
+    if (p->pid == INIT_PID && i_sig > 0 && i_sig < SIGNAL_MAX
+        && p->sig.arr_action[i_sig].sa_handler == SIG_DEFAULT) {
+        return true;
     }
-    int i_thread = (p != NULL) ? p->thread_id : 0;
-    bool b_wake = ok && p != NULL && p->interrupted;
-    spin_unlock_irq(&process_lock, flags);
-    tell_parent(&news);
-
-    if (i_become != 0 && i_thread > 0) {
-        sched_set_stopped(i_thread, i_become > 0);
+    if (p->exited) {
+        return false;
+    }
+    struct signal_set *p_set = (t != NULL) ? &t->sig.own : &p->sig.shared;
+    uint64_t u_blocked = (t != NULL) ? t->sig.u_blocked : blocked_by_all(p);
+    if (!signal_raise(&p->sig, p_set, u_blocked, i_sig, origin)) {
+        return false;
+    }
+    p_after->i_become = settle_now(p, p_set, u_blocked, i_sig);
+    if (p_after->i_become > 0) {
+        child_news(p, CLD_STOPPED, i_sig, &p_after->news);
+    } else if (p_after->i_become < 0 && i_sig == SIGCONT) {
+        child_news(p, CLD_CONTINUED, SIGCONT, &p_after->news);
+    }
+    if (p_after->i_become != 0) {
+        p_after->sz_threads = threads_of(p, p_after->arr_threads);
     }
 
     /*
-     * and a thread asleep on a queue has to be woken, or a signal to a
-     * program blocked on a read arrives whenever that read happens to
-     * finish, which for a program waiting on the keyboard is never.
-     * this is the half the roadmap warned about: every blocking call
-     * was written assuming it ends for one of two reasons
+     * whether anything is pending and unblocked: what a blocking call
+     * stops waiting for. an ignored one was dropped as it was raised, so
+     * it is not among them, and of a process's threads it is the one it
+     * is for that is told, not every one that could take it
      */
-    if (b_wake && i_thread > 0) {
-        sched_wake_thread(i_thread);
+    struct task *p_taker = (t != NULL) ? t : taker_of(p, i_sig);
+    if (p_taker != NULL) {
+        recalc(p_taker);
+        if (p_taker->b_interrupted) {
+            p_after->i_wake = p_taker->i_thread;
+        }
     }
-    return ok;
+    return true;
+}
+
+/*
+ * and the half that reaches the scheduler, with no lock held: the
+ * parent told, the threads stopped or let go, and the one the signal is
+ * for woken, since a thread asleep on a queue has to be, or a signal to
+ * a program blocked on a read arrives whenever that read happens to
+ * finish, which for a program waiting on the keyboard is never. this is
+ * the half the roadmap warned about: every blocking call was written
+ * assuming it ends for one of two reasons
+ */
+static void after_send(const struct after_send *p_after)
+{
+    tell_parent(&p_after->news);
+    if (p_after->i_become != 0) {
+        stop_threads(p_after->arr_threads, p_after->sz_threads,
+                     p_after->i_become > 0);
+    }
+    if (p_after->i_wake > 0) {
+        sched_wake_thread(p_after->i_wake);
+    }
+}
+
+bool process_send_signal(int pid, int sig,
+                         const struct signal_origin *origin)
+{
+    struct after_send after;
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(pid);
+    bool b_ok = p != NULL && raise_at(p, NULL, sig, origin, &after);
+    spin_unlock_irq(&process_lock, u_flags);
+    if (b_ok) {
+        after_send(&after);
+    }
+    return b_ok;
+}
+
+bool process_tkill(int i_tid, int i_sig, const struct signal_origin *origin)
+{
+    struct after_send after;
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct task *t = task_for(i_tid);
+    struct process *p = (t != NULL) ? slot_for(t->i_pid) : NULL;
+    bool b_ok = p != NULL && raise_at(p, t, i_sig, origin, &after);
+    spin_unlock_irq(&process_lock, u_flags);
+    if (b_ok) {
+        after_send(&after);
+    }
+    return b_ok;
 }
 
 bool process_signal(int pid, int sig)
@@ -771,19 +970,36 @@ struct signal_state *process_signal_state(int pid)
     return p == NULL ? NULL : &p->sig;
 }
 
-enum signal_action process_take_signal(int pid, int *sig_out,
+struct signal_thread *process_thread_signals(int i_tid)
+{
+    struct task *t = task_for(i_tid);
+    return t == NULL ? NULL : &t->sig;
+}
+
+/* thread i_tid and its process, or false when either is gone */
+static bool task_and_process(int i_tid, struct task **pp_task,
+                             struct process **pp_proc)
+{
+    *pp_task = task_for(i_tid);
+    *pp_proc = (*pp_task != NULL) ? slot_for((*pp_task)->i_pid) : NULL;
+    return *pp_proc != NULL;
+}
+
+enum signal_action process_take_signal(int i_tid, int *sig_out,
                                        struct sigaction *act_out,
                                        uint64_t *old_mask_out,
                                        struct signal_origin *origin_out)
 {
-    uint64_t flags = spin_lock_irq(&process_lock);
-    struct process *p = slot_for(pid);
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct task *t;
+    struct process *p;
     enum signal_action a = SIGNAL_ACTION_NONE;
 
-    if (p != NULL) {
-        int sig = signal_next(&p->sig);
+    if (task_and_process(i_tid, &t, &p)) {
+        int sig = signal_next(&p->sig, &t->sig);
         if (sig != 0) {
-            a = signal_take(&p->sig, sig, act_out, old_mask_out, origin_out);
+            a = signal_take(&p->sig, &t->sig, sig, act_out, old_mask_out,
+                            origin_out);
             if (sig_out != NULL) {
                 *sig_out = sig;
             }
@@ -793,56 +1009,134 @@ enum signal_action process_take_signal(int pid, int *sig_out,
                 a = SIGNAL_ACTION_IGNORE;
             }
         }
-        p->interrupted = signal_deliverable(&p->sig);
+        recalc(t);
     }
-    spin_unlock_irq(&process_lock, flags);
+    spin_unlock_irq(&process_lock, u_flags);
     return a;
 }
-uint64_t process_set_mask(int i_pid, uint64_t u_mask, bool b_suspend)
+
+int process_set_action(int i_pid, int i_sig, const struct sigaction *p_act,
+                       struct sigaction *p_old)
 {
     uint64_t u_flags = spin_lock_irq(&process_lock);
     struct process *p = slot_for(i_pid);
-    uint64_t u_was = 0;
-    if (p != NULL) {
-        u_was = signal_get_mask(&p->sig);
-        if (b_suspend) {
-            p->sig.u_suspend_mask = u_was;
-            p->sig.b_suspended = true;
+    int i_result = 0;
+    if (p == NULL || i_sig <= 0 || i_sig >= SIGNAL_MAX) {
+        i_result = -EINVAL;
+    } else {
+        if (p_old != NULL) {
+            *p_old = p->sig.arr_action[i_sig];
         }
-        signal_set_mask(&p->sig, u_mask);
-        p->interrupted = signal_deliverable(&p->sig);
+        if (p_act != NULL && !signal_set_action(&p->sig, i_sig, p_act)) {
+            i_result = -EINVAL;
+        }
+        /* gone from every thread's own set too, not merely the process's */
+        if (signal_action_for(&p->sig, i_sig) == SIGNAL_ACTION_IGNORE) {
+            for (size_t sz_i = 0; sz_i < MAX_THREADS; sz_i++) {
+                struct task *t = &s_arr_tasks[sz_i];
+                if (t->i_tid != 0 && t->i_pid == i_pid) {
+                    signal_forget(&t->sig.own, i_sig);
+                    recalc(t);
+                }
+            }
+        }
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    return i_result;
+}
+
+uint64_t process_set_mask(int i_tid, uint64_t u_mask, bool b_suspend)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct task *t = task_for(i_tid);
+    uint64_t u_was = 0;
+    if (t != NULL) {
+        u_was = signal_get_mask(&t->sig);
+        if (b_suspend) {
+            t->sig.u_suspend_mask = u_was;
+            t->sig.b_suspended = true;
+        }
+        signal_set_mask(&t->sig, u_mask);
+        recalc(t);
     }
     spin_unlock_irq(&process_lock, u_flags);
     return u_was;
 }
 
-int process_take_from(int i_pid, uint64_t u_set,
+void process_unsuspend(int i_tid)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct task *t = task_for(i_tid);
+    if (t != NULL && t->sig.b_suspended) {
+        signal_set_mask(&t->sig, t->sig.u_suspend_mask);
+        t->sig.b_suspended = false;
+        recalc(t);
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+}
+
+uint64_t process_pending(int i_tid)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct task *t;
+    struct process *p;
+    uint64_t u_pending = 0;
+    if (task_and_process(i_tid, &t, &p)) {
+        u_pending = (t->sig.own.u_pending | p->sig.shared.u_pending)
+                    & t->sig.u_blocked;
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    return u_pending;
+}
+
+bool process_would_take(int i_tid, int i_sig)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct task *t;
+    struct process *p;
+    bool b_takes = task_and_process(i_tid, &t, &p) && i_sig > 0
+                   && i_sig < SIGNAL_MAX
+                   && signal_action_for(&p->sig, i_sig)
+                      != SIGNAL_ACTION_IGNORE
+                   && !(t->sig.u_blocked & SIGNAL_BIT(i_sig));
+    spin_unlock_irq(&process_lock, u_flags);
+    return b_takes;
+}
+
+int process_take_from(int i_tid, uint64_t u_set,
                       struct signal_origin *p_origin)
 {
     uint64_t u_flags = spin_lock_irq(&process_lock);
-    struct process *p = slot_for(i_pid);
+    struct task *t;
+    struct process *p;
     int i_sig = 0;
-    if (p != NULL) {
-        uint64_t u_ready = p->sig.pending & u_set;
-        for (int i_at = 1; i_at < SIGNAL_MAX && i_sig == 0; i_at++) {
-            if (u_ready & SIGNAL_BIT(i_at)) {
-                i_sig = i_at;
+    if (task_and_process(i_tid, &t, &p)) {
+        /* the thread's own first, as delivery takes them */
+        struct signal_set *arr_sets[2] = { &t->sig.own, &p->sig.shared };
+        for (size_t sz_set = 0; sz_set < 2 && i_sig == 0; sz_set++) {
+            struct signal_set *p_set = arr_sets[sz_set];
+            uint64_t u_ready = p_set->u_pending & u_set;
+            for (int i_at = 1; i_at < SIGNAL_MAX && i_sig == 0; i_at++) {
+                if (u_ready & SIGNAL_BIT(i_at)) {
+                    i_sig = i_at;
+                    p_set->u_pending &= ~SIGNAL_BIT(i_sig);
+                    *p_origin = p_set->arr_origin[i_sig];
+                }
             }
         }
-        if (i_sig != 0) {
-            p->sig.pending &= ~SIGNAL_BIT(i_sig);
-            *p_origin = p->sig.origin[i_sig];
-        }
-        p->interrupted = signal_deliverable(&p->sig);
+        recalc(t);
     }
     spin_unlock_irq(&process_lock, u_flags);
     return i_sig;
 }
 
-int process_thread(int pid)
+int process_thread(int i_tid)
 {
-    const struct process *p = slot_for(pid);
-    return p == NULL ? 0 : p->thread_id;
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    const struct task *t = task_for(i_tid);
+    int i_thread = (t != NULL) ? t->i_thread : 0;
+    spin_unlock_irq(&process_lock, u_flags);
+    return i_thread;
 }
 
 
@@ -901,13 +1195,13 @@ void process_check_alarms(uint64_t now_ms)
 
 
 
-bool process_interrupt_pending(int pid)
+bool process_interrupt_pending(int i_tid)
 {
-    const struct process *p = slot_for(pid);
-    return p != NULL && p->interrupted;
+    const struct task *t = task_for(i_tid);
+    return t != NULL && t->b_interrupted;
 }
 
-bool process_take_interrupt(int pid)
+bool process_take_interrupt(int i_tid)
 {
     /*
      * "was it interrupted, and clear it", which is what every blocking
@@ -926,9 +1220,9 @@ bool process_take_interrupt(int pid)
      */
     uint64_t flags = spin_lock_irq(&process_lock);
     bool had = false;
-    struct process *p = slot_for(pid);
-    if (p != NULL && p->interrupted) {
-        p->interrupted = false;
+    struct task *t = task_for(i_tid);
+    if (t != NULL && t->b_interrupted) {
+        t->b_interrupted = false;
         had = true;
     }
     spin_unlock_irq(&process_lock, flags);
@@ -937,13 +1231,16 @@ bool process_take_interrupt(int pid)
 
 
 
-void process_inherit(int i_child, int i_parent)
+void process_inherit(int i_child, int i_from)
 {
     uint64_t u_flags = spin_lock_irq(&process_lock);
     struct process *p_child = slot_for(i_child);
-    const struct process *p_parent = slot_for(i_parent);
+    struct task *t_child = task_for(i_child);
+    const struct task *t_from = task_for(i_from);
+    const struct process *p_parent = (t_from != NULL)
+                                     ? slot_for(t_from->i_pid) : NULL;
 
-    if (p_child != NULL && p_parent != NULL) {
+    if (p_child != NULL && t_child != NULL && p_parent != NULL) {
         p_child->pgid = p_parent->pgid;
         p_child->i_sid = p_parent->i_sid;
         p_child->uid = p_parent->uid;
@@ -956,6 +1253,7 @@ void process_inherit(int i_child, int i_parent)
                sizeof p_child->arr_limits);
         memcpy(p_child->cwd, p_parent->cwd, sizeof p_child->cwd);
         signal_inherit(&p_child->sig, &p_parent->sig);
+        signal_inherit_thread(&t_child->sig, &t_from->sig, true);
     }
     spin_unlock_irq(&process_lock, u_flags);
 }
@@ -1041,6 +1339,12 @@ struct process *process_lock_slot(int i_pid, uint64_t *p_flags)
 {
     *p_flags = spin_lock_irq(&process_lock);
     return slot_for(i_pid);
+}
+
+struct task *process_lock_task(int i_tid, uint64_t *p_flags)
+{
+    *p_flags = spin_lock_irq(&process_lock);
+    return task_for(i_tid);
 }
 
 void process_unlock_slot(uint64_t u_flags)
