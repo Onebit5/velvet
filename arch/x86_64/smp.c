@@ -177,21 +177,23 @@ void smp_ap_entry(struct cpu *me)
 
 
 /*
- * XXX: two things wrong with these two words. shootdown_wanted is
- * written and never read, the wait below comparing against its own local
- * count, so it is dead and reads as though it meant something. and the
- * counter has no generation: the wait is bounded, so a shootdown that
- * gives up can leave an ipi still in flight, and the next one resets the
- * counter before that straggler lands and counts it as one of its own
- * answers. tag each round so a late answer to the previous one cannot be
- * taken for an answer to this one.
+ * a shootdown is a round, numbered from 1, and each core keeps the
+ * number of the last round it threw its translations away for. a round
+ * is over when every core it asked has caught up with it. an answer
+ * that lands late, after its round gave up waiting for it, is to
+ * whichever round is being made by then, which it has thrown its
+ * translations away after the start of, so it is a true answer to that
+ * one: nothing is counted, and no answer is ever taken for one it is not
  */
-static volatile uint32_t shootdown_wanted;
-static volatile uint32_t shootdown_done;
+static volatile uint32_t s_u_round;
+static volatile uint32_t s_arr_answered[SMP_MAX_CPUS];
 static struct spinlock shootdown_lock = SPINLOCK("tlb", LOCK_RANK_DEVICE);
 
-void smp_tlb_ipi(void)
+/* this core's translations thrown away, for the round being made */
+static void answer(void)
 {
+    uint32_t u_round = __atomic_load_n(&s_u_round, __ATOMIC_ACQUIRE);
+
     /*
      * reloading cr3 throws away every cached translation that is not
      * marked global. a targeted invlpg would be cheaper and needs the
@@ -202,8 +204,26 @@ void smp_tlb_ipi(void)
     __asm__ volatile ("movq %%cr3, %0" : "=r"(cr3));
     __asm__ volatile ("movq %0, %%cr3" :: "r"(cr3) : "memory");
 
-    __atomic_fetch_add(&shootdown_done, 1, __ATOMIC_SEQ_CST);
+    uint32_t u_me = smp_this_cpu();
+    if (u_me < SMP_MAX_CPUS) {
+        __atomic_store_n(&s_arr_answered[u_me], u_round, __ATOMIC_RELEASE);
+    }
+}
+
+void smp_tlb_ipi(void)
+{
+    answer();
     lapic_eoi();
+}
+
+void smp_tlb_poll(void)
+{
+    uint32_t u_me = smp_this_cpu();
+    if (u_me < SMP_MAX_CPUS
+        && __atomic_load_n(&s_arr_answered[u_me], __ATOMIC_RELAXED)
+           != __atomic_load_n(&s_u_round, __ATOMIC_ACQUIRE)) {
+        answer();
+    }
 }
 
 void smp_tlb_shootdown(void)
@@ -226,20 +246,25 @@ void smp_tlb_shootdown(void)
         return;
     }
 
+    /*
+     * a core making a round of its own at the same moment spins on the
+     * lock here, and answers this one as it spins, which is what lets
+     * this one end; see smp_tlb_poll
+     */
     uint64_t flags = spin_lock_irq(&shootdown_lock);
+    uint32_t u_round = __atomic_add_fetch(&s_u_round, 1, __ATOMIC_SEQ_CST);
 
+    uint32_t arr_asked[SMP_MAX_CPUS];
     uint32_t others = 0;
-    __atomic_store_n(&shootdown_done, 0, __ATOMIC_SEQ_CST);
-
     for (size_t i = 0; i < cpu_count; i++) {
-        if (!cpus[i].online || cpus[i].index == here || !cpus[i].scheduling) {
+        if (!cpus[i].online || cpus[i].index == here || !cpus[i].scheduling
+            || cpus[i].index >= SMP_MAX_CPUS) {
             continue;
         }
         if (lapic_send_ipi(cpus[i].apic_id, SMP_IPI_TLB)) {
-            others++;
+            arr_asked[others++] = cpus[i].index;
         }
     }
-    __atomic_store_n(&shootdown_wanted, others, __ATOMIC_SEQ_CST);
 
     /*
      * wait for every one of them. carrying on early would mean using a
@@ -252,9 +277,13 @@ void smp_tlb_shootdown(void)
      * that has not answered by now is one that cannot, and waiting past
      * the point where somebody else declares *the kernel* stuck helps nobody
      */
-    for (uint64_t spin = 0; others > 0 && spin < 20000000ull; spin++) {
-        if (__atomic_load_n(&shootdown_done, __ATOMIC_SEQ_CST) >= others) {
-            break;
+    uint32_t u_waiting = others;
+    for (uint64_t spin = 0; u_waiting > 0 && spin < 20000000ull; spin++) {
+        u_waiting = 0;
+        for (uint32_t u_at = 0; u_at < others; u_at++) {
+            uint32_t u_said = __atomic_load_n(&s_arr_answered[arr_asked[u_at]],
+                                              __ATOMIC_ACQUIRE);
+            u_waiting += ((int32_t)(u_said - u_round) < 0) ? 1 : 0;
         }
         __asm__ volatile ("pause");
     }

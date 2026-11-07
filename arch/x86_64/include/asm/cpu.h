@@ -102,10 +102,13 @@ ARCH_INLINE uint32_t cpu_id(void)
  * `pause`. it does not sleep and does not lower the clock, it tells
  * the core this is a spin, so it stops speculating a hundred iterations
  * ahead of a value that is about to change out from under it, and stops
- * fighting other cores for the cache line while it waits
+ * fighting other cores for the cache line while it waits. and a spin is
+ * where a core with interrupts off answers a shootdown it cannot be
+ * interrupted for
  */
 ARCH_INLINE void cpu_relax(void)
 {
+    smp_tlb_poll();
     asm volatile ("pause" : : : "memory");
 }
 

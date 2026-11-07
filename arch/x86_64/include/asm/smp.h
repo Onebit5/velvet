@@ -120,4 +120,14 @@ void smp_tlb_shootdown(void);
 /* the handler, called from the interrupt dispatcher */
 void smp_tlb_ipi(void);
 
+/*
+ * and the same answer, from a core with interrupts off that is spinning
+ * for something: it cannot take the interrupt, so it looks for a round
+ * it has not answered every time round the spin, and answers it. two
+ * cores making a shootdown at once, the second waiting for the lock the
+ * first holds, would otherwise each wait for the other until the first
+ * gave up
+ */
+void smp_tlb_poll(void);
+
 #endif
