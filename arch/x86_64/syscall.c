@@ -385,7 +385,8 @@ static int64_t do_sigaltstack(struct pt_regs *p_regs)
  * fork, vfork and clone. nothing is copied: the address space is
  * duplicated by marking every page read-only in both and letting the
  * first write fault, so the cost is the page tables and a walk. see
- * addrspace_fork.
+ * addrspace_fork. and a thread shares the space it was made in, which
+ * costs nothing at all.
  */
 
 /* what the child's first return to ring 3 is to look like, and do first */
@@ -415,7 +416,6 @@ static void fork_child_start(void *arg)
     fork_return(&local);
 }
 
-/* CLONE_* that a process of its own can be made with */
 #define CLONE_VM             0x00000100
 #define CLONE_FS             0x00000200
 #define CLONE_FILES          0x00000400
@@ -423,15 +423,29 @@ static void fork_child_start(void *arg)
 #define CLONE_VFORK          0x00004000
 #define CLONE_PARENT         0x00008000
 #define CLONE_THREAD         0x00010000
+#define CLONE_SYSVSEM        0x00040000
 #define CLONE_SETTLS         0x00080000
 #define CLONE_PARENT_SETTID  0x00100000
 #define CLONE_CHILD_CLEARTID 0x00200000
+#define CLONE_DETACHED       0x00400000
 #define CLONE_CHILD_SETTID   0x01000000
 #define CSIGNAL              0x000000ff
 
-#define CLONE_KNOWN (CSIGNAL | CLONE_VFORK | CLONE_SETTLS                \
-                     | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID       \
-                     | CLONE_CHILD_SETTID)
+/*
+ * what a thread shares with its process: everything a thread here is,
+ * the memory, where it stands, the descriptors and the signal actions,
+ * none of which is kept apart from the rest
+ */
+#define CLONE_SHARING (CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND)
+
+/*
+ * the semaphores' undo lists are shared or not, which with no semaphores
+ * is nothing, and DETACHED has meant nothing for a long time
+ */
+#define CLONE_KNOWN (CSIGNAL | CLONE_SHARING | CLONE_THREAD               \
+                     | CLONE_SYSVSEM | CLONE_VFORK | CLONE_SETTLS         \
+                     | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID         \
+                     | CLONE_DETACHED | CLONE_CHILD_SETTID)
 
 /*
  * a new process, a copy of the caller in everything a process holds:
@@ -549,10 +563,70 @@ static int64_t copy_process(struct pt_regs *p_regs, uint64_t u_flags,
      * the child's own copy all the same, so this is only the order
      * things happen in, which is what a program calling vfork counts on
      */
-    while (process_vforking(i_pid)) {
+    while (process_vforking(i_pid) && !process_doomed(p_me->i_tid)) {
         sleep_ms(1);
     }
     return i_pid;
+}
+
+/*
+ * another thread of the caller's process, on a stack of its own and in
+ * the same memory, which it holds a use of: the same files, the same
+ * actions, the caller's mask. its tid, or why not
+ */
+static int64_t copy_thread(struct pt_regs *p_regs, uint64_t u_flags,
+                           uint64_t u_stack, uint64_t u_parent_tid,
+                           uint64_t u_child_tid, uint64_t u_tls)
+{
+    struct thread *p_me = sched_current();
+    if (p_me == NULL || p_me->space == NULL || p_me->pid == 0) {
+        return -EINVAL;
+    }
+    struct fork_start *p_start = kmalloc(sizeof *p_start);
+    if (p_start == NULL) {
+        return -ENOMEM;
+    }
+    p_start->frame = *p_regs;
+    p_start->u_child_tid = (u_flags & CLONE_CHILD_SETTID) ? u_child_tid : 0;
+    if (u_stack != 0) {
+        p_start->frame.rsp = u_stack;
+    }
+
+    int i_tid = process_add_thread(p_me->i_tid);
+    if (i_tid == 0) {
+        kfree(p_start);
+        return -EAGAIN;
+    }
+    if ((u_flags & CLONE_PARENT_SETTID)
+        && put_user_i32(u_parent_tid, i_tid) != 0) {
+        kfree(p_start);
+        process_thread_ended(i_tid, 0, pit_uptime_ms());
+        return -EFAULT;
+    }
+    struct thread *t = thread_create_parked(process_name(p_me->pid),
+                                            fork_child_start, p_start);
+    if (t == NULL) {
+        kfree(p_start);
+        process_thread_ended(i_tid, 0, pit_uptime_ms());
+        return -ENOMEM;
+    }
+    t->space = addrspace_get(p_me->space);
+    t->pid = p_me->pid;
+    t->i_tid = i_tid;
+    fpu_save(&t->arch.fpu);
+    t->arch.u_fs_base = (u_flags & CLONE_SETTLS) ? u_tls
+                                                 : p_me->arch.u_fs_base;
+    process_set_thread(i_tid, t->id);
+
+    uint64_t u_slot_flags;
+    struct task *p_task = process_lock_task(i_tid, &u_slot_flags);
+    if (p_task != NULL && (u_flags & CLONE_CHILD_CLEARTID)) {
+        p_task->u_clear_tid = u_child_tid;
+    }
+    process_unlock_slot(u_slot_flags);
+
+    sched_wake_thread(t->id);
+    return i_tid;
 }
 
 static int64_t do_fork(struct pt_regs *p_regs)
@@ -566,9 +640,12 @@ static int64_t do_vfork(struct pt_regs *p_regs)
 }
 
 /*
- * clone, for a process of its own. one that would share the caller's
- * memory, files or signal handlers is a thread, and threads are a
- * version away
+ * clone: a thread, sharing all of what its process has, which is what
+ * every thread library asks for, or a process of its own, which shares
+ * none of it and tells its parent with SIGCHLD when it ends. sharing
+ * some of it and not the rest is neither, and is not offered. a thread
+ * tells nobody it ended but whoever waits on the word it clears, so the
+ * signal its flags name is not looked at
  */
 static int64_t do_clone(struct pt_regs *p_regs)
 {
@@ -576,7 +653,14 @@ static int64_t do_clone(struct pt_regs *p_regs)
     if ((u_flags & ~(uint64_t)CLONE_KNOWN) != 0) {
         return -EINVAL;
     }
-    if ((u_flags & CSIGNAL) != SIGCHLD) {
+    if (u_flags & CLONE_THREAD) {
+        if ((u_flags & CLONE_SHARING) != CLONE_SHARING
+            || (u_flags & CLONE_VFORK)) {
+            return -EINVAL;
+        }
+        return copy_thread(p_regs, u_flags, A1, A2, A3, A4);
+    }
+    if ((u_flags & CLONE_SHARING) != 0 || (u_flags & CSIGNAL) != SIGCHLD) {
         return -EINVAL;
     }
     return copy_process(p_regs, u_flags, A1, A2, A3, A4);
@@ -956,6 +1040,15 @@ static void deliver_signals(struct pt_regs *p_regs, bool b_call)
     if (i_pid <= 0) {
         return;
     }
+
+    /*
+     * a thread doomed by another, ending its process or running another
+     * program in it, ends here, before anything else is made of a call
+     * its waking cut short
+     */
+    if (process_doomed(i_tid)) {
+        thread_exit(PROCESS_KILLED);
+    }
     bool b_restart = b_call && restartable((int64_t)p_regs->rax);
 
     for (;;) {
@@ -1005,13 +1098,16 @@ static void deliver_signals(struct pt_regs *p_regs, bool b_call)
              * only fail the same way at
              */
             if (i_sig == SIGSEGV) {
+                process_doom_others(i_tid, SIGSEGV, false);
                 thread_exit(SIGSEGV);
             }
             process_force_signal(i_tid, SIGSEGV, &origin);
             continue;
 
         case SIGNAL_ACTION_TERMINATE:
-            thread_exit(i_sig);     /* the wait status of a signal's death */
+            /* the wait status of a signal's death, the whole process's */
+            process_doom_others(i_tid, i_sig, false);
+            thread_exit(i_sig);
         }
         break;
     }

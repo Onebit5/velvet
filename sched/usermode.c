@@ -26,6 +26,7 @@
 #include <velvet/signal.h>
 #include <velvet/random.h>
 #include <velvet/errno.h>
+#include <velvet/futex.h>
 #include <asm/irq.h>
 #include <asm/uaccess.h>
 #include <uapi/velvet/auxvec.h>
@@ -539,6 +540,47 @@ int user_spawn(const char *path, const struct exec_args *p_args,
     return pid;
 }
 
+/*
+ * the caller the last thread of its process: every other doomed, and
+ * waited for until it has ended, and the caller its process's first
+ * thread from then on, with the pid for its tid. false when it was
+ * doomed itself first, by a thread ending the process or running a
+ * program of its own, and is on its way out
+ */
+static bool alone(struct thread *p_me)
+{
+    if (!process_doom_others(p_me->i_tid, 0, true)) {
+        return false;
+    }
+    while (process_thread_count(p_me->pid) > 1) {
+        sleep_ms(1);
+    }
+    process_lead(p_me->i_tid);
+    p_me->i_tid = p_me->pid;
+    return true;
+}
+
+/*
+ * the word set_tid_address named, which belongs to the program going
+ * away, cleared, with whoever waits on it woken, as an end would: a
+ * space shared with another process, which a vfork's child has, is
+ * where somebody could be waiting
+ */
+static void forget_clear_tid(int i_tid)
+{
+    uint64_t u_flags;
+    struct task *t = process_lock_task(i_tid, &u_flags);
+    uint64_t u_tid = 0;
+    if (t != NULL) {
+        u_tid = t->u_clear_tid;
+        t->u_clear_tid = 0;
+    }
+    process_unlock_slot(u_flags);
+    if (u_tid != 0 && put_user_i32(u_tid, 0) == 0) {
+        futex_wake(u_tid, 1);
+    }
+}
+
 int64_t user_exec(const char *str_path, const struct exec_args *p_args,
                   struct user_entry *p_out)
 {
@@ -558,6 +600,18 @@ int64_t user_exec(const char *str_path, const struct exec_args *p_args,
     if (i_why < 0) {
         return i_why;
     }
+
+    /*
+     * the program is the process's, and every other thread of it goes
+     * with the old one, before anything of the old one is let go of. one
+     * doomed while it was being built tells nobody anything: it is ended
+     * on its way back to ring 3, which is the only answer it gets
+     */
+    if (!alone(p_me)) {
+        addrspace_put(img.p_space);
+        return -EINTR;
+    }
+    forget_clear_tid(p_me->i_tid);
 
     /*
      * interrupts off across the swap, so the scheduler never finds this

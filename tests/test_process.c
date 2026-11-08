@@ -565,7 +565,13 @@ int main(void)
               "a child holds its parent's files, each with one more holder");
         file_put(&files[0]);
         process_fds_release(child);
+        CHECK(files[0].u_refs == 4,
+              "and keeps them while it has not ended, whichever of its "
+              "threads let go");
+        process_exited(child, 0, 0);
+        process_fds_release(child);
         CHECK(files[0].u_refs == 2, "and lets go of them when it ends");
+        process_collect(child, NULL);
         process_exited(child, 0, 0);
         process_collect(child, NULL);
 
@@ -601,6 +607,73 @@ int main(void)
 
         CHECK(process_fd_add(9999, &files[3], 0, false) < 0,
               "no process, no descriptor");
+    }
+
+    /*
+     * a process's threads: each a tid of its own out of the pids' count,
+     * the process ending with the last of them, and the status it ends
+     * with its first thread's, or its group exit's when it had one
+     */
+    {
+        int i_proc = process_create("threads", 0, 0, false, 0);
+        int i_two = process_add_thread(i_proc);
+        int i_three = process_add_thread(i_two);
+        CHECK(i_two > i_proc && i_three > i_two
+              && process_pid_of(i_two) == i_proc
+              && process_pid_of(i_three) == i_proc
+              && process_find(i_two) == NULL
+              && process_thread_count(i_proc) == 3,
+              "a process's threads are numbered past its pid, and no tid "
+              "is a pid");
+        process_thread_signals(i_proc)->u_blocked = SIGNAL_BIT(SIGUSR1);
+        int i_four = process_add_thread(i_proc);
+        CHECK(process_thread_signals(i_four)->u_blocked
+              == SIGNAL_BIT(SIGUSR1),
+              "a new thread has its maker's mask");
+        process_signal(i_proc, SIGUSR1);
+        CHECK(!process_interrupt_pending(i_proc)
+              && (process_interrupt_pending(i_two)
+                  || process_interrupt_pending(i_three)),
+              "and one sent to the process goes to a thread not blocking "
+              "it");
+        process_thread_signals(i_proc)->u_blocked = 0;
+        CHECK(!process_thread_ended(i_proc, W_EXITCODE(4, 0), 10)
+              && !process_find(i_proc)->exited
+              && process_thread_count(i_proc) == 3,
+              "the first thread ending is not the process ending");
+        CHECK(process_doom_others(i_two, 0, true)
+              && process_doomed(i_three) && process_doomed(i_four)
+              && !process_doomed(i_two) && process_interrupt_pending(i_four),
+              "a thread running a program dooms the rest, waking each");
+        CHECK(!process_doom_others(i_three, 9, false)
+              && !process_find(i_proc)->b_group_exit
+              && process_add_thread(i_three) == 0,
+              "and a doomed thread may neither doom another nor make one");
+        process_thread_ended(i_three, PROCESS_KILLED, 20);
+        process_thread_ended(i_four, PROCESS_KILLED, 20);
+        process_lead(i_two);
+        CHECK(process_thread_count(i_proc) == 1 && process_pid_of(i_proc)
+              == i_proc && process_pid_of(i_two) == 0,
+              "and alone, it is the first thread, the pid its tid");
+        int i_five = process_add_thread(i_proc);
+        CHECK(process_doom_others(i_five, W_EXITCODE(6, 0), false)
+              && process_doomed(i_proc) && !process_doomed(i_five),
+              "an exit of the whole process dooms the rest too");
+        CHECK(!process_thread_ended(i_five, W_EXITCODE(1, 0), 30)
+              && process_thread_ended(i_proc, PROCESS_KILLED, 40),
+              "and the process ends with the last of them");
+        CHECK(process_find(i_proc)->exited
+              && process_find(i_proc)->i_wait_status == W_EXITCODE(6, 0),
+              "with the group's code, whoever went last and however");
+        process_collect(i_proc, NULL);
+
+        int i_lone = process_create("lone", 0, 0, false, 0);
+        int i_other = process_add_thread(i_lone);
+        process_thread_ended(i_lone, W_EXITCODE(8, 0), 50);
+        CHECK(process_thread_ended(i_other, W_EXITCODE(2, 0), 60)
+              && process_find(i_lone)->i_wait_status == W_EXITCODE(8, 0),
+              "with no group exit, the first thread's code is the one");
+        process_collect(i_lone, NULL);
     }
 
     /*

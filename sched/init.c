@@ -364,8 +364,8 @@ static void stop_the_programs(void)
         }
     }
 
-    int ids[MAX_PROCESSES];
-    size_t n = process_running_threads(ids, MAX_PROCESSES);
+    int ids[MAX_THREADS];
+    size_t n = process_running_threads(ids, MAX_THREADS);
     if (n > 0) {
         kprintf("init: %lu did not answer. ending %s\n",
                 n, n == 1 ? "it" : "them");

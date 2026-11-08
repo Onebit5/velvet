@@ -195,9 +195,9 @@ void thread_exit(int code)
      */
     bool narrate = true;
     if (me->pid != 0) {
-        narrate = process_announces(me->pid);
         process_account(me->pid, me->cpu_ticks);
-        process_exited(me->pid, code, pit_uptime_ms());
+        bool b_last = process_thread_ended(me->i_tid, code, pit_uptime_ms());
+        narrate = b_last && process_announces(me->pid);
 
         /* let go of both ends of whatever pipeline this was part of. */
         process_fds_release(me->pid);

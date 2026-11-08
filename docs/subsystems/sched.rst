@@ -168,6 +168,43 @@ pid 0 is not a process at all; it is the parent of what the kernel starts
 itself, which is ``/init``. pid 1 is init, handed out first so reparenting
 has a number that is known before the process it names exists.
 
+threads
+~~~~~~~
+
+a process has threads, as many as a program makes with ``clone``, and
+they are all of it at once: one address space, one table of descriptors,
+one working directory and root, one set of signal actions, one group and
+session. what a thread has of its own is what it runs with: its
+registers and its stack, its tid, its signal mask and the signals sent to
+it alone, its alternate stack, the word its end clears. the table keeps
+that in a ``struct task`` beside each process, and a process's first
+thread has the process's pid for its tid; every other tid is numbered
+out of the same count, so a tid is never somebody else's pid, and
+``kill`` given one means its process.
+
+``clone`` makes a thread with the flags a thread library passes, all of
+the sharing at once, ``CLONE_VM``, ``CLONE_FS``, ``CLONE_FILES`` and
+``CLONE_SIGHAND``, with ``CLONE_THREAD``. the new thread holds a use of
+the space, starts on the stack it was given with the tls it was given,
+and has its maker's mask. a process that shares some of another's and
+not the rest is neither a thread nor a process here, and is
+``-EINVAL``.
+
+a thread ends with ``exit``, and its process with its last thread. the
+status a process ends with is its first thread's, unless the process
+was ended as a whole: by ``exit_group``, which every libc's ``exit``
+is, or by a signal whose default is to end it, from whichever thread
+takes it. either dooms every other thread of the process, waking it,
+continuing it when it is stopped, and ending it on its way back to ring
+3, and the process ends with that code once the last of them has. its
+descriptors are closed then, and not before.
+
+``exec`` from any thread dooms the others and waits for them to be
+gone, and the thread that called it is the process's only one after,
+its tid the pid. a fork from any thread makes a process of one thread,
+a copy of the one that forked. and a stop is the whole process's: every
+thread stops, and every thread is continued.
+
 the process table (``process.c``) is where ``ps``, ``wait``, ``kill`` and
 reparenting all bottom out. children are reparented to init as their parent
 goes, inside ``process_exited()``, since the moment the parent ends is the
@@ -480,6 +517,20 @@ the table means.
 
 ``int  process_thread(int i_tid);``
     which of the scheduler's threads runs it, or 0.
+
+``int  process_add_thread(int i_from);``
+    another thread for ``i_from``'s process, with its mask: the tid, or
+    0 when there is no room or the process is on its way out.
+
+``bool process_thread_ended(int i_tid, int i_code, uint64_t u_now_ms);``
+    a thread has ended: true when it was its process's last, and the
+    process has ended with it, with its group exit's code or else its
+    first thread's.
+
+``bool process_doom_others(int i_tid, int i_code, bool b_exec);``
+    every other thread of the process ended on its way back to ring 3:
+    for an exec, or for the whole process ending with ``i_code``. false
+    when the caller was doomed first.
 
 ``void process_exited(int pid, int code, uint64_t now_ms);``
     it finished. the slot stays occupied, holding the code, until somebody collects it

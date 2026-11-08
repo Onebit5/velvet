@@ -33,15 +33,21 @@ static void clear_child_tid(void)
     }
 }
 
+/* the one thread, and its process with it when it was the last */
 int64_t sys_exit(int i_code)
 {
     clear_child_tid();
     thread_exit(W_EXITCODE(i_code, 0));
 }
 
-/* every thread of the process, which is one until there are more */
+/*
+ * every thread of the process: the others doomed, each ending on its
+ * way back to ring 3, and the process ending with this code when the
+ * last of them has
+ */
 int64_t sys_exit_group(int i_code)
 {
+    process_doom_others(current_tid(), W_EXITCODE(i_code, 0), false);
     clear_child_tid();
     thread_exit(W_EXITCODE(i_code, 0));
 }

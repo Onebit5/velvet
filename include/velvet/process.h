@@ -70,6 +70,7 @@ struct process {
     bool     exited;
     bool     b_detached;        /* its parent ignores SIGCHLD: nobody waits */
     int      i_wait_status;     /* what wait4 reports: W_EXITCODE */
+    bool     b_group_exit;      /* every thread is on its way out */
 
     int      i_stopped_by;      /* the signal that stopped it, 0 running */
     bool     b_stop_told;       /* and whether a wait has said so yet */
@@ -119,6 +120,7 @@ struct task {
     int      i_pid;             /* the process it is a thread of */
     int      i_thread;          /* the scheduler's thread, 0 until it has one */
     bool     b_interrupted;     /* a signal it has to look at */
+    bool     b_doomed;          /* to end at its next way back to ring 3 */
     uint64_t u_clear_tid;       /* where its end writes 0, set_tid_address's */
     struct signal_thread sig;
 };
@@ -174,6 +176,46 @@ int  process_thread(int i_tid);
 int  process_pid_of(int i_tid);
 
 /*
+ * another thread for the process thread i_from is a thread of, with
+ * i_from's mask, and no alternate stack, the one it has being in memory
+ * the two share: its tid, or 0 when there is no room for it or the
+ * process is on its way out
+ */
+int  process_add_thread(int i_from);
+
+/* how many threads a process has */
+size_t process_thread_count(int i_pid);
+
+/*
+ * thread i_tid has ended, with code for its wait status: true when it
+ * was its process's last, and the process has ended with it. the status
+ * a process ends with is its group exit's, when it had one, and
+ * otherwise its first thread's
+ */
+bool process_thread_ended(int i_tid, int i_code, uint64_t u_now_ms);
+
+/*
+ * every thread of thread i_tid's process but i_tid doomed: woken, let
+ * go of if stopped, and ended on its way back to ring 3. with b_exec it
+ * is so i_tid can run another program alone, and otherwise it is the
+ * whole process ending with i_code, the first group exit's code being
+ * the one it ends with. false when i_tid is doomed itself, which is
+ * every thread but one while a thread is running a program, so only one
+ * may be doing either at a time
+ */
+bool process_doom_others(int i_tid, int i_code, bool b_exec);
+
+/* whether a thread is doomed, and is to end rather than go back */
+bool process_doomed(int i_tid);
+
+/*
+ * thread i_tid, alone in its process, becomes the process's first,
+ * with the process's pid for its tid, as exec leaves the thread that
+ * ran it
+ */
+void process_lead(int i_tid);
+
+/*
  * the scheduler's threads of every thread of i_pid, stopped or let go,
  * which is what stopping or continuing a process is
  */
@@ -194,7 +236,7 @@ void process_exited(int pid, int code, uint64_t now_ms);
 
 bool process_collect(int pid, int *code);
 
-/* the ticks a process's thread ran for, as it ends */
+/* the ticks one of a process's threads ran for, added as it ends */
 void process_account(int i_pid, uint64_t u_ticks);
 
 /*
@@ -207,10 +249,10 @@ void process_forget(int i_pid);
 size_t process_interrupt_all(void);
 
 /*
- * the thread ids of every process still going, for a shutdown that has
- * run out of patience. gathered under the lock and acted on afterwards,
- * because killing a thread reaches the scheduler and a holder of this
- * lock may not
+ * the scheduler's thread of every thread of every process still going,
+ * for a shutdown that has run out of patience. gathered under the lock
+ * and acted on afterwards, because killing a thread reaches the
+ * scheduler and a holder of this lock may not
  */
 size_t process_running_threads(int *ids, size_t max);
 
@@ -382,9 +424,9 @@ struct file *process_fd_take(int i_pid, int i_fd);
 bool process_fds_inherit(int pid, int from);
 
 /*
- * every descriptor closed, as a process ends, or the ones marked to close
- * on exec. the files are put here, so neither may be called with a lock
- * held
+ * every descriptor closed, once a process has ended, or the ones marked
+ * to close on exec. the files are put here, so neither may be called
+ * with a lock held
  */
 void process_fds_release(int i_pid);
 void process_fds_exec(int i_pid);

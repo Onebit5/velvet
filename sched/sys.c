@@ -395,12 +395,16 @@ int64_t sys_setrlimit(int i_resource, uint64_t u_limit)
 
 #define MS_PER_TICK (1000 / CLOCK_TICK_HZ)
 
-/* the ticks the caller's own thread has run, and its collected children's */
+/*
+ * the ticks the caller's own thread has run, and the threads of its
+ * process that have ended, and its collected children's
+ */
 static void ticks_of(uint64_t *p_own, uint64_t *p_children)
 {
     struct thread *p_me = sched_current();
     const struct process *p = process_find(current_pid());
-    *p_own = (p_me != NULL) ? p_me->cpu_ticks : 0;
+    *p_own = ((p_me != NULL) ? p_me->cpu_ticks : 0)
+             + ((p != NULL) ? p->u_ticks : 0);
     *p_children = (p != NULL) ? p->u_child_ticks : 0;
 }
 
@@ -577,9 +581,12 @@ int64_t sys_sched_yield(void)
 
 /*
  * where a thread keeps the robust mutexes it holds, for the kernel to
- * release if it dies holding one. with one thread to a process, a death
- * takes every other user of such a mutex in the process with it, so
- * there is nobody left to release one for: the list is taken as given
+ * release if it dies holding one. a thread here ends by its own exit,
+ * which a libc's thread exit comes to only having let go of its robust
+ * mutexes itself, or with the whole of its process, which takes every
+ * other user of such a mutex with it, every page being the process's
+ * own. so there is nobody left to release one for: the list is taken
+ * as given
  */
 int64_t sys_set_robust_list(uint64_t u_head, uint64_t u_len)
 {

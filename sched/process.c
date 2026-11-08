@@ -108,11 +108,15 @@ static struct task *taker_of(const struct process *p, int i_sig)
     return NULL;
 }
 
-/* whether t has a signal to look at now. the lock is held */
+/*
+ * whether t has a signal to look at now, which a doomed thread always
+ * has, so a wait it is in ends. the lock is held
+ */
 static void recalc(struct task *t)
 {
     const struct process *p = slot_for(t->i_pid);
-    t->b_interrupted = p != NULL && signal_deliverable(&p->sig, &t->sig);
+    t->b_interrupted = t->b_doomed
+                       || (p != NULL && signal_deliverable(&p->sig, &t->sig));
 }
 
 int current_pid(void)
@@ -420,6 +424,123 @@ void process_set_thread(int i_tid, int i_thread)
     spin_unlock_irq(&process_lock, u_flags);
 }
 
+int process_add_thread(int i_from)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    const struct task *p_from = task_for(i_from);
+    const struct process *p = (p_from != NULL) ? slot_for(p_from->i_pid)
+                                               : NULL;
+    struct task *t = free_task();
+    int i_tid = 0;
+    if (t != NULL && p != NULL && !p->exited && !p->b_group_exit
+        && !p_from->b_doomed) {
+        memset(t, 0, sizeof *t);
+        t->i_tid = next_pid++;
+        t->i_pid = p->pid;
+        signal_inherit_thread(&t->sig, &p_from->sig, false);
+        i_tid = t->i_tid;
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    return i_tid;
+}
+
+/* how many threads p has. the lock is held */
+static size_t count_threads(const struct process *p)
+{
+    size_t sz_count = 0;
+    for (size_t sz_i = 0; sz_i < MAX_THREADS; sz_i++) {
+        if (s_arr_tasks[sz_i].i_tid != 0
+            && s_arr_tasks[sz_i].i_pid == p->pid) {
+            sz_count++;
+        }
+    }
+    return sz_count;
+}
+
+size_t process_thread_count(int i_pid)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    const struct process *p = slot_for(i_pid);
+    size_t sz_count = (p != NULL) ? count_threads(p) : 0;
+    spin_unlock_irq(&process_lock, u_flags);
+    return sz_count;
+}
+
+bool process_thread_ended(int i_tid, int i_code, uint64_t u_now_ms)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct task *t = task_for(i_tid);
+    struct process *p = (t != NULL) ? slot_for(t->i_pid) : NULL;
+    bool b_last = false;
+    int i_status = 0;
+    if (t != NULL) {
+        if (p != NULL && !p->b_group_exit && t->i_tid == p->pid) {
+            p->i_wait_status = i_code;
+        }
+        t->i_tid = 0;
+        b_last = p != NULL && !p->exited && count_threads(p) == 0;
+        i_status = (p != NULL) ? p->i_wait_status : 0;
+    }
+    int i_pid = (p != NULL) ? p->pid : 0;
+    spin_unlock_irq(&process_lock, u_flags);
+    if (b_last) {
+        process_exited(i_pid, i_status, u_now_ms);
+    }
+    return b_last;
+}
+
+bool process_doom_others(int i_tid, int i_code, bool b_exec)
+{
+    int arr_ids[MAX_THREADS];
+    size_t sz_count = 0;
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct task *p_me = task_for(i_tid);
+    struct process *p = (p_me != NULL) ? slot_for(p_me->i_pid) : NULL;
+    bool b_alone = p != NULL && !p_me->b_doomed;
+    if (b_alone) {
+        if (!b_exec && !p->b_group_exit) {
+            p->b_group_exit = true;
+            p->i_wait_status = i_code;
+        }
+        for (size_t sz_i = 0; sz_i < MAX_THREADS; sz_i++) {
+            struct task *t = &s_arr_tasks[sz_i];
+            if (t->i_tid == 0 || t->i_pid != p->pid || t == p_me) {
+                continue;
+            }
+            t->b_doomed = true;
+            t->b_interrupted = true;
+            if (t->i_thread != 0) {
+                arr_ids[sz_count++] = t->i_thread;
+            }
+        }
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+
+    /* a stopped thread has to run to end, and an asleep one to wake */
+    for (size_t sz_i = 0; sz_i < sz_count; sz_i++) {
+        sched_set_stopped(arr_ids[sz_i], false);
+        sched_wake_thread(arr_ids[sz_i]);
+    }
+    return b_alone;
+}
+
+bool process_doomed(int i_tid)
+{
+    const struct task *t = task_for(i_tid);
+    return t != NULL && t->b_doomed;
+}
+
+void process_lead(int i_tid)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct task *t = task_for(i_tid);
+    struct process *p = (t != NULL) ? slot_for(t->i_pid) : NULL;
+    if (p != NULL) {
+        t->i_tid = p->pid;
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+}
+
 int process_pid_of(int i_tid)
 {
     uint64_t u_flags = spin_lock_irq(&process_lock);
@@ -530,7 +651,7 @@ void process_account(int i_pid, uint64_t u_ticks)
     uint64_t u_flags = spin_lock_irq(&process_lock);
     struct process *p = slot_for(i_pid);
     if (p != NULL) {
-        p->u_ticks = u_ticks;
+        p->u_ticks += u_ticks;
     }
     spin_unlock_irq(&process_lock, u_flags);
 }
@@ -1508,12 +1629,19 @@ static void close_fds(int i_pid, uint64_t u_which)
  */
 void process_fds_release(int i_pid)
 {
-    close_fds(i_pid, ~0ull);
-
+    /*
+     * the descriptors are every thread's, and stay open for as long as
+     * one of them is left, whichever thread's end this is
+     */
     uint64_t u_flags = spin_lock_irq(&process_lock);
     const struct process *p = slot_for(i_pid);
-    bool b_leader = p != NULL && p->exited && p->i_sid == i_pid;
+    bool b_ended = p != NULL && p->exited;
+    bool b_leader = b_ended && p->i_sid == i_pid;
     spin_unlock_irq(&process_lock, u_flags);
+    if (!b_ended) {
+        return;
+    }
+    close_fds(i_pid, ~0ull);
     if (b_leader) {
         tty_session_ended(i_pid);
     }

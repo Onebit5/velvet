@@ -89,7 +89,7 @@ number  name             where                  notes
 52      getpeername      net/sockets.c
 54      setsockopt       net/sockets.c
 55      getsockopt       net/sockets.c
-56      clone            arch/x86_64/syscall.c  a new process only, see below
+56      clone            arch/x86_64/syscall.c  a thread or a process, below
 57      fork             arch/x86_64/syscall.c  clone with SIGCHLD
 58      vfork            arch/x86_64/syscall.c  the parent waits for exec or exit
 59      execve           arch/x86_64/syscall.c  see the stack below
@@ -288,11 +288,14 @@ what is not there yet
 
 these answer, but less than they will:
 
-- clone makes a new process, never a thread: ``CLONE_VM``, ``CLONE_FILES``
-  and the rest of the sharing flags are ``-EINVAL``, and so is a signal
-  other than ``SIGCHLD``. ``CLONE_VFORK``, ``CLONE_SETTLS``,
+- clone makes a thread, sharing everything its process has, or a process
+  sharing nothing, and nothing between: a thread is ``CLONE_THREAD`` with
+  all of ``CLONE_VM``, ``CLONE_FS``, ``CLONE_FILES`` and
+  ``CLONE_SIGHAND``, and a process takes none of those and ``SIGCHLD``
+  for its signal. ``CLONE_VFORK``, ``CLONE_SETTLS``,
   ``CLONE_PARENT_SETTID``, ``CLONE_CHILD_SETTID`` and
-  ``CLONE_CHILD_CLEARTID`` work.
+  ``CLONE_CHILD_CLEARTID`` work, and ``CLONE_SYSVSEM`` and
+  ``CLONE_DETACHED`` are taken and mean nothing.
 - futex waits and wakes, requeues, and does both with a bitset.
   ``FUTEX_WAKE_OP`` and the priority inheriting calls are ``-ENOSYS``,
   since nothing here keeps a priority, and every word is the process's

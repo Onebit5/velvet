@@ -632,6 +632,9 @@ enum sched_kill_result sched_kill(int id)
 {
     uint64_t flags = spin_lock_irq(&sched_lock);
     enum sched_kill_result result = SCHED_KILL_NO_SUCH;
+    int i_pid = 0;
+    int i_tid = 0;
+    uint64_t u_ticks = 0;
 
     struct thread *t = current;
     do {
@@ -660,10 +663,9 @@ enum sched_kill_result sched_kill(int id)
                     t->waiting_on = NULL;
                     unlink(q, t);   /* the lock is already the kernel's */
                 }
-                if (t->pid != 0) {
-                    process_account(t->pid, t->cpu_ticks);
-                    process_exited(t->pid, PROCESS_KILLED, pit_uptime_ms());
-                }
+                i_pid = t->pid;
+                i_tid = t->i_tid;
+                u_ticks = t->cpu_ticks;
                 t->state = THREAD_DEAD;
                 result = SCHED_KILL_OK;
             }
@@ -673,6 +675,20 @@ enum sched_kill_result sched_kill(int id)
     } while (t != current);
 
     spin_unlock_irq(&sched_lock, flags);
+
+    /*
+     * and its process told afterwards, since telling a parent its child
+     * ended can wake the parent, which takes the lock let go of above.
+     * the reaper may have been through by now, and found a process that
+     * had not ended yet, so what it would have released is released here
+     */
+    if (i_pid != 0) {
+        process_account(i_pid, u_ticks);
+        process_doom_others(i_tid, PROCESS_KILLED, false);
+        process_thread_ended(i_tid, PROCESS_KILLED, pit_uptime_ms());
+        process_fds_release(i_pid);
+        process_forget(i_pid);
+    }
     return result;
 }
 

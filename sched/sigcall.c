@@ -280,7 +280,10 @@ static int64_t send(int i_pid, int i_sig, int i_code)
     int arr_pids[MAX_PROCESSES];
     size_t sz_count = 0;
     if (i_pid > 0) {
-        arr_pids[sz_count++] = i_pid;
+        /* a thread named for its process is that process */
+        int i_of = process_pid_of(i_pid);
+        arr_pids[sz_count++] = (process_find(i_pid) == NULL && i_of != 0)
+                               ? i_of : i_pid;
     } else if (i_pid == -1) {
         for (size_t sz_at = 0; sz_at < MAX_PROCESSES; sz_at++) {
             const struct process *p = process_at(sz_at);
