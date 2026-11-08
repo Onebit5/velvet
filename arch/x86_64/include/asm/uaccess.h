@@ -47,6 +47,11 @@ ARCH_INLINE int64_t get_user_u64(uint64_t *p_to, uint64_t u_from)
     return copy_from_user(p_to, u_from, sizeof *p_to);
 }
 
+ARCH_INLINE int64_t get_user_u32(uint32_t *p_to, uint64_t u_from)
+{
+    return copy_from_user(p_to, u_from, sizeof *p_to);
+}
+
 ARCH_INLINE int64_t put_user_u64(uint64_t u_to, uint64_t u_value)
 {
     return copy_to_user(u_to, &u_value, sizeof u_value);

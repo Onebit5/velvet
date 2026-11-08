@@ -211,6 +211,7 @@ CALL2(setdomainname, u64, u64)
 CALL0(gettid)
 CALL2(tkill, int, int)
 CALL1(time, u64)
+CALL6(futex, u64, int, u32, u64, u64, u32)
 CALL3(getdents64, int, u64, u64)
 CALL1(set_tid_address, u64)
 CALL2(clock_settime, int, u64)
@@ -914,7 +915,8 @@ static const syscall_fn s_arr_table[NR_SYSCALLS] = {
     ENTRY(arch_prctl), ENTRY(setrlimit), ENTRY(sync), ENTRY(settimeofday),
     ENTRY(mount), ENTRY(umount2),
     ENTRY(reboot), ENTRY(sethostname), ENTRY(setdomainname), ENTRY(gettid),
-    ENTRY(tkill), ENTRY(time), ENTRY(getdents64), ENTRY(set_tid_address),
+    ENTRY(tkill), ENTRY(time), ENTRY(futex), ENTRY(getdents64),
+    ENTRY(set_tid_address),
     ENTRY(clock_settime), ENTRY(clock_gettime), ENTRY(clock_getres),
     ENTRY(clock_nanosleep), ENTRY(exit_group), ENTRY(tgkill),
     ENTRY(openat), ENTRY(mkdirat), ENTRY(mknodat), ENTRY(fchownat),

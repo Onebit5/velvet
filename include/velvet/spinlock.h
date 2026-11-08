@@ -45,6 +45,11 @@ enum lock_rank {
      */
     LOCK_RANK_FIFO = 1,
     LOCK_RANK_PIPE,
+    /*
+     * the threads waiting on futexes, which wake threads and read the
+     * word they wait on, a fault in that read taking the memory's lock
+     */
+    LOCK_RANK_FUTEX,
     LOCK_RANK_MOUNT,            /* the mount table, held to look a name up */
     LOCK_RANK_TTY,              /* a terminal, which takes keys out of input */
     /*

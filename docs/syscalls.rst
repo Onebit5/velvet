@@ -168,6 +168,7 @@ number  name             where                  notes
 186     gettid           sched/sys.c
 200     tkill            sched/sigcall.c
 201     time             sched/time.c
+202     futex            sched/futex.c          waits, wakes and requeues
 217     getdents64       fs/stat.c
 218     set_tid_address  sched/exit.c
 227     clock_settime    sched/time.c
@@ -291,7 +292,13 @@ these answer, but less than they will:
   and the rest of the sharing flags are ``-EINVAL``, and so is a signal
   other than ``SIGCHLD``. ``CLONE_VFORK``, ``CLONE_SETTLS``,
   ``CLONE_PARENT_SETTID``, ``CLONE_CHILD_SETTID`` and
-  ``CLONE_CHILD_CLEARTID`` work. there is no futex.
+  ``CLONE_CHILD_CLEARTID`` work.
+- futex waits and wakes, requeues, and does both with a bitset.
+  ``FUTEX_WAKE_OP`` and the priority inheriting calls are ``-ENOSYS``,
+  since nothing here keeps a priority, and every word is the process's
+  own, so ``FUTEX_PRIVATE_FLAG`` changes nothing. a wait with a time
+  limit that a signal ends with no handler is made again with the whole
+  of its timespec.
 - a file is mapped as a private copy. ``MAP_SHARED`` over a file is
   refused with ``-ENODEV`` when it could be written, since nothing would
   carry the writes back.
@@ -305,8 +312,8 @@ these answer, but less than they will:
 - a file has one name: link and linkat are ``-EPERM``.
 
 and these are ``-ENOSYS`` until they exist: mount and the rest of the
-mount table, futex, statx, utimensat, the ``*xattr`` calls, inotify,
-epoll, eventfd and timerfd.
+mount table, statx, utimensat, the ``*xattr`` calls, inotify, epoll,
+eventfd and timerfd.
 
 the kernel side
 ---------------

@@ -159,12 +159,20 @@ static void reap_dead(void)
     }
 }
 
+static void unlink(struct waitq *q, struct thread *t);
+
+/* the ones asleep until a tick, and those on a queue with a time limit */
 static void wake_sleepers(void)
 {
     uint64_t now = pit_ticks();
     struct thread *t = current;
     do {
-        if (t->state == THREAD_SLEEPING && now >= t->wake_at) {
+        bool b_timed = t->state == THREAD_SLEEPING
+                       || (t->state == THREAD_BLOCKED && t->wake_at != 0);
+        if (b_timed && now >= t->wake_at) {
+            if (t->waiting_on != NULL) {
+                unlink(t->waiting_on, t);
+            }
             t->state = THREAD_READY;
         }
         t = t->next;
@@ -280,16 +288,24 @@ void sched_yield(void)
     spin_unlock_irq(&sched_lock, flags);
 }
 
-static void unlink(struct waitq *q, struct thread *t);
-
-void waitq_enqueue(struct waitq *q)
+void waitq_enqueue_for(struct waitq *q, uint64_t u_ms)
 {
+    uint64_t u_ticks = (u_ms * PIT_HZ) / 1000;
+    if (u_ticks == 0 && u_ms > 0) {
+        u_ticks = 1;
+    }
     uint64_t flags = spin_lock_irq(&sched_lock);
     current->wait_next = q->head;
     current->waiting_on = q;
     q->head = current;
+    current->wake_at = (u_ms != 0) ? pit_ticks() + u_ticks : 0;
     current->state = THREAD_BLOCKED;
     spin_unlock_irq(&sched_lock, flags);
+}
+
+void waitq_enqueue(struct waitq *q)
+{
+    waitq_enqueue_for(q, 0);
 }
 
 void waitq_sleep(void)

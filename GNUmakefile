@@ -474,7 +474,7 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/mouse $(T)/init $(T)/mkfs \
              $(T)/net \
              $(T)/tcp \
-             $(T)/signal $(T)/ansi \
+             $(T)/signal $(T)/futex $(T)/ansi \
              $(T)/termios $(T)/string \
              $(T)/epoch $(T)/pressure $(T)/hash $(T)/chacha20 \
              $(T)/random \
@@ -644,6 +644,11 @@ $(T)/init:     tests/test_init.c     sched/init.c \
 # handler re-entering itself, a pending set surviving a fork
 $(T)/signal:   tests/test_signal.c   sched/signal.c \
                lib/string.c
+# who a wake reaches: a word in one space and not another, the waiters
+# a requeue moves, and a wait a signal or its time limit ends. the
+# sleeping is the scheduler's, and is stood in for by the suite
+$(T)/futex:    tests/test_futex.c    sched/futex.c sched/spinlock.c \
+               arch/x86_64/uaccess.c lib/string.c
 # the escape sequences a program written for a real terminal sends. a
 # pure state machine, and fed one byte at a time by the suite because
 # that is what a program writing \033 and [2J separately produces

@@ -7,6 +7,7 @@
 
 #include <velvet/syscalls.h>
 #include <velvet/errno.h>
+#include <velvet/futex.h>
 #include <velvet/process.h>
 #include <velvet/sched.h>
 #include <velvet/thread.h>
@@ -18,8 +19,8 @@
 #include <uapi/velvet/wait.h>
 
 /*
- * where set_tid_address said to write a zero when this thread goes, so
- * whoever waits on that word knows it went
+ * where set_tid_address said to write a zero when this thread goes, and
+ * whoever waits on that word woken, so they know it went
  */
 static void clear_child_tid(void)
 {
@@ -27,8 +28,8 @@ static void clear_child_tid(void)
     struct task *t = process_lock_task(current_tid(), &u_flags);
     uint64_t u_tid = (t != NULL) ? t->u_clear_tid : 0;
     process_unlock_slot(u_flags);
-    if (u_tid != 0) {
-        put_user_i32(u_tid, 0);
+    if (u_tid != 0 && put_user_i32(u_tid, 0) == 0) {
+        futex_wake(u_tid, 1);
     }
 }
 

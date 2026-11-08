@@ -49,6 +49,13 @@ void waitq_enqueue(struct waitq *q);
 void waitq_sleep(void);
 
 /*
+ * on the queue the same way, and woken u_ms from now if nobody wakes it
+ * first, 0 being never: a wait with a time limit, which a sleep that
+ * polled for its wake would only answer late
+ */
+void waitq_enqueue_for(struct waitq *q, uint64_t u_ms);
+
+/*
  * given back by a thread on its very first run, because it starts
  * holding a lock whose release is on a stack it will never return to
  */

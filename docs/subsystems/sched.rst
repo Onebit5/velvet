@@ -119,6 +119,7 @@ locks of *lower* rank. it is checked, not hoped for.
 
     LOCK_RANK_FIFO      the fifos open, held to find or make one's pipe
     LOCK_RANK_PIPE      a pipe wakes threads and calls nothing below it
+    LOCK_RANK_FUTEX     a futex's waiters, which read the word they wait on
     LOCK_RANK_MOUNT     the mount table, held to look a name up
     LOCK_RANK_TTY       a terminal, which takes keys out of input
     LOCK_RANK_MM        a program's memory, which a fault takes
@@ -296,6 +297,28 @@ of its own, ctrl+c and a pipe with no reader among them, and those go
 wherever they are due; the rule is about one program reaching another.
 a guest able to stop root's programs, init among them, would be a guest
 able to stop the machine.
+
+futexes
+~~~~~~~
+
+a lock in ring 3 is a word in the program's memory, which the program's
+own atomic instructions take and give back, and a futex is the call for
+when the word says somebody has to wait. a mutex nobody else wants never
+makes a call at all. so the kernel keeps no futexes, only the waiting:
+each waiter on its own stack for as long as it waits, filed under the
+word, which is named by the address space it is in and its address.
+every page here is a process's own, its threads' or a fork's copy of it,
+so the same address in two spaces is two words.
+
+the one thing a futex has to get right is a wake that comes between a
+waiter reading the word and going to sleep. a waiter holds the futex lock
+from reading the word to being filed under it, and a waker takes it
+after changing the word, so the wake finds the waiter filed, or the
+waiter finds the word changed and does not wait. a waiter is woken by a
+wake, by its time limit, by a signal, or for nothing at all, which every
+caller of a futex allows. a thread's end clears the word
+``set_tid_address`` or ``CLONE_CHILD_CLEARTID`` named and wakes one
+waiter on it, which is how a thread is joined.
 
 a job is a process group, and a shell makes one with ``setpgid``: itself
 or a child of its own, into a group named after it or one that already

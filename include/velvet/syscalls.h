@@ -154,6 +154,8 @@ int64_t sys_prctl(int i_option, uint64_t u_arg2, uint64_t u_arg3,
                   uint64_t u_arg4, uint64_t u_arg5);
 int64_t sys_sched_yield(void);
 int64_t sys_set_robust_list(uint64_t u_head, uint64_t u_len);
+int64_t sys_futex(uint64_t u_addr, int i_op, uint32_t u_val,
+                  uint64_t u_timeout, uint64_t u_addr2, uint32_t u_val3);
 
 /* sched/sigcall.c */
 int64_t sys_rt_sigaction(int i_sig, uint64_t u_act, uint64_t u_old,
