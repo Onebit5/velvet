@@ -451,7 +451,9 @@ static void fork_child_start(void *arg)
  * a new process, a copy of the caller in everything a process holds:
  * its group and session, where it stands, its signal actions and mask,
  * every descriptor pointing at the same file, and its memory, copied as
- * it is written. the child's pid, or why not
+ * it is written, or with CLONE_VM, not copied at all but shared, the
+ * child holding a use of its parent's space until it runs a program of
+ * its own or ends. the child's pid, or why not
  */
 static int64_t copy_process(struct pt_regs *p_regs, uint64_t u_flags,
                             uint64_t u_stack, uint64_t u_parent_tid,
@@ -499,8 +501,10 @@ static int64_t copy_process(struct pt_regs *p_regs, uint64_t u_flags,
         return -EFAULT;
     }
 
-    struct addrspace *p_space = addrspace_fork(p_me->space,
-                                               vmm_kernel_pml4());
+    struct addrspace *p_space = (u_flags & CLONE_VM)
+                                ? addrspace_get(p_me->space)
+                                : addrspace_fork(p_me->space,
+                                                 vmm_kernel_pml4());
     if (p_space == NULL) {
         kfree(p_start);
         process_exited(i_pid, PROCESS_KILLED, pit_uptime_ms());
@@ -559,9 +563,12 @@ static int64_t copy_process(struct pt_regs *p_regs, uint64_t u_flags,
 
     /*
      * a vfork's parent waits for the child to be done with the program
-     * they started as, by running another or by ending. the memory is
-     * the child's own copy all the same, so this is only the order
-     * things happen in, which is what a program calling vfork counts on
+     * they started as, by running another or by ending. with CLONE_VM,
+     * which is how posix_spawn makes its child, that program is in the
+     * parent's own memory, and the wait is what keeps the two from
+     * running in it at once; without, the memory is the child's own
+     * copy, and the wait is only the order things happen in, which is
+     * what a program calling vfork counts on
      */
     while (process_vforking(i_pid) && !process_doomed(p_me->i_tid)) {
         sleep_ms(1);
@@ -641,10 +648,12 @@ static int64_t do_vfork(struct pt_regs *p_regs)
 
 /*
  * clone: a thread, sharing all of what its process has, which is what
- * every thread library asks for, or a process of its own, which shares
- * none of it and tells its parent with SIGCHLD when it ends. sharing
- * some of it and not the rest is neither, and is not offered. a thread
- * tells nobody it ended but whoever waits on the word it clears, so the
+ * every thread library asks for, or a process of its own, which tells
+ * its parent with SIGCHLD when it ends and shares none of it but, with
+ * CLONE_VM, the memory, which posix_spawn's child runs in until it
+ * execs. sharing the files, where it stands or the signal actions
+ * without being a thread is neither, and is not offered. a thread tells
+ * nobody it ended but whoever waits on the word it clears, so the
  * signal its flags name is not looked at
  */
 static int64_t do_clone(struct pt_regs *p_regs)
@@ -660,7 +669,8 @@ static int64_t do_clone(struct pt_regs *p_regs)
         }
         return copy_thread(p_regs, u_flags, A1, A2, A3, A4);
     }
-    if ((u_flags & CLONE_SHARING) != 0 || (u_flags & CSIGNAL) != SIGCHLD) {
+    if ((u_flags & CLONE_SHARING & ~CLONE_VM) != 0
+        || (u_flags & CSIGNAL) != SIGCHLD) {
         return -EINVAL;
     }
     return copy_process(p_regs, u_flags, A1, A2, A3, A4);

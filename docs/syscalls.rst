@@ -291,8 +291,9 @@ these answer, but less than they will:
 - clone makes a thread, sharing everything its process has, or a process
   sharing nothing, and nothing between: a thread is ``CLONE_THREAD`` with
   all of ``CLONE_VM``, ``CLONE_FS``, ``CLONE_FILES`` and
-  ``CLONE_SIGHAND``, and a process takes none of those and ``SIGCHLD``
-  for its signal. ``CLONE_VFORK``, ``CLONE_SETTLS``,
+  ``CLONE_SIGHAND``, and a process takes none of those but ``CLONE_VM``,
+  which is posix_spawn's child running in its parent's memory until it
+  execs, and ``SIGCHLD`` for its signal. ``CLONE_VFORK``, ``CLONE_SETTLS``,
   ``CLONE_PARENT_SETTID``, ``CLONE_CHILD_SETTID`` and
   ``CLONE_CHILD_CLEARTID`` work, and ``CLONE_SYSVSEM`` and
   ``CLONE_DETACHED`` are taken and mean nothing.

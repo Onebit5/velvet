@@ -186,9 +186,12 @@ out of the same count, so a tid is never somebody else's pid, and
 the sharing at once, ``CLONE_VM``, ``CLONE_FS``, ``CLONE_FILES`` and
 ``CLONE_SIGHAND``, with ``CLONE_THREAD``. the new thread holds a use of
 the space, starts on the stack it was given with the tls it was given,
-and has its maker's mask. a process that shares some of another's and
-not the rest is neither a thread nor a process here, and is
-``-EINVAL``.
+and has its maker's mask. a process may share one thing with its
+parent, its memory, with ``CLONE_VM``: posix_spawn's child, which runs
+in its parent's memory with the parent waiting, ``CLONE_VFORK``, until
+it runs its program and has a space of its own. a process that shares
+anything else of another's is neither a thread nor a process here, and
+is ``-EINVAL``.
 
 a thread ends with ``exit``, and its process with its last thread. the
 status a process ends with is its first thread's, unless the process
