@@ -54,12 +54,12 @@ the failing case. all of them:
    the allocators and the page tables, including draining ram dry, every
    frame handed out exactly once, and a leak-free teardown.
 
-``locks``, ``switch``, ``process``, ``signal``, ``init``
+``locks``, ``switch``, ``process``, ``signal``, ``futex``, ``init``
    eight real threads through the real allocators at once; a real context
-   switch in userspace; pids, zombies, file descriptors and a kill that
-   races; signals; and what init decides about a service that keeps
-   dying. the system calls themselves are checked from where a program
-   makes them, by the selftests below.
+   switch in userspace; pids, threads, zombies, file descriptors and a
+   kill that races; signals; who a futex's wake reaches; and what init
+   decides about a service that keeps dying. the system calls themselves
+   are checked from where a program makes them, by the selftests below.
 
 ``gdt``, ``rtc``, ``acpi``, ``pci``, ``console``, ``keyboard``, ``serial``, ``mouse``, ``ksyms``, ``epoch``
    the x86 structures and the drivers, fed fabricated input. a machine's
@@ -93,6 +93,14 @@ implementation exists, the project tests against that instead:
    break a filesystem on purpose and demand this project's fsck finds it;
    then read the repaired image back with ``tools/readext4.py``, which
    shares no line with the checker.
+
+``sched/futex``, ``sched/pthread``, ``sched/spawn``
+   three of the selftests, the static programs below, run on the machine
+   the build is on as well as on this kernel. they are written to say the
+   same on any kernel with this one's interface: futexes, a libc's
+   threads and posix_spawn, made by a libc that has never heard of this
+   kernel. the kernel the build runs on is the other implementation, and
+   a test it passes and this one fails is this one wrong.
 
 the static checks
 ~~~~~~~~~~~~~~~~~
