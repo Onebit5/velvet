@@ -49,26 +49,16 @@ to programs by people who have never heard of this kernel, and since
 program and libc already makes, numbered and shaped the way they expect,
 the signals and the frame a handler is entered on, errno, the stack exec
 leaves, and floating point in ring 3, since 0.4.6 a root of its own to
-mount things under and the drives and the network a client, an
-installer and a checker need, and since 0.4.7 terminals the way such a
-program asks for them, a pty among them, and fifos. what is left of the
-series is the rest of what such a program takes for granted: threads, a
-`/proc`, a loader, and at the end somebody else's programs run
-unmodified. the reason is the one every checker in this project rests
-on, an outside answer: the same static binary run on both machines
-says, call by call, where this kernel differs.
-
-**0.4.8 threads the way linux makes them.** `clone`, with the flags a
-pthread library passes (one address space, one descriptor table, one set
-of signal dispositions, a new stack), and `futex`, which is the whole of
-every lock a libc builds: a mutex is a word in memory and a call for when
-the word says wait. 0.4.5's `clone` makes processes and nothing else,
-which is enough for `fork` and `vfork` and not for `posix_spawn`, which
-musl builds on a child sharing its parent's memory until it execs. 0.2.x
-gave the kernel threads, and this hands them to ring 3; 0.2.1's locks are
-the warning about what sharing costs, and the locks suite is the way to
-find out. *ends when a program built against musl's pthreads on linux
-runs its threads here and agrees with itself on both machines.*
+mount things under and the drives and the network a client, an installer
+and a checker need, since 0.4.7 terminals the way such a program asks
+for them, a pty among them, and fifos, and since 0.4.8 threads, made the
+way a thread library makes them and waiting on futexes, and a child
+posix_spawn makes in its parent's memory. what is left of the series is
+the rest of what such a program takes for granted: a `/proc`, a loader,
+and at the end somebody else's programs run unmodified. the reason is
+the one every checker in this project rests on, an outside answer: the
+same static binary run on both machines says, call by call, where this
+kernel differs.
 
 **0.4.9 `/proc`, laid out the way linux lays it out.** 0.4.1's `/proc` is
 the kernel's own reports, in the words its shell printed them, which is

@@ -15,6 +15,48 @@ a kernel that booted.
 
 ---
 
+- **0.4.8**: threads the way a thread library makes them. **clone makes
+  threads.** a process has as many threads as a program makes, and they
+  are all of it at once: one address space, one table of descriptors,
+  one place to stand, one set of signal actions. `clone` makes one with
+  `CLONE_THREAD` and all of `CLONE_VM`, `CLONE_FS`, `CLONE_FILES` and
+  `CLONE_SIGHAND`, the flags every thread library passes, with a tid of
+  its own out of the pids' count, on the stack and with the tls it was
+  given. what a thread has of its own is its registers, its tid, its
+  mask, the signals raised at it alone, a fault's and `tkill`'s, and its
+  alternate stack, and a signal raised at its process goes to a thread
+  that does not block it. a process ends with its last thread, and
+  `exit_group`, which every libc's `exit` is, and a signal whose default
+  ends a process end every thread of it, each doomed and ended on its
+  way back to ring 3. `exec` from any thread leaves that thread the only
+  one, with the pid for its tid, and a fork from any thread is a process
+  of one. `posix_spawn`'s child, `CLONE_VM` and `CLONE_VFORK`, runs in
+  its parent's memory with the parent waiting until it runs its program.
+
+  **futex.** every lock a libc builds is a word in memory and a call for
+  when the word says wait, and this is the call: waits and wakes, with a
+  bitset and without, and the requeues a condition variable hands its
+  waiters to its mutex with. a wait ends with a wake, its time limit or
+  a signal, and a thread's end clears the word `CLONE_CHILD_CLEARTID`
+  named and wakes its waiter, which is how a thread is joined.
+
+  **a space more than one thread shares.** an address space has a lock
+  and a use for each thread in it. a fault is decided by what the table
+  says now, so a fault on a page another thread made meanwhile is the
+  access made again; a frame taken out of a space is given back only once
+  no core can still be translating to it; and a change that takes a
+  right away does not return until no core holds the translation that
+  allowed it. only a core with the space loaded is told, so a program of
+  one thread never interrupts another core. a shootdown is a numbered
+  round now, and a core spinning with interrupts off answers one as it
+  spins: two cores shooting down at once used to wait each other out to
+  the end of the bound, which a process's threads on several cores would
+  have made happen all the time.
+
+  the selftests for these are programs written against musl's pthreads,
+  futexes and `posix_spawn`, and `make test` runs them on the machine
+  the build is on as well, where they say the same.
+
 - **0.4.7**: a terminal, the way programs ask for one. **a pty.** every
   terminal here had a keyboard behind it. a pty has a program there
   instead, and it is what `script`, a terminal emulator and a multiplexer

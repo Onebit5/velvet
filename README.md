@@ -9,11 +9,11 @@ than to be the next linux. small enough to fit in one head.
 
 it speaks linux's interface to programs, all the same: since 0.4.5 its system calls,
 its signals and the layouts it hands back are the ones a static program built for linux
-on x86_64 already expects, and since 0.4.7 its terminals answer the way they expect too.
-not linux's insides: no modules, no driver api. what is left, threads, a `/proc` laid out
-the way programs read it, a loader and somebody else's programs running unmodified, is
-the rest of the 0.4.x series of [ROADMAP.md](ROADMAP.md), and the non-goals are at the
-top of it.
+on x86_64 already expects, since 0.4.7 its terminals answer the way they expect too, and
+since 0.4.8 a program's threads are the ones its thread library makes. not linux's
+insides: no modules, no driver api. what is left, a `/proc` laid out the way programs
+read it, a loader and somebody else's programs running unmodified, is the rest of the
+0.4.x series of [ROADMAP.md](ROADMAP.md), and the non-goals are at the top of it.
 
 it is a kernel and nothing more: what runs in ring 0. the loader that runs before it is
 [philemon](https://github.com/Onebit5/philemon), a project of his own, and the programs, a

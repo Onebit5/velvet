@@ -151,9 +151,9 @@ under, and it takes nothing itself but the memory under it.
 processes
 ---------
 
-a process is a program someone started, and it **outlives the thread that
+a process is a program someone started, and it **outlives the threads that
 ran it**. that outliving is the entire point: a thread is reaped the moment
-it dies, so if the exit code lived on the thread there would be nothing left
+it dies, so if the exit code lived on a thread there would be nothing left
 to read it from by the time a parent asked. so the code, the name and the
 parentage live in a process slot that stays occupied until somebody collects
 it. that is a zombie.
@@ -451,10 +451,10 @@ syscall interface itself is documented in `the system calls
 the process interface
 ---------------------
 
-a process is a program someone started, and it outlives the thread that ran
-it. it owns the descriptors, the working directory and the signal state,
+a process is a program someone started, and it outlives the threads that ran
+it. it owns the descriptors, the working directory and the signal actions,
 which is what makes ``&`` and ``cd`` mean anything: each of those belongs
-to the process rather than to the thread or to the program.
+to the process rather than to a thread or to the program.
 
 what follows is what each call takes and gives back, and what each field of
 the table means.

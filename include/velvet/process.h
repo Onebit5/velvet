@@ -241,7 +241,7 @@ void process_account(int i_pid, uint64_t u_ticks);
 
 /*
  * an ended process nobody will wait for, its parent ignoring SIGCHLD,
- * taken off the table once its thread is gone. any other is left for
+ * taken off the table once its threads are gone. any other is left for
  * its parent
  */
 void process_forget(int i_pid);
