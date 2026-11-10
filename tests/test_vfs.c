@@ -118,23 +118,33 @@ uint32_t proc_mode(size_t sz_index)
     return (sz_index == 0) ? 0444 : (sz_index == 1) ? 0400 : 0;
 }
 
-int64_t proc_read(size_t sz_index, uint64_t u_offset, void *p_buf,
-                  uint64_t u_len)
+/* an open file of /proc is /proc's own, and here it is the one file */
+#include <velvet/file.h>
+static int64_t version_read(struct file *p_file, void *p_buf, size_t sz_len)
 {
     const char *str_text = "velvet version 0\n";
     uint64_t u_size = strlen(str_text);
 
-    if (sz_index != 0) {
-        return -1;
-    }
-    if (u_offset >= u_size) {
+    if (p_file->u_pos >= u_size) {
         return 0;
     }
-    if (u_len > u_size - u_offset) {
-        u_len = u_size - u_offset;
+    if (sz_len > u_size - p_file->u_pos) {
+        sz_len = u_size - p_file->u_pos;
     }
-    memcpy(p_buf, str_text + u_offset, u_len);
-    return (int64_t)u_len;
+    memcpy(p_buf, str_text + p_file->u_pos, sz_len);
+    p_file->u_pos += sz_len;
+    return (int64_t)sz_len;
+}
+
+static const struct file_operations s_version_ops = {
+    .read = version_read,
+};
+
+struct file *proc_open(size_t sz_index, uint32_t u_mode)
+{
+    return (sz_index == 0) ? file_alloc(&s_version_ops, u_mode,
+                                        FILE_TYPE_REGULAR)
+                           : NULL;
 }
 
 bool disk_ready(size_t which)
@@ -590,11 +600,16 @@ int main(void)
     CHECK(vfs_may_read(&f, 1000), "including a guest");
     {
         char arr_text[32];
-        int64_t i_got = vfs_read(&f, 0, arr_text, sizeof arr_text);
+        struct file *p_proc = vfs_open_file(&f, FILE_READ);
+        int64_t i_got = (p_proc != NULL)
+                        ? p_proc->p_ops->read(p_proc, arr_text,
+                                              sizeof arr_text) : -1;
         CHECK(i_got == 17 && memcmp(arr_text, "velvet version 0\n", 17) == 0,
-              "and reading it reads what /proc writes");
-        CHECK(vfs_read(&f, 17, arr_text, sizeof arr_text) == 0,
+              "and opening it opens what /proc says it is");
+        CHECK(p_proc != NULL
+              && p_proc->p_ops->read(p_proc, arr_text, sizeof arr_text) == 0,
               "to the end and no further");
+        file_put(p_proc);
     }
     CHECK(!vfs_open("/proc/nothing", &f), "a name /proc does not have");
     CHECK(!vfs_open("/processes", &f), "and /processes is not /proc");
@@ -954,8 +969,8 @@ int main(void)
 
         CHECK(vfs_open("/proc/version", &f)
               && (p_file = vfs_open_file(&f, FILE_READ)) != NULL
-              && p_file->p_ops->seek(p_file, 0, SEEK_SET) == -ESPIPE,
-              "a /proc file, which has no size, has no position to move");
+              && p_file->p_ops == &s_version_ops,
+              "a /proc file opens as /proc's own, not as a node's");
         file_put(p_file);
     }
 

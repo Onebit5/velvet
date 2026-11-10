@@ -72,7 +72,7 @@ int main(void)
     char arr_bits[TEXT_MAX];
 
     ksft_print_header();
-    ksft_set_plan(7);
+    ksft_set_plan(10);
 
     int64_t i_len = slurp("/proc/version", arr_whole, TEXT_MAX, TEXT_MAX);
     ksft_test_result(i_len > 15
@@ -85,6 +85,20 @@ int main(void)
     ksft_test_result(i_bits == i_len
                      && memcmp(arr_whole, arr_bits, (size_t)i_len) == 0,
                      "three bytes at a time, it is the same file\n");
+
+    int i_fd = open("/proc/version", O_RDONLY);
+    char arr_again[TEXT_MAX];
+    ssize_t i_first = read(i_fd, arr_bits, TEXT_MAX);
+    ksft_test_result(i_first == i_len && lseek(i_fd, 0, SEEK_SET) == 0
+                     && read(i_fd, arr_again, TEXT_MAX) == i_len
+                     && memcmp(arr_again, arr_whole, (size_t)i_len) == 0,
+                     "seeking back to the start reads it again\n");
+    ksft_test_result(lseek(i_fd, 0, SEEK_END) == -1 && errno == EINVAL,
+                     "but there is no end to seek from\n");
+    ksft_test_result(pread(i_fd, arr_again, 5, 8) == 5
+                     && memcmp(arr_again, arr_whole + 8, 5) == 0,
+                     "and a read at an offset reads from there\n");
+    close(i_fd);
 
     i_len = slurp("/proc/uptime", arr_whole, TEXT_MAX, TEXT_MAX);
     ksft_test_result(looks_like_uptime(arr_whole, i_len),

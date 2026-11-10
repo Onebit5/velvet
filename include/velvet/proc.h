@@ -48,13 +48,16 @@ const char *proc_name(size_t sz_index);
  */
 int64_t proc_render(size_t sz_index, char *str_buf, size_t sz_size);
 
+struct file;
+
 /*
- * `u_len` bytes of the file from `u_offset`, written afresh for this read:
- * fewer at the end, 0 past it, -1 for no such file or no memory to write
- * it in
+ * the file at `sz_index` opened for reading, with one reference: NULL for
+ * no such file or no memory. a read from the start writes its text and
+ * the reads after it are of that text, so one open read in pieces is one
+ * moment's answer; a read from the start again asks again. it seeks from
+ * the start or from where it is, and never from the end
  */
-int64_t proc_read(size_t sz_index, uint64_t u_offset, void *p_buf,
-                  uint64_t u_len);
+struct file *proc_open(size_t sz_index, uint32_t u_mode);
 
 /*
  * the files /proc has of its own: the version, the uptime, and cpuinfo,

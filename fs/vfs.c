@@ -804,9 +804,6 @@ int64_t vfs_read(const struct vfs_file *f, uint64_t offset, void *buf,
     if (f->is_dir) {
         return -1;
     }
-    if (f->kind == VFS_PROC) {
-        return proc_read(f->sz_proc, offset, buf, len);
-    }
     /* a file in memory knows its own size, whoever else has it open */
     if (f->kind == VFS_RAMFS) {
         return ramfs_read(f->u_ino, offset, buf, len);
@@ -1306,9 +1303,9 @@ int64_t vfs_mount_remove(const char *str_at, enum vfs_kind *p_kind,
 }
 
 /*
- * a file on a disk, in memory or in /proc. vfs_read and vfs_write
- * already know which of those the node is, so one set of operations
- * serves all three, and the position is the one thing added here.
+ * a file on a disk or in memory. vfs_read and vfs_write already know
+ * which of those the node is, so one set of operations serves both, and
+ * the position is the one thing added here.
  *
  * TODO: two processes sharing one file after a fork, reading it at once
  * on two cores, both start from the same position: nothing holds it for
@@ -1355,15 +1352,10 @@ static int64_t node_write(struct file *p_file, const void *p_buf,
 
 /*
  * anywhere from the start on, the end and past it included: a write out
- * there makes the gap. /proc's files are written afresh on every read
- * and have no size to measure the end by, so they are read from the
- * start or not at all
+ * there makes the gap
  */
 static int64_t node_seek(struct file *p_file, int64_t i_offset, int i_whence)
 {
-    if (p_file->node.kind == VFS_PROC) {
-        return -ESPIPE;
-    }
     vfs_refresh(&p_file->node);
     int64_t i_from = (i_whence == SEEK_SET) ? 0
                    : (i_whence == SEEK_CUR) ? (int64_t)p_file->u_pos
@@ -1426,6 +1418,9 @@ struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode)
 {
     if (p_node->kind == VFS_DEV && !p_node->is_dir) {
         return dev_open(p_node->sz_dev, u_mode);
+    }
+    if (p_node->kind == VFS_PROC && !p_node->is_dir) {
+        return proc_open(p_node->sz_proc, u_mode);
     }
     /*
      * a node naming a device by its number opens that device, wherever

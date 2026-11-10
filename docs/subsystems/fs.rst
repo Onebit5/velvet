@@ -98,16 +98,18 @@ program in the same words, by registering one name:
 
    proc_register("version", PROC_PUBLIC, show_version);
 
-nothing is kept between reads. every read writes the file again, which is
-why a file here says it is 0 bytes long and is read to its end like any
-other, and why two reads a second apart may disagree: they are two answers
-to the same question. a descriptor on one remembers only which file and how
-far along, so a reader taking it in pieces sees one file as long as nothing
-in it changed in between, and a fork or a close has nothing to free. a
-file is registered as ``PROC_PUBLIC``, for anyone to read, or
-``PROC_PRIVATE``, for root alone, which is what a file that says where the
-kernel keeps things is: an address of the kernel's is no business of a
-guest's.
+nothing is kept but by an open file. a read from the start writes the
+file again, and the open keeps that text for the reads after it, so a
+reader taking a file in pieces reads one answer, never the ends of
+several, and two opens a second apart may disagree: they are two answers
+to the same question. a file here says it is 0 bytes long and is read to
+its end like any other. it seeks from the start or from where it is, a
+read from the start being the question asked again, and never from the
+end, since there is none until the next read from the start says where
+it is; the text goes with the last close. a file is registered as
+``PROC_PUBLIC``, for anyone to read, or ``PROC_PRIVATE``, for root alone,
+which is what a file that says where the kernel keeps things is: an
+address of the kernel's is no business of a guest's.
 
 ``/proc`` has ``version``, which kernel this is, the compiler that made it
 and when, on one line, and ``uptime``, seconds since boot to the
@@ -406,8 +408,9 @@ what its parent wrote. the file goes when the last descriptor on it, in
 any process, closes, and not before.
 
 what can be done to a file is in its ``struct file_operations``, filled in
-by whoever opened it: ``vfs_open_file`` for a file on a disk, in memory
-or in /proc, ``blockdev_open`` for a drive, ``pipe_open`` for a pipe's
+by whoever opened it: ``vfs_open_file`` for a file on a disk or in
+memory, ``proc_open`` for one in /proc, ``blockdev_open`` for a drive,
+``pipe_open`` for a pipe's
 two ends, and the console's own in
 ``tty.c``. each takes the kernel's memory, never ring 3's, and answers with
 a count or minus an errno.
