@@ -790,6 +790,45 @@ int main(void)
         process_collect(i_lead, NULL);
     }
 
+    /*
+     * the time a process's ended threads ran, each told as it went, and
+     * what its collected children ran, theirs included
+     */
+    {
+        int i_mom = process_create("mom", 0, 0, false, 0);
+        int i_kid = process_create("kid", i_mom, 0, false, 0);
+        int i_tid = process_add_thread(i_kid);
+        int i_grandkid = process_create("grandkid", i_kid, 0, false, 0);
+
+        struct cpu_usage ended = { 3, 1, 5, 2 };
+        struct cpu_usage children;
+        process_account(i_kid, &ended);
+        process_account(i_kid, &ended);
+        struct cpu_usage used = process_ended_usage(i_kid, &children);
+        CHECK(used.u_user == 6 && used.u_system == 2 && used.u_waited == 10
+              && used.u_preempted == 4
+              && children.u_user == 0 && children.u_system == 0,
+              "a process's ended threads' time adds up, each kind apart");
+
+        struct cpu_usage little = { 1, 1, 1, 1 };
+        process_account(i_grandkid, &little);
+        process_exited(i_grandkid, 0, 0);
+        process_collect(i_grandkid, NULL);
+        process_thread_ended(i_tid, 0, 0);
+        process_thread_ended(i_kid, 0, 0);
+        process_collect(i_kid, NULL);
+        used = process_ended_usage(i_mom, &children);
+        CHECK(used.u_user == 0 && children.u_user == 7
+              && children.u_system == 3 && children.u_waited == 11
+              && children.u_preempted == 5,
+              "once collected, its parent's children's, with its own");
+        used = process_ended_usage(i_kid, &children);
+        CHECK(used.u_user == 0 && children.u_user == 0,
+              "a pid nobody has has run for nothing");
+        process_exited(i_mom, 0, 0);
+        process_collect(i_mom, NULL);
+    }
+
     if (!failures) printf("all good\n");
     return failures;
 }

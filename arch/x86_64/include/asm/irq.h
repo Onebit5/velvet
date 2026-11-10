@@ -9,6 +9,7 @@
 #ifndef ARCH_X86_64_ASM_IRQ_H
 #define ARCH_X86_64_ASM_IRQ_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include <velvet/compiler.h>
@@ -27,8 +28,18 @@ ARCH_INLINE void irq_install(uint8_t line, void (*handler)(void))
 {
     (void)line; (void)handler;
 }
+ARCH_INLINE bool irq_from_user(void)
+{
+    return false;
+}
 #else
 void irq_install(uint8_t line, void (*handler)(void));
+
+/*
+ * whether the interrupt this core is handling arrived in ring 3, for a
+ * handler that is not handed the frame and has to charge it to somebody
+ */
+bool irq_from_user(void);
 #endif
 
 #ifdef VELVET_HOSTED

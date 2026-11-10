@@ -646,14 +646,27 @@ void process_exited(int pid, int code, uint64_t now_ms)
     }
 }
 
-void process_account(int i_pid, uint64_t u_ticks)
+void process_account(int i_pid, const struct cpu_usage *p_used)
 {
     uint64_t u_flags = spin_lock_irq(&process_lock);
     struct process *p = slot_for(i_pid);
     if (p != NULL) {
-        p->u_ticks += u_ticks;
+        cpu_usage_add(&p->used, p_used);
     }
     spin_unlock_irq(&process_lock, u_flags);
+}
+
+struct cpu_usage process_ended_usage(int i_pid, struct cpu_usage *p_children)
+{
+    struct cpu_usage none = { 0 };
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    const struct process *p = slot_for(i_pid);
+    struct cpu_usage used = (p != NULL) ? p->used : none;
+    if (p_children != NULL) {
+        *p_children = (p != NULL) ? p->children : none;
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    return used;
 }
 
 bool process_collect(int pid, int *code)
@@ -669,7 +682,8 @@ bool process_collect(int pid, int *code)
         /* what it and its own children ran for, the parent's children's now */
         struct process *p_parent = slot_for(p->parent);
         if (p_parent != NULL) {
-            p_parent->u_child_ticks += p->u_ticks + p->u_child_ticks;
+            cpu_usage_add(&p_parent->children, &p->used);
+            cpu_usage_add(&p_parent->children, &p->children);
         }
         p->pid = 0;         /* the slot is free again */
         collected = true;

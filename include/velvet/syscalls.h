@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <uapi/velvet/resource.h>
 
 /*
  * each takes what the program passed, a pointer as the address ring 3
@@ -136,6 +137,9 @@ int64_t sys_prlimit64(int i_pid, int i_resource, uint64_t u_new,
 int64_t sys_getrlimit(int i_resource, uint64_t u_limit);
 int64_t sys_setrlimit(int i_resource, uint64_t u_limit);
 int64_t sys_getrusage(int i_who, uint64_t u_usage);
+
+/* ticks as the seconds and microseconds getrusage and wait4 tell them in */
+struct rusage_time rusage_time_of(uint64_t u_ticks);
 int64_t sys_times(uint64_t u_buf);
 int64_t sys_reboot(uint32_t u_magic1, uint32_t u_magic2, uint32_t u_cmd,
                    uint64_t u_arg);

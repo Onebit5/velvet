@@ -93,18 +93,16 @@ int64_t sys_wait4(int i_pid, uint64_t u_status, int i_options,
             return i_who;
         }
         if (i_who > 0) {
-            /*
-             * what it ran for, and the children it collected, all of it
-             * told as user time, the two never being told apart
-             */
+            /* what it ran for, and the children it collected */
             struct rusage usage;
             memset(&usage, 0, sizeof usage);
-            const struct process *p_child = process_find(i_who);
-            uint64_t u_ms = (p_child == NULL) ? 0
-                : (p_child->u_ticks + p_child->u_child_ticks)
-                  * (1000 / CLOCK_TICK_HZ);
-            usage.ru_utime.tv_sec = (int64_t)(u_ms / 1000);
-            usage.ru_utime.tv_usec = (int64_t)(u_ms % 1000) * 1000;
+            struct cpu_usage children;
+            struct cpu_usage used = sched_process_usage(i_who, &children);
+            cpu_usage_add(&used, &children);
+            usage.ru_utime = rusage_time_of(used.u_user);
+            usage.ru_stime = rusage_time_of(used.u_system);
+            usage.ru_nvcsw = (int64_t)used.u_waited;
+            usage.ru_nivcsw = (int64_t)used.u_preempted;
             if ((u_status != 0 && put_user_i32(u_status, i_status) != 0)
                 || (u_rusage != 0
                     && copy_to_user(u_rusage, &usage, sizeof usage) != 0)) {

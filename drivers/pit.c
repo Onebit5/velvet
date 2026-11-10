@@ -12,6 +12,7 @@
 #include <asm/cpu.h>
 #include <asm/pic.h>
 #include <asm/interrupts.h>
+#include <asm/irq.h>
 #include <velvet/sched.h>
 
 #define PIT_CH0  0x40
@@ -33,7 +34,7 @@
 
 static volatile uint64_t ticks;
 
-void pit_tick(void)
+void pit_tick(bool b_user)
 {
     /*
      * every core has its own timer and every one of them arrives here,
@@ -52,12 +53,12 @@ void pit_tick(void)
      * the scheduler, though, is every core's business: this is the
      * interrupt that tells whichever thread is here that its turn is up
      */
-    sched_tick();
+    sched_tick(b_user);
 }
 
 static void pit_irq(void)
 {
-    pit_tick();
+    pit_tick(irq_from_user());
 }
 
 void pit_stop(void)

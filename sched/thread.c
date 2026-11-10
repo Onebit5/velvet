@@ -126,7 +126,7 @@ static struct thread *create(const char *name, void (*entry)(void *),
     t->state       = parked ? THREAD_BLOCKED : THREAD_READY;
     t->on_cpu      = -1;    /* ready is not the same as running */
     t->wake_at     = 0;
-    t->cpu_ticks   = 0;
+    t->cpu         = (struct cpu_usage){ 0 };
     t->entry       = entry;
     t->arg         = arg;
     t->id          = next_id++;
@@ -195,7 +195,7 @@ void thread_exit(int code)
      */
     bool narrate = true;
     if (me->pid != 0) {
-        process_account(me->pid, me->cpu_ticks);
+        sched_account(me);
         bool b_last = process_thread_ended(me->i_tid, code, pit_uptime_ms());
         narrate = b_last && process_announces(me->pid);
 

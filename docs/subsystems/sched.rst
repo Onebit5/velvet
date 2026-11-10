@@ -20,11 +20,18 @@ different questions, and squeezing both into one enum means a
 stopped-then-woken thread forgets it was stopped, which is a program that
 resumes itself the moment anybody types at it.
 
-``cpu_ticks`` counts the timer ticks a thread was running for. it is a
-*sampling* measure rather than a real accounting. a thread that always
-yields just before the tick looks free, but it is honest about being one,
-and it is what turns the scheduler from a claim into something you can
-watch (``top``).
+``cpu`` is what a thread has had of the cpus: the timer ticks it was
+running for, told apart by where each found it, in ring 3 or in the kernel
+on its behalf, which are its user time and its system time, and how often
+it left a cpu, to wait for something or because the cpu was taken from it.
+the ticks are a *sampling* measure rather than a real accounting. a thread
+that always yields just before the tick looks free, but it is honest about
+being one, it is how every unix has told user time from system time, and it
+is what turns the scheduler from a claim into something you can watch
+(``top``). a thread that ends hands what it had to its process under the
+scheduler's lock, the lock a reader adds the live threads' and the ended
+ones' up under, so ``getrusage``, ``times``, ``wait4`` and the cpu clocks
+count each tick once, and a process's never goes down.
 
 a thread carries the console it belongs to and the pid of the program it is
 running, if any. ``thread_create()`` builds one ready to go;
@@ -539,7 +546,15 @@ the table means.
     it finished. the slot stays occupied, holding the code, until somebody collects it
 
 ``bool process_collect(int pid, int *code);``
-    has it finished? if so, take the code and free the slot.
+    has it finished? if so, take the code and free the slot. what it had
+    of the cpus, and what its own children had, become its parent's
+    children's.
+
+``void process_account(int i_pid, const struct cpu_usage *p_used);``
+    what an ended thread had of the cpus, added to its process's.
+
+``struct cpu_usage process_ended_usage(i_pid, p_children);``
+    the ended threads' part of a process's usage, and its children's.
 
 ``size_t process_interrupt_all(void);``
     raise the interrupt flag on everything still running, and say how many that was.
@@ -738,8 +753,9 @@ ready, goes to sleep, or stops existing.
 ``uint64_t sched_quantum_ms(void);``
     how long a thread gets before it is interrupted, in milliseconds.
 
-``void sched_tick(void);``
-    called from the timer irq. counts down the quantum and preempts
+``void sched_tick(bool b_user);``
+    called from the timer irq, told whether it interrupted ring 3.
+    charges the tick, counts down the quantum and preempts
 
 ``void sched_add(struct thread *t);``
     drop a freshly built thread into the run queue.
@@ -784,6 +800,15 @@ ready, goes to sleep, or stops existing.
 
 ``bool sched_thread_alive(int id);``
     is there still a thread with this id that has not finished?
+
+``struct cpu_usage sched_process_usage(i_pid, p_children);``
+    what a process has had of the cpus, its live threads' and its ended
+    ones', and what the children it collected had: what ``getrusage``,
+    ``times``, ``wait4`` and the cpu clocks tell.
+
+``void sched_account(struct thread *t);``
+    an ending thread's usage handed to its process, under the lock a
+    reader adds the two up under.
 
 ``enum sched_kill_result sched_kill(int id);``
     mark a thread dead so the reaper collects it.
@@ -843,8 +868,10 @@ scheduler is built on rather than an implementation detail of it.
 ``bool     stopped;``
     suspended by ctrl+z, and not to be picked until somebody says otherwise.
 
-``uint64_t cpu_ticks;``
-    how many timer ticks this thread was the one running when the timer went off.
+``struct cpu_usage cpu;``
+    the timer ticks this thread was the one running when the timer went
+    off, in ring 3 and in the kernel, and the times it left a cpu to wait
+    or had it taken.
 
 ``unsigned console;``
     which screen this thread's output goes to, and which keyboard it may read.

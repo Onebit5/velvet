@@ -190,6 +190,16 @@ static bool is_idle(const struct thread *t)
     return false;
 }
 
+/*
+ * what a thread has had of the cpus, given to its process as it ends and
+ * cleared, under the lock, so the two are never both counted
+ */
+static void hand_over(struct thread *t)
+{
+    process_account(t->pid, &t->cpu);
+    t->cpu = (struct cpu_usage){ 0 };
+}
+
 /* next in the ring who wants a cpu. */
 static struct thread *pick_next(void)
 {
@@ -228,8 +238,15 @@ static void schedule(void)
         return;
     }
 
+    /*
+     * one still running when it goes had the cpu taken from it; any
+     * other gave it up, to wait for something
+     */
     if (prev != NULL && prev->state == THREAD_RUNNING) {
         prev->state = THREAD_READY;
+        prev->cpu.u_preempted++;
+    } else if (prev != NULL) {
+        prev->cpu.u_waited++;
     }
     next->state = THREAD_RUNNING;
     next->on_cpu = (int)cpu_id();
@@ -449,7 +466,7 @@ void sleep_ms(uint64_t ms)
     spin_unlock_irq(&sched_lock, flags);
 }
 
-void sched_tick(void)
+void sched_tick(bool b_user)
 {
     if (current == NULL) {
         return;     /* timer beat the scheduler to it, nothing to do yet */
@@ -458,9 +475,15 @@ void sched_tick(void)
     /* this walks the ring and may switch away, both of which are the lock's business. */
     uint64_t flags = spin_lock_irq(&sched_lock);
 
-    /* charge the tick to whoever was running when it arrived. */
-    current->cpu_ticks++;
-
+    /*
+     * charge the tick to whoever was running when it arrived, and to
+     * where it found them
+     */
+    if (b_user) {
+        current->cpu.u_user++;
+    } else {
+        current->cpu.u_system++;
+    }
     wake_sleepers();
 
     if (--ME->quantum_left <= 0) {
@@ -499,7 +522,8 @@ static void dump_one(struct thread *t)
 
     /* what share of the ticks so far went to this one. */
     uint64_t total = pit_ticks();
-    uint64_t pct = (total > 0) ? (t->cpu_ticks * 100) / total : 0;
+    uint64_t pct = (total > 0)
+                   ? ((t->cpu.u_user + t->cpu.u_system) * 100) / total : 0;
     kprintf("%3lu%% ", pct);
 
     if (t->pid != 0) {
@@ -634,7 +658,6 @@ enum sched_kill_result sched_kill(int id)
     enum sched_kill_result result = SCHED_KILL_NO_SUCH;
     int i_pid = 0;
     int i_tid = 0;
-    uint64_t u_ticks = 0;
 
     struct thread *t = current;
     do {
@@ -665,7 +688,7 @@ enum sched_kill_result sched_kill(int id)
                 }
                 i_pid = t->pid;
                 i_tid = t->i_tid;
-                u_ticks = t->cpu_ticks;
+                hand_over(t);
                 t->state = THREAD_DEAD;
                 result = SCHED_KILL_OK;
             }
@@ -683,7 +706,6 @@ enum sched_kill_result sched_kill(int id)
      * had not ended yet, so what it would have released is released here
      */
     if (i_pid != 0) {
-        process_account(i_pid, u_ticks);
         process_doom_others(i_tid, PROCESS_KILLED, false);
         process_thread_ended(i_tid, PROCESS_KILLED, pit_uptime_ms());
         process_fds_release(i_pid);
@@ -705,7 +727,7 @@ void sched_init(void)
     boot_thread.stack_pages = 0;
     boot_thread.next = &boot_thread;    /* a ring of one, for now */
     boot_thread.wait_next = NULL;
-    boot_thread.cpu_ticks = 0;
+    boot_thread.cpu = (struct cpu_usage){ 0 };
     boot_thread.from_heap = false;      /* it lives in .bss */
     context_init_thread(&boot_thread.arch);
 
@@ -759,6 +781,33 @@ bool sched_join(unsigned cpu, const char *idle_name)
 int sched_thread_cpu(const struct thread *t)
 {
     return t->on_cpu;
+}
+
+struct cpu_usage sched_process_usage(int i_pid, struct cpu_usage *p_children)
+{
+    /*
+     * the ended threads' are added under this lock too, the one a thread
+     * hands its own over under, so what a thread had is counted once:
+     * still its own, or already its process's
+     */
+    uint64_t u_flags = spin_lock_irq(&sched_lock);
+    struct cpu_usage sum = process_ended_usage(i_pid, p_children);
+    struct thread *t = current;
+    do {
+        if (t->pid == i_pid && t->state != THREAD_DEAD) {
+            cpu_usage_add(&sum, &t->cpu);
+        }
+        t = t->next;
+    } while (t != current);
+    spin_unlock_irq(&sched_lock, u_flags);
+    return sum;
+}
+
+void sched_account(struct thread *t)
+{
+    uint64_t u_flags = spin_lock_irq(&sched_lock);
+    hand_over(t);
+    spin_unlock_irq(&sched_lock, u_flags);
 }
 
 const char *sched_cpu_running(unsigned cpu)

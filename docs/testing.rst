@@ -94,13 +94,14 @@ implementation exists, the project tests against that instead:
    then read the repaired image back with ``tools/readext4.py``, which
    shares no line with the checker.
 
-``sched/futex``, ``sched/pthread``, ``sched/spawn``
-   three of the selftests, the static programs below, run on the machine
+``sched/futex``, ``sched/pthread``, ``sched/spawn``, ``sched/usage``
+   four of the selftests, the static programs below, run on the machine
    the build is on as well as on this kernel. they are written to say the
    same on any kernel with this one's interface: futexes, a libc's
-   threads and posix_spawn, made by a libc that has never heard of this
-   kernel. the kernel the build runs on is the other implementation, and
-   a test it passes and this one fails is this one wrong.
+   threads, posix_spawn and what a process has had of the cpus, asked
+   through a libc that has never heard of this kernel. the kernel the
+   build runs on is the other implementation, and a test it passes and
+   this one fails is this one wrong.
 
 the static checks
 ~~~~~~~~~~~~~~~~~

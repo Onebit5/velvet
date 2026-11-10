@@ -32,6 +32,30 @@ enum thread_state {
 
 struct kcapture;
 
+/*
+ * what something has had of the cpus: the ticks it ran for, by where
+ * each found it, in ring 3 or in the kernel on its behalf, and how often
+ * it left one, to wait for something or because it was taken from it. a
+ * tick is the timer's, so the time is sampled rather than measured, the
+ * way every unix has always told user time from system time
+ */
+struct cpu_usage {
+    uint64_t u_user;
+    uint64_t u_system;
+    uint64_t u_waited;
+    uint64_t u_preempted;
+};
+
+/* p_more added to p_to */
+static inline void cpu_usage_add(struct cpu_usage *p_to,
+                                 const struct cpu_usage *p_more)
+{
+    p_to->u_user += p_more->u_user;
+    p_to->u_system += p_more->u_system;
+    p_to->u_waited += p_more->u_waited;
+    p_to->u_preempted += p_more->u_preempted;
+}
+
 struct thread {
     uint64_t sp;
 
@@ -44,7 +68,7 @@ struct thread {
 
     uint64_t wake_at;           /* tick to wake on, when SLEEPING */
 
-    uint64_t cpu_ticks;
+    struct cpu_usage cpu;       /* what it has had of the cpus */
 
     void (*entry)(void *);
     void *arg;

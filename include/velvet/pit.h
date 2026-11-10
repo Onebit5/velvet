@@ -8,6 +8,7 @@
 #ifndef VELVET_PIT_H
 #define VELVET_PIT_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* the 8253/8254 programmable interval timer. */
@@ -35,7 +36,10 @@ void pit_poll_wait(uint64_t ms);
 /* stop the pit interrupting. */
 void pit_stop(void);
 
-/* the tick, from wherever it now comes. */
-void pit_tick(void);
+/*
+ * the tick, from wherever it now comes, and whether it interrupted ring
+ * 3 or the kernel
+ */
+void pit_tick(bool b_user);
 
 #endif

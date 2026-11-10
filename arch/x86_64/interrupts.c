@@ -6,6 +6,7 @@
  */
 
 #include <asm/interrupts.h>
+#include <asm/cpu.h>
 #include <asm/pic.h>
 #include <asm/acpi.h>
 #include <asm/lapic.h>
@@ -77,6 +78,14 @@ static void dump_frame(struct pt_regs *f)
 }
 
 static void (*irq_handlers[16])(void);
+
+/* whether the interrupt each core is handling found it in ring 3 */
+static bool s_arr_from_user[CPU_MAX];
+
+bool irq_from_user(void)
+{
+    return s_arr_from_user[cpu_id()];
+}
 
 /*
  * two separate questions, and conflating them is what broke the
@@ -200,7 +209,7 @@ static void interrupt_handle(struct pt_regs *f)
          * the same tick, arriving by a different road. everything above
          * counts in these, so the change must be invisible from there
          */
-        pit_tick();
+        pit_tick(user_mode(f));
         return;
     }
 
@@ -252,6 +261,7 @@ static void interrupt_handle(struct pt_regs *f)
             pic_send_eoi(irq);
         }
         if (irq_handlers[irq]) {
+            s_arr_from_user[cpu_id()] = user_mode(f);
             irq_handlers[irq]();
         } else {
             kprintf("irq %u fired with nobody listening\n", irq);

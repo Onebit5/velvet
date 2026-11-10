@@ -395,20 +395,7 @@ int64_t sys_setrlimit(int i_resource, uint64_t u_limit)
 
 #define MS_PER_TICK (1000 / CLOCK_TICK_HZ)
 
-/*
- * the ticks the caller's own thread has run, and the threads of its
- * process that have ended, and its collected children's
- */
-static void ticks_of(uint64_t *p_own, uint64_t *p_children)
-{
-    struct thread *p_me = sched_current();
-    const struct process *p = process_find(current_pid());
-    *p_own = ((p_me != NULL) ? p_me->cpu_ticks : 0)
-             + ((p != NULL) ? p->u_ticks : 0);
-    *p_children = (p != NULL) ? p->u_child_ticks : 0;
-}
-
-static struct rusage_time as_timeval(uint64_t u_ticks)
+struct rusage_time rusage_time_of(uint64_t u_ticks)
 {
     uint64_t u_ms = u_ticks * MS_PER_TICK;
     struct rusage_time tv = {
@@ -421,28 +408,36 @@ static struct rusage_time as_timeval(uint64_t u_ticks)
 int64_t sys_getrusage(int i_who, uint64_t u_usage)
 {
     struct rusage usage;
-    uint64_t u_own;
-    uint64_t u_children;
+    struct cpu_usage own;
+    struct cpu_usage children;
     if (i_who != RUSAGE_SELF && i_who != RUSAGE_CHILDREN
         && i_who != RUSAGE_THREAD) {
         return -EINVAL;
     }
-    ticks_of(&u_own, &u_children);
+    own = sched_process_usage(current_pid(), &children);
+    struct thread *p_me = sched_current();
+    const struct cpu_usage *p_used = (i_who == RUSAGE_CHILDREN) ? &children
+                                  : (i_who == RUSAGE_SELF) ? &own
+                                  : &p_me->cpu;
     memset(&usage, 0, sizeof usage);
-    usage.ru_utime = as_timeval((i_who == RUSAGE_CHILDREN) ? u_children
-                                                            : u_own);
+    usage.ru_utime = rusage_time_of(p_used->u_user);
+    usage.ru_stime = rusage_time_of(p_used->u_system);
+    usage.ru_nvcsw = (int64_t)p_used->u_waited;
+    usage.ru_nivcsw = (int64_t)p_used->u_preempted;
     return (copy_to_user(u_usage, &usage, sizeof usage) == 0) ? 0 : -EFAULT;
 }
 
 /* the clock ticks since boot, at the rate AT_CLKTCK says */
 int64_t sys_times(uint64_t u_buf)
 {
-    uint64_t u_own;
-    uint64_t u_children;
-    ticks_of(&u_own, &u_children);
+    struct cpu_usage own;
+    struct cpu_usage children;
+    own = sched_process_usage(current_pid(), &children);
     struct tms counts = {
-        .tms_utime = (int64_t)(u_own * MS_PER_TICK / 10),
-        .tms_cutime = (int64_t)(u_children * MS_PER_TICK / 10),
+        .tms_utime = (int64_t)(own.u_user * MS_PER_TICK / 10),
+        .tms_stime = (int64_t)(own.u_system * MS_PER_TICK / 10),
+        .tms_cutime = (int64_t)(children.u_user * MS_PER_TICK / 10),
+        .tms_cstime = (int64_t)(children.u_system * MS_PER_TICK / 10),
     };
     if (u_buf != 0 && copy_to_user(u_buf, &counts, sizeof counts) != 0) {
         return -EFAULT;

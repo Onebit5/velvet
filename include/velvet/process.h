@@ -14,6 +14,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <velvet/path.h>
+#include <velvet/thread.h>
 #include <uapi/velvet/resource.h>
 
 struct pipe;
@@ -86,12 +87,11 @@ struct process {
     uint64_t ended_ms;
 
     /*
-     * the ticks it ran for, told when it ends, and those of the children
-     * it has collected: all of it user time, the two never being told
-     * apart
+     * what its threads had of the cpus, each told as it ends, and what the
+     * children it has collected had, theirs included
      */
-    uint64_t u_ticks;
-    uint64_t u_child_ticks;
+    struct cpu_usage used;
+    struct cpu_usage children;
     /*
      * what each descriptor is open on, NULL for one that is not. the
      * file is shared, with whatever other descriptors were duplicated or
@@ -236,8 +236,15 @@ void process_exited(int pid, int code, uint64_t now_ms);
 
 bool process_collect(int pid, int *code);
 
-/* the ticks one of a process's threads ran for, added as it ends */
-void process_account(int i_pid, uint64_t u_ticks);
+/* what one of a process's threads had of the cpus, added as it ends */
+void process_account(int i_pid, const struct cpu_usage *p_used);
+
+/*
+ * what the threads of a process that have ended had of the cpus, and in
+ * *p_children, unless that is NULL, what the children it has collected
+ * had
+ */
+struct cpu_usage process_ended_usage(int i_pid, struct cpu_usage *p_children);
 
 /*
  * an ended process nobody will wait for, its parent ignoring SIGCHLD,

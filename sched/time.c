@@ -25,6 +25,7 @@
 static int64_t read_clock(int i_clock, uint64_t *p_ms)
 {
     struct thread *p_me;
+    struct cpu_usage used;
     switch (i_clock) {
     case CLOCK_REALTIME:
     case CLOCK_REALTIME_COARSE:
@@ -37,9 +38,14 @@ static int64_t read_clock(int i_clock, uint64_t *p_ms)
         *p_ms = pit_uptime_ms();
         return 0;
     case CLOCK_PROCESS_CPUTIME_ID:
+        used = sched_process_usage(current_pid(), NULL);
+        *p_ms = (used.u_user + used.u_system) * (1000 / CLOCK_TICK_HZ);
+        return 0;
     case CLOCK_THREAD_CPUTIME_ID:
         p_me = sched_current();
-        *p_ms = (p_me != NULL) ? p_me->cpu_ticks * (1000 / CLOCK_TICK_HZ) : 0;
+        *p_ms = (p_me != NULL)
+                ? (p_me->cpu.u_user + p_me->cpu.u_system)
+                  * (1000 / CLOCK_TICK_HZ) : 0;
         return 0;
     default:
         return -EINVAL;

@@ -26,7 +26,11 @@ void sleep_ms(uint64_t ms);
 
 uint64_t sched_quantum_ms(void);
 
-void sched_tick(void);
+/*
+ * a tick of this core's timer, which found the running thread in ring 3
+ * when b_user, and in the kernel otherwise
+ */
+void sched_tick(bool b_user);
 
 struct thread *sched_current(void);
 
@@ -87,6 +91,16 @@ void sched_show_threads(void);
 void sched_proc_init(void);
 
 bool sched_thread_alive(int id);
+
+/*
+ * what a process has had of the cpus, its threads still running and the
+ * ones that have ended, and in *p_children, unless that is NULL, what
+ * the children it has collected had
+ */
+struct cpu_usage sched_process_usage(int i_pid, struct cpu_usage *p_children);
+
+/* what a thread has had of the cpus, handed to its process as it ends */
+void sched_account(struct thread *t);
 
 enum sched_kill_result {
     SCHED_KILL_OK,
