@@ -107,6 +107,7 @@ def check(work):
             '    kprintf("%5.2f\\n", x);\n'
             '    kprintf("%+d and %hhu\\n", a, b);\n'
             '    kprintf("%-8s %08lx %zu %% %p\\n", s, v, n, p);\n'
+            '    kprintf("%04o %*s and %-*X\\n", m, w, s, w, x);\n'
             '    panic("%e and %S", q, r);\n'
             '    asm volatile("mov %%rax, %%rbx");\n'
             '}\n')

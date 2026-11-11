@@ -19,11 +19,11 @@ import re
 import sys
 import pathlib
 
-SPEC = re.compile(r'%([-+ #0]*)([0-9]*)(\.[0-9]+)?(hh|h|ll|l|z)?([a-zA-Z%])')
+SPEC = re.compile(r'%([-+ #0]*)([0-9]*|\*)(\.[0-9]+)?(hh|h|ll|l|z)?([a-zA-Z%])')
 
 SUPPORTED_FLAGS = set('-0')
 SUPPORTED_LENGTH = {'', 'l', 'll', 'z'}
-SUPPORTED_CONV = set('csdiuxp%')
+SUPPORTED_CONV = set('csdiuxop%')
 
 def main():
     roots = [pathlib.Path(a) for a in sys.argv[1:]] or [pathlib.Path('.')]

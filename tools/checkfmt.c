@@ -14,7 +14,7 @@
 
 /* what lib/kprintf.c implements, and nothing else */
 static const char *supported_flags = "-0";
-static const char *supported_conv = "csdiuxp%";
+static const char *supported_conv = "csdiuxop%";
 static const char *supported_length[] = { "", "l", "ll", "z", NULL };
 
 static int problems;
@@ -50,6 +50,9 @@ static size_t one_spec(const char *p, const char *path, int lineno)
     }
     flags[nflags] = '\0';
 
+    if (*p == '*') {
+        p++;                    /* a width passed before the value */
+    }
     while (*p >= '0' && *p <= '9') {
         p++;                    /* a width, which the formatter does take */
     }

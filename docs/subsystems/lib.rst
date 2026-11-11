@@ -9,9 +9,11 @@ printing
 --------
 
 ``kprintf.c`` is the kernel's printf. output goes to serial always, and to
-the framebuffer console once it is up. supported: ``%c %s %d %i %u %x %p
-%%``, the ``l``/``ll``/``z`` length modifiers (all 64-bit here anyway), and
-zero padding and width like ``%08x``. that is it. no floats, no fanciness.
+the framebuffer console once it is up. supported: ``%c %s %d %i %u %x %o %p
+%%``, the ``l``/``ll``/``z`` length modifiers (all 64-bit here anyway), zero
+padding and width like ``%08x``, left alignment like ``%-20s``, and a width
+passed before the value, ``%*s``, a negative one aligning it left. that is
+it. no floats, no fanciness.
 
 ``kwrite()`` is a run of bytes with no format string to parse. ``kprintf
 ("%c", c)`` in a loop was how a program's output reached the screen, and it

@@ -256,6 +256,18 @@ int main(void)
     check("-42  |",    "%-5d|", -42);
     check("2a   |",    "%-5x|", 0x2au);
     check("x    |",    "%-5c|", 'x');
+
+    /* octal, which a mode is written in */
+    check("755", "%o", 0755u);
+    check("0022", "%04o", 022u);
+    check("1777777777777777777777", "%lo", UINT64_MAX);
+
+    /* a width handed over with the value, and a negative one */
+    check("   ab|", "%*s|", 5, "ab");
+    check("ab   |", "%*s|", -5, "ab");
+    check("0042", "%0*d", 4, 42);
+    check("[   7]", "[%*lu]", 4, (uint64_t)7);
+    check("|", "%*s|", 0, "");
     check("    x|",    "%5c|",  'x');
     /* '-' beats '0': you cannot zero-pad the right of a number */
     check("42   |",    "%-05d|", 42);
