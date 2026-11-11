@@ -235,6 +235,7 @@ static void schedule(void)
     if (next == prev) {
         prev->state = THREAD_RUNNING;
         prev->on_cpu = (int)cpu_id();
+        prev->i_last_cpu = (int)cpu_id();
         return;
     }
 
@@ -250,6 +251,7 @@ static void schedule(void)
     }
     next->state = THREAD_RUNNING;
     next->on_cpu = (int)cpu_id();
+    next->i_last_cpu = (int)cpu_id();
     current = next;
 
     /* whose memory is real from here on. */
@@ -591,47 +593,90 @@ void sched_show_threads(void)
     }
 }
 
-/*
- * the kernel's own calls that led to this read, which are the reader's:
- * the same walker a panic uses, with nothing on fire
- */
-static void sched_show_stack(void)
-{
-    kbacktrace(0, 0);
-}
-
-/*
- * the reader's own environment, each NAME=value ended by a NUL, as exec
- * laid it out on the stack. what a program changed there since is what
- * it reads back, since these are its own bytes
- */
-static void sched_show_environ(void)
-{
-    struct addrspace *p_as = (current != NULL) ? current->space : NULL;
-    if (p_as == NULL || p_as->u_env_end <= p_as->u_env_start) {
-        return;
-    }
-    char *p_buf = kmalloc(PAGE_SIZE);
-    if (p_buf == NULL) {
-        return;
-    }
-    for (uint64_t u_at = p_as->u_env_start; u_at < p_as->u_env_end; ) {
-        size_t sz_take = (p_as->u_env_end - u_at < PAGE_SIZE)
-                         ? (size_t)(p_as->u_env_end - u_at) : PAGE_SIZE;
-        if (copy_from_user(p_buf, u_at, sz_take) != 0) {
-            break;
-        }
-        kwrite(p_buf, sz_take);
-        u_at += sz_take;
-    }
-    kfree(p_buf);
-}
-
 void sched_proc_init(void)
 {
     proc_register("threads", PROC_PUBLIC, sched_show_threads);
-    proc_register("stack", PROC_PRIVATE, sched_show_stack);
-    proc_register("environ", PROC_PUBLIC, sched_show_environ);
+}
+
+/* thread i_id, or NULL. the lock is held */
+static struct thread *thread_by_id(int i_id)
+{
+    struct thread *t = current;
+    do {
+        if (t->id == i_id) {
+            return t;
+        }
+        t = t->next;
+    } while (t != current);
+    return NULL;
+}
+
+bool sched_info(int i_id, struct sched_info *p_out)
+{
+    uint64_t u_flags = spin_lock_irq(&sched_lock);
+    const struct thread *t = thread_by_id(i_id);
+    if (t != NULL) {
+        p_out->e_state = t->state;
+        p_out->b_stopped = t->stopped;
+        p_out->cpu = t->cpu;
+        p_out->i_cpu = t->i_last_cpu;
+        memcpy(p_out->arr_name, t->name, sizeof p_out->arr_name);
+    }
+    spin_unlock_irq(&sched_lock, u_flags);
+    return t != NULL;
+}
+
+struct addrspace *sched_space_of(int i_pid)
+{
+    /*
+     * a thread lets go of its space only once it is out of the ring, and
+     * exec swaps one for another under this lock, so a space found here
+     * still has the use of the thread it was found on
+     */
+    struct addrspace *p_space = NULL;
+    uint64_t u_flags = spin_lock_irq(&sched_lock);
+    struct thread *t = current;
+    do {
+        if (t->pid == i_pid && t->state != THREAD_DEAD && t->space != NULL) {
+            p_space = addrspace_get(t->space);
+            break;
+        }
+        t = t->next;
+    } while (t != current);
+    spin_unlock_irq(&sched_lock, u_flags);
+    return p_space;
+}
+
+struct addrspace *sched_swap_space(struct thread *t, struct addrspace *p_new)
+{
+    uint64_t u_flags = spin_lock_irq(&sched_lock);
+    struct addrspace *p_old = t->space;
+    t->space = p_new;
+    addrspace_switch(p_new);
+    spin_unlock_irq(&sched_lock, u_flags);
+    return p_old;
+}
+
+void sched_show_stack(int i_id)
+{
+    uint64_t u_flags = spin_lock_irq(&sched_lock);
+    const struct thread *t = thread_by_id(i_id);
+    if (t == current) {
+        spin_unlock_irq(&sched_lock, u_flags);
+        kbacktrace(0, 0);
+        return;
+    }
+    /*
+     * one parked stays parked while this is held, since a core has to
+     * take it to switch to one, and what it was switched away by is on
+     * top of its stack: the registers switch_context pushed, rbp the
+     * sixth, and the address it returns to after them
+     */
+    if (t != NULL && t->on_cpu < 0 && t->state != THREAD_DEAD) {
+        const uint64_t *p_saved = (const uint64_t *)t->sp;
+        kbacktrace(p_saved[5], p_saved[6]);
+    }
+    spin_unlock_irq(&sched_lock, u_flags);
 }
 
 bool sched_thread_alive(int id)
@@ -728,6 +773,7 @@ void sched_init(void)
     boot_thread.next = &boot_thread;    /* a ring of one, for now */
     boot_thread.wait_next = NULL;
     boot_thread.cpu = (struct cpu_usage){ 0 };
+    boot_thread.i_last_cpu = 0;
     boot_thread.from_heap = false;      /* it lives in .bss */
     context_init_thread(&boot_thread.arch);
 

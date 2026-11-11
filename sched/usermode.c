@@ -212,11 +212,13 @@ static uint64_t build_stack(uint8_t *p_top_k, const struct exec_args *p_args,
         memcpy(user_addr(u_sp), p_args->pp_envp[sz_at], sz_len);
     }
     p_space->u_env_start = u_sp;
+    p_space->u_arg_end = u_sp;
     for (size_t sz_at = p_args->sz_argc; sz_at-- > 0; ) {
         sz_len = strlen(p_args->pp_argv[sz_at]) + 1;
         u_sp -= sz_len;
         memcpy(user_addr(u_sp), p_args->pp_argv[sz_at], sz_len);
     }
+    p_space->u_arg_start = u_sp;
     uint64_t u_string = u_sp;
 
     uint64_t arr_aux[AUX_PAIRS * 2] = {
@@ -367,17 +369,17 @@ static int64_t image_build(const char *str_path,
     }
 
     /*
-     * every segment is a region either way, since a region is what says
-     * what a page there may be: what a fault makes, and whether a page
-     * shared after a fork may be copied to be written. one read in now
-     * has its pages made already, and its regions are only that
+     * every segment is a region of the image either way, since a region
+     * is what says what a page there may be: what a fault makes, and
+     * whether a page shared after a fork may be copied to be written, and
+     * what the program is made of, for whoever asks. one read in now has
+     * its pages made already, and no image behind it to make more from
      */
     for (size_t sz_at = 0; sz_at < seg_count; sz_at++) {
         if (!addrspace_add_region(space, segs[sz_at].vaddr, segs[sz_at].end,
-                                  segs[sz_at].flags,
-                                  lazy ? VMA_FILE : VMA_ANON,
+                                  segs[sz_at].flags, VMA_FILE,
                                   lazy ? (const uint8_t *)image : NULL,
-                                  lazy ? segs[sz_at].offset : 0,
+                                  segs[sz_at].offset,
                                   lazy ? segs[sz_at].file_end : 0)) {
             vfs_release(image, owned);
             addrspace_put(space);
@@ -445,9 +447,23 @@ static int64_t image_build(const char *str_path,
                        + sz_eager * PAGE_SIZE;
     p_out->u_stack_top = build_stack(p_top_k, p_args, str_path, &facts,
                                      space);
+    space->u_stack_start = p_out->u_stack_top;
     p_out->p_space = space;
     p_out->u_entry = loaded.entry;
     return 0;
+}
+
+/*
+ * what a program is known by: the last part of the path it was started
+ * by, the way a program is everywhere, and not where on the medium it
+ * happened to be, or every program under one long directory would have
+ * that directory's name
+ */
+static const char *last_part(const char *str_path)
+{
+    const char *str_name = strrchr(str_path, '/');
+    return (str_name != NULL && str_name[1] != '\0') ? str_name + 1
+                                                     : str_path;
 }
 
 int user_spawn(const char *path, const struct exec_args *p_args,
@@ -474,11 +490,15 @@ int user_spawn(const char *path, const struct exec_args *p_args,
      * and holds the exit code somebody will want to read
      */
     /* a program cannot ask to be somebody else: it runs as who started it */
-    int pid = process_create(path, parent, uid, announce, pit_uptime_ms());
+    int pid = process_create(last_part(path), parent, uid, announce,
+                             pit_uptime_ms());
 
-    /* wherever whoever started it was standing. */
+    /* wherever whoever started it was standing, running what it was told */
     if (pid != 0 && cwd != NULL) {
         process_set_cwd(pid, cwd);
+    }
+    if (pid != 0) {
+        process_set_exe(pid, path);
     }
     struct file *p_console = (pid != 0) ? tty_open(0, FILE_READ | FILE_WRITE)
                                         : NULL;
@@ -518,7 +538,8 @@ int user_spawn(const char *path, const struct exec_args *p_args,
      * so it goes into the ring asleep and whoever spawned it says when.
      * user_start is that.
      */
-    struct thread *t = thread_create_parked(path, user_thread_start, start);
+    struct thread *t = thread_create_parked(last_part(path),
+                                            user_thread_start, start);
     if (t == NULL) {
         process_exited(pid, PROCESS_KILLED, pit_uptime_ms());
         process_fds_release(pid);
@@ -613,32 +634,16 @@ int64_t user_exec(const char *str_path, const struct exec_args *p_args,
     }
     forget_clear_tid(p_me->i_tid);
 
-    /*
-     * interrupts off across the swap, so the scheduler never finds this
-     * thread naming one space while the cpu walks the other's tables
-     */
-    struct addrspace *p_old = p_me->space;
-    uint64_t u_flags = irq_save();
-    p_me->space = img.p_space;
-    addrspace_switch(img.p_space);
-    irq_restore(u_flags);
+    struct addrspace *p_old = sched_swap_space(p_me, img.p_space);
     addrspace_put(p_old);
 
     signal_exec(process_signal_state(p_me->pid),
                 process_thread_signals(p_me->i_tid));
     process_vfork_done(p_me->pid);
 
-    /*
-     * known by the last part of the path it was started by, the way a
-     * program is everywhere, and not by where on the medium it happened
-     * to be: every program under one long directory would otherwise have
-     * that directory's name
-     */
-    const char *str_name = strrchr(str_path, '/');
-    str_name = (str_name != NULL && str_name[1] != '\0') ? str_name + 1
-                                                         : str_path;
-    process_set_name(p_me->pid, str_name);
-    thread_set_name(p_me, str_name);
+    process_set_name(p_me->pid, last_part(str_path));
+    thread_set_name(p_me, last_part(str_path));
+    process_set_exe(p_me->pid, str_path);
 
     p_out->u_entry = img.u_entry;
     p_out->u_stack_top = img.u_stack_top;

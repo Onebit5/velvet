@@ -127,6 +127,7 @@ static struct thread *create(const char *name, void (*entry)(void *),
     t->on_cpu      = -1;    /* ready is not the same as running */
     t->wake_at     = 0;
     t->cpu         = (struct cpu_usage){ 0 };
+    t->i_last_cpu  = -1;
     t->entry       = entry;
     t->arg         = arg;
     t->id          = next_id++;

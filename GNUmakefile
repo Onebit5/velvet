@@ -275,12 +275,14 @@ SELFTEST_ROOT := fs/blockdev fs/fsck fs/install fs/mknod fs/mount fs/root \
                  net/dhcp
 
 # the tests written to say the same on any kernel with the interface
-# this one has: threads, futexes, posix_spawn and what a process has had
-# of the cpus, asked through a libc that has never heard of this kernel.
+# this one has: threads, futexes, posix_spawn, what a process has had of
+# the cpus and a process's own directory in /proc, asked through a libc
+# that has never heard of this kernel.
 # make test runs them as programs on the machine the build is on as
 # well, and each saying ok there is the check that what they ask is
 # answered the same on both
-SELFTEST_BOTH := sched/futex sched/pthread sched/spawn sched/usage
+SELFTEST_BOTH := fs/procself sched/futex sched/pthread sched/spawn \
+                 sched/usage
 
 # the image's /init: asks which tests to run, runs each as a guest and
 # powers the machine off. built the way a test is, since it is a program
@@ -493,8 +495,8 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
 $(T)/kprintf:  tests/test_kprintf.c  lib/kprintf.c \
                sched/spinlock.c
 $(T)/kprintf:  LDLIBS = -pthread
-$(T)/proc:     tests/test_proc.c     fs/proc.c fs/file.c lib/kprintf.c \
-               lib/string.c sched/spinlock.c
+$(T)/proc:     tests/test_proc.c     fs/proc.c fs/proc_pid.c fs/file.c \
+               lib/kprintf.c lib/string.c sched/spinlock.c
 $(T)/mm:       tests/test_mm.c       sched/spinlock.c \
                mm/pmm.c \
                mm/buddy.c mm/slab.c \

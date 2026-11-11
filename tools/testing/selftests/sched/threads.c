@@ -30,7 +30,8 @@ int main(void)
                      "and the program reading it\n");
 
     /* the tests run as guest, and a call trace is root's */
-    ksft_test_result(open("/proc/stack", O_RDONLY) < 0 && errno == EACCES,
+    ksft_test_result(open("/proc/self/stack", O_RDONLY) < 0
+                     && errno == EACCES,
                      "a guest may not read the kernel's call trace\n");
     ksft_finished();
 }

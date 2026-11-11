@@ -69,6 +69,7 @@ struct thread {
     uint64_t wake_at;           /* tick to wake on, when SLEEPING */
 
     struct cpu_usage cpu;       /* what it has had of the cpus */
+    int      i_last_cpu;        /* the core it ran on last, or is on */
 
     void (*entry)(void *);
     void *arg;

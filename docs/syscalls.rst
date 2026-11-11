@@ -263,8 +263,8 @@ the kernel's generator) and ``AT_EXECFN``. every other register is zero.
 the arguments and the environment together may be 128 KiB.
 
 the environment is the program's and nowhere else: the kernel copies it
-across an exec and keeps nothing, and ``/proc/environ`` is the reader's
-own, read out of its own stack.
+across an exec and keeps nothing, and ``/proc/<pid>/environ`` is read out
+of the program's own stack, where exec laid it.
 
 the kernel starts ``/init`` with ``argv`` of ``/init`` and an environment
 of ``HOME=/`` and a ``TERM`` naming the terminal type its console speaks,

@@ -16,6 +16,7 @@
 
 #include <velvet/disk.h>
 #include <velvet/path.h>
+#include <velvet/proc.h>
 
 #define VFS_NAME_MAX 128
 
@@ -55,8 +56,8 @@ struct vfs_file {
 
     struct fat32_time written;
 
-    /* which /proc file, for VFS_PROC */
-    size_t sz_proc;
+    /* which node of /proc, for VFS_PROC */
+    struct proc_ref proc;
     size_t sz_dev;          /* which device, for VFS_DEV */
 };
 
@@ -151,6 +152,7 @@ struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode);
 struct vfs_mount {
     char        arr_at[PATH_MAX];
     char        arr_where[VFS_SOURCE_MAX];
+    char        arr_source[VFS_SOURCE_MAX];     /* what mount was told, or "" */
     const char *what;
     bool        writable;
     bool        present;

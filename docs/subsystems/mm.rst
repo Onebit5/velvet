@@ -325,11 +325,27 @@ program going wrong.
     how many frames the space is holding, which is one of the numbers
     ``/proc/threads`` reports.
 
+``size_t addrspace_read(p_as, u_virt, p_out, sz_len)``
+    bytes of a space read by somebody not running in it: what
+    ``/proc/<pid>/cmdline`` and ``environ`` are. under the lock, so a
+    page read is not given back while it is, and a page not made yet is
+    not made for this: the copy stops there.
+
+``void addrspace_sizes(p_as, p_out)``
+    what the space holds, in pages: all its regions allow, what is
+    there, what of that is the image's, the image's code, the rest it
+    may write, the stack, and the tables. what ``status`` and ``statm``
+    say.
+
+``size_t addrspace_regions(p_as, p_out, sz_max)``
+    the regions copied out lowest first, for ``maps``.
+
 ``const uint8_t *image``, ``uint64_t image_offset``, ``uint64_t file_end``
-    for a region backed by a file: where the bytes come from, where in the
-    file this region starts, and where the file stops. past that end the
-    pages are zero rather than read, which is what a stack's guard or an
-    over-sized mapping gets.
+    for a region of the program's image: where the bytes come from, where
+    in the file this region starts, and where the file stops. past that
+    end the pages are zero rather than read, which is what a stack's guard
+    or an over-sized mapping gets, and a program read in whole at exec has
+    no image behind its regions, its pages made already.
 
 ``uint64_t pages_in_use``
     how many pages the program has actually been given, as opposed to how

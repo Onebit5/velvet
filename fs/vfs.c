@@ -307,19 +307,7 @@ static bool lookup_own(const struct mount_point *p_mount, const char *str_rest,
     case VFS_RAMFS:
         return try_ramfs(p_mount->sz_slot, str_rest, b_follow, p_out);
     case VFS_PROC:
-        memset(p_out, 0, sizeof *p_out);
-        p_out->kind = VFS_PROC;
-        if (!proc_find(str_name, &p_out->sz_proc)) {
-            return false;
-        }
-        /*
-         * none has a size until it is read, so it says 0 and a reader
-         * reads to the end like any other file. who may read it is the
-         * file's own say
-         */
-        copy_name(p_out->name, str_name);
-        p_out->mode = proc_mode(p_out->sz_proc);
-        return true;
+        return proc_lookup(str_rest, b_follow, p_out);
     case VFS_DEV:
         memset(p_out, 0, sizeof *p_out);
         p_out->kind = VFS_DEV;
@@ -413,18 +401,8 @@ static bool readdir_in(const struct mount_point *p_mount,
         from_ramfs(p_out, &e, p_mount->sz_slot);
         return true;
     }
-    case VFS_PROC: {
-        const char *name = proc_name(sz_index);
-        if (str_name[0] != '\0' || name == NULL) {
-            return false;
-        }
-        memset(p_out, 0, sizeof *p_out);
-        p_out->kind = VFS_PROC;
-        p_out->sz_proc = sz_index;
-        p_out->mode = proc_mode(sz_index);
-        copy_name(p_out->name, name);
-        return true;
-    }
+    case VFS_PROC:
+        return proc_readdir(str_rest, sz_index, p_out);
     case VFS_DEV: {
         const char *name = dev_name(sz_index);
         if (str_name[0] != '\0' || name == NULL) {
@@ -758,7 +736,18 @@ bool vfs_readlink(const char *path, char *out, size_t size)
     char arr_buf[VFS_NAME_MAX + 1];
     const char *rest;
     const struct store_ops *p_ops;
-    struct mount_point *p_mount = on_store(path, arr_buf, &rest, &p_ops);
+    /* /proc keeps no links, but works out where each leads as it is asked */
+    struct mount_point *p_mount = (path != NULL && path[0] != '\0')
+                                  ? mount_enter(absolute(path, arr_buf),
+                                                &rest)
+                                  : NULL;
+    if (p_mount != NULL && p_mount->e_kind == VFS_PROC) {
+        bool b_link = proc_readlink(rest, out, size);
+        mount_leave(p_mount);
+        return b_link;
+    }
+    mount_leave(p_mount);
+    p_mount = on_store(path, arr_buf, &rest, &p_ops);
     bool b_ok = p_mount != NULL
                 && p_ops->readlink(p_mount->sz_slot, rest, out, size);
     mount_leave(p_mount);
@@ -999,6 +988,8 @@ bool vfs_mount_at(size_t index, struct vfs_mount *out)
         memset(out, 0, sizeof *out);
         strncpy(out->arr_at, p_mount->arr_at, sizeof out->arr_at - 1);
         strncpy(out->arr_where, source_of(p_mount), sizeof out->arr_where - 1);
+        strncpy(out->arr_source, p_mount->arr_source,
+                sizeof out->arr_source - 1);
         out->what = type_of(p_mount);
         out->writable = p_mount->e_kind == VFS_DISK
                         || p_mount->e_kind == VFS_RAMFS;
@@ -1420,7 +1411,7 @@ struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode)
         return dev_open(p_node->sz_dev, u_mode);
     }
     if (p_node->kind == VFS_PROC && !p_node->is_dir) {
-        return proc_open(p_node->sz_proc, u_mode);
+        return proc_open(&p_node->proc, u_mode);
     }
     /*
      * a node naming a device by its number opens that device, wherever

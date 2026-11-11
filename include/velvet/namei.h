@@ -63,4 +63,7 @@ int current_gid(void);
  */
 uint64_t path_ino(const char *str_path);
 
+/* the number stat gives the filesystem a node is on, as st_dev */
+uint64_t node_dev(const struct vfs_file *p_node);
+
 #endif

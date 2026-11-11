@@ -107,6 +107,9 @@ struct process {
      * over is resolved inside this, and cannot climb out of it
      */
     char arr_root[PATH_MAX];
+
+    /* the program it is running, by the name exec found it at */
+    char arr_exe[PATH_MAX];
 };
 
 /*
@@ -269,6 +272,62 @@ const char *process_name(int pid);
 
 /* what a process is called from now on, which exec changes */
 void process_set_name(int i_pid, const char *str_name);
+
+/* the program a process runs from now on, by its name in the namespace */
+void process_set_exe(int i_pid, const char *str_path);
+
+/*
+ * what /proc tells of a process, or of one of its threads, copied out of
+ * the table at once so the fields of one report agree with each other
+ */
+struct process_view {
+    int i_pid;
+    int i_tid;                  /* the thread asked about */
+    int i_thread;               /* the scheduler's thread running it, or 0 */
+    int i_ppid;
+    int i_pgid;
+    int i_sid;
+    int i_uid;
+    int i_gid;
+    int arr_groups[NGROUPS_MAX];
+    int i_groups;
+    uint32_t u_umask;
+    char arr_name[PROC_NAME_MAX];
+    bool b_exited;              /* ended, and not yet waited for */
+    int i_stopped_by;
+    int i_wait_status;
+    size_t sz_threads;
+    size_t sz_fds;              /* how many descriptors are open */
+    uint64_t u_started_ms;
+    uint64_t u_shared;          /* raised at the process, not yet taken */
+    uint64_t u_pending;         /* and at the thread */
+    uint64_t u_blocked;         /* the thread's mask */
+    uint64_t u_ignored;
+    uint64_t u_caught;
+    struct rlimit arr_limits[RLIM_NLIMITS];
+};
+
+/*
+ * process i_pid seen through its thread i_tid, or through its first
+ * thread still there when i_tid has ended: false for no such process, or
+ * a thread of another
+ */
+bool process_view(int i_pid, int i_tid, struct process_view *p_out);
+
+/*
+ * where a process stands, its "/" and the program it runs, copied into
+ * PATH_MAX each of whichever is not NULL: false for no such process
+ */
+bool process_paths(int i_pid, char *str_cwd, char *str_root, char *str_exe);
+
+/* the pids in the table, the ended ones too, lowest first: how many */
+size_t process_pids(int *p_pids, size_t sz_max);
+
+/* and the tids of one process's threads, lowest first: how many */
+size_t process_tids(int i_pid, int *p_tids, size_t sz_max);
+
+/* the lowest descriptor of process i_pid open at i_from or above, or -1 */
+int process_fd_from(int i_pid, int i_from);
 
 void process_interrupt(int pid);
 

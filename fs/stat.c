@@ -29,7 +29,7 @@
  * the ones kept in memory as anonymous ones, the way a filesystem with
  * no drive under it is numbered
  */
-static uint64_t dev_of(const struct vfs_file *p_node)
+uint64_t node_dev(const struct vfs_file *p_node)
 {
     switch (p_node->kind) {
     case VFS_DISK:    return disk_dev(p_node->mount);
@@ -78,7 +78,7 @@ static void fill_node(const struct vfs_file *p_node, const char *str_path,
 {
     memset(p_st, 0, sizeof *p_st);
     uint32_t u_type = type_bits(p_node);
-    p_st->st_dev = dev_of(p_node);
+    p_st->st_dev = node_dev(p_node);
     p_st->st_ino = (p_node->u_ino != 0) ? p_node->u_ino : path_ino(str_path);
     p_st->st_nlink = p_node->is_dir ? 2 : 1;
     p_st->st_mode = u_type | (p_node->mode & 07777);

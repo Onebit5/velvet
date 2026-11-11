@@ -15,6 +15,7 @@
 #include <asm/cpu.h>
 #include <asm/mmu.h>
 #include <velvet/string.h>
+#include <velvet/usermode.h>
 
 /* the lower half is per-process, the upper half is everyone's. */
 #define USER_PML4_ENTRIES   256
@@ -187,14 +188,20 @@ struct addrspace *addrspace_fork(struct addrspace *from,
         mine[i] = child | (parent[i] & ~PTE_ADDR_MASK);
     }
 
-    /* the records come too, and where the break and the environment are */
+    /*
+     * the records come too, and where the break, the arguments and the
+     * environment are
+     */
     for (size_t i = 0; i < VMA_MAX; i++) {
         as->vmas[i] = from->vmas[i];
     }
     as->u_brk_start = from->u_brk_start;
     as->u_brk = from->u_brk;
+    as->u_arg_start = from->u_arg_start;
+    as->u_arg_end = from->u_arg_end;
     as->u_env_start = from->u_env_start;
     as->u_env_end = from->u_env_end;
+    as->u_stack_start = from->u_stack_start;
 
     /*
      * and this core's own memory of the parent's entries, when the parent
@@ -958,6 +965,9 @@ bool addrspace_fault(struct addrspace *as, uint64_t virt, bool write,
     uint64_t u_old = 0;
     uint64_t u_flags = spin_lock_irq(&as->lock);
     bool b_answered = fault(as, virt, write, present, &u_old);
+    if (b_answered) {
+        as->u_faults++;
+    }
     spin_unlock_irq(&as->lock, u_flags);
 
     /*
@@ -1080,4 +1090,132 @@ void addrspace_switch(struct addrspace *as)
     mmu_load_table(want);
 }
 
+size_t addrspace_read(struct addrspace *p_as, uint64_t u_virt, void *p_out,
+                      size_t sz_len)
+{
+    /*
+     * under the lock, so that a page read here is not given back while
+     * it is: a frame leaves a space only once its entry has been cleared,
+     * which is done holding this
+     */
+    size_t sz_done = 0;
+    uint64_t u_flags = spin_lock_irq(&p_as->lock);
+    while (sz_done < sz_len) {
+        uint64_t u_at = u_virt + sz_done;
+        uint64_t *p_pte = (u_at < USER_TOP) ? leaf_for(p_as->pml4, u_at)
+                                                 : NULL;
+        if (p_pte == NULL || (*p_pte & (PTE_PRESENT | PTE_USER | PTE_HUGE))
+                             != (PTE_PRESENT | PTE_USER)) {
+            break;
+        }
+        size_t sz_in_page = PAGE_SIZE - (size_t)(u_at & (PAGE_SIZE - 1));
+        size_t sz_take = (sz_len - sz_done < sz_in_page) ? sz_len - sz_done
+                                                         : sz_in_page;
+        const uint8_t *p_page = pmm_phys_to_virt(*p_pte & PTE_ADDR_MASK);
+        memcpy((uint8_t *)p_out + sz_done, p_page + (u_at & (PAGE_SIZE - 1)),
+               sz_take);
+        sz_done += sz_take;
+    }
+    spin_unlock_irq(&p_as->lock, u_flags);
+    return sz_done;
+}
 
+/*
+ * the pages there are in [u_start, u_end): a stretch with no table under
+ * it is passed over whole, so a region reserved and never touched costs
+ * nothing to count. the lock is held
+ */
+static uint64_t present_in(uint64_t u_pml4, uint64_t u_start, uint64_t u_end)
+{
+    uint64_t u_count = 0;
+    uint64_t u_at = u_start;
+    while (u_at < u_end) {
+        const uint64_t *p_table = table_at(u_pml4);
+        for (int i_shift = 39; ; i_shift -= 9) {
+            uint64_t u_entry = p_table[(u_at >> i_shift) & 0x1ff];
+            uint64_t u_span = 1ull << i_shift;
+            bool b_leaf = i_shift == 12 || (u_entry & PTE_HUGE);
+            if (!(u_entry & PTE_PRESENT) || b_leaf) {
+                if (u_entry & PTE_PRESENT) {
+                    u_count += u_span / PAGE_SIZE;
+                }
+                u_at = (u_at & ~(u_span - 1)) + u_span;
+                break;
+            }
+            p_table = table_at(u_entry & PTE_ADDR_MASK);
+        }
+    }
+    return u_count;
+}
+
+/* the tables of the lower half below phys, a table at level i_level */
+static uint64_t tables_under(uint64_t u_phys, int i_level, size_t sz_entries)
+{
+    const uint64_t *p_table = table_at(u_phys);
+    uint64_t u_count = 1;
+    for (size_t sz_at = 0; i_level > 1 && sz_at < sz_entries; sz_at++) {
+        if ((p_table[sz_at] & PTE_PRESENT) && !(p_table[sz_at] & PTE_HUGE)) {
+            u_count += tables_under(p_table[sz_at] & PTE_ADDR_MASK,
+                                    i_level - 1, 512);
+        }
+    }
+    return u_count;
+}
+
+void addrspace_sizes(struct addrspace *p_as, struct addrspace_sizes *p_out)
+{
+    memset(p_out, 0, sizeof *p_out);
+    uint64_t u_flags = spin_lock_irq(&p_as->lock);
+    for (size_t sz_at = 0; sz_at < VMA_MAX; sz_at++) {
+        const struct vma *v = &p_as->vmas[sz_at];
+        if (v->kind == VMA_NONE) {
+            continue;
+        }
+        uint64_t u_pages = (v->end - v->start) / PAGE_SIZE;
+        uint64_t u_there = present_in(p_as->pml4, v->start, v->end);
+        p_out->u_size += u_pages;
+        p_out->u_resident += u_there;
+        bool b_exec = (v->flags & PTE_USER) && !(v->flags & PTE_NX);
+        if (v->kind == VMA_FILE) {
+            p_out->u_file += u_there;
+        }
+        if (v->end == USER_STACK_TOP) {
+            p_out->u_stack += u_pages;
+        } else if (v->kind == VMA_FILE && b_exec) {
+            p_out->u_exe += u_pages;
+        } else if (v->flags & PTE_WRITE) {
+            p_out->u_data += u_pages;
+        }
+    }
+    p_out->u_tables = tables_under(p_as->pml4, 4, USER_PML4_ENTRIES);
+    spin_unlock_irq(&p_as->lock, u_flags);
+}
+
+size_t addrspace_regions(struct addrspace *p_as, struct vma *p_out,
+                         size_t sz_max)
+{
+    size_t sz_count = 0;
+    uint64_t u_flags = spin_lock_irq(&p_as->lock);
+    /* each the lowest of those above the last one taken */
+    uint64_t u_above = 0;
+    for (;;) {
+        const struct vma *p_next = NULL;
+        for (size_t sz_at = 0; sz_at < VMA_MAX; sz_at++) {
+            const struct vma *v = &p_as->vmas[sz_at];
+            if (v->kind != VMA_NONE && v->start >= u_above
+                && (p_next == NULL || v->start < p_next->start)) {
+                p_next = v;
+            }
+        }
+        if (p_next == NULL) {
+            break;
+        }
+        if (sz_count < sz_max) {
+            p_out[sz_count] = *p_next;
+        }
+        sz_count++;
+        u_above = p_next->end;
+    }
+    spin_unlock_irq(&p_as->lock, u_flags);
+    return sz_count;
+}

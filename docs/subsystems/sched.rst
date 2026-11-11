@@ -789,14 +789,31 @@ ready, goes to sleep, or stops existing.
     is
 
 ``void sched_proc_init(void);``
-    registers ``/proc/threads`` and ``/proc/environ``, for anyone, and
-    ``/proc/stack``, for root. ``environ`` is the reader's own
-    environment as exec laid it out on its stack, each ``NAME=value``
-    ended by a NUL, with whatever the program changed there since.
-    ``stack`` is the kernel's call trace of whoever reads
-    it, which is the walker a panic uses with nothing on fire, and which
-    names functions
-    by where the kernel keeps them
+    registers ``/proc/threads``, for anyone.
+
+``bool sched_info(int i_id, struct sched_info *p_out);``
+    what the scheduler knows of one thread, for ``/proc``: its state,
+    whether it is stopped, what it has had of the cpus, the core it ran
+    on last and its name.
+
+``struct addrspace *sched_space_of(int i_pid);``
+    the space a process's threads run in, with a use of it the caller
+    lets go of: what ``/proc/<pid>`` reads a program's arguments and
+    regions out of. a thread lets go of its space only once it is out of
+    the ring, so one found under the lock is safe to take a use of.
+
+``struct addrspace *sched_swap_space(t, p_new);``
+    exec's swap of the caller's space for the new program's, under the
+    lock, so ``sched_space_of`` never finds a space the thread has let
+    go of.
+
+``void sched_show_stack(int i_id);``
+    the kernel's call trace of a thread, which is ``/proc/<pid>/stack``:
+    the caller's own, walked as a panic walks it with nothing on fire,
+    or one parked, from the frame its switch left on its stack. one
+    parked stays parked while the lock is held, since a core needs it to
+    switch to one. one running on another core has a stack that changes
+    as it is read, and prints nothing.
 
 ``bool sched_thread_alive(int id);``
     is there still a thread with this id that has not finished?

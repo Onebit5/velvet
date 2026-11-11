@@ -125,6 +125,10 @@ def prose_problems(path, text):
                 continue
             if body[s:s + 4] == 'i.e.':
                 continue
+            # a string that is the word and nothing else is a unit or a
+            # name, microseconds' us among them, and no sentence at all
+            if kind == 'string' and body[1:-1] == m.group(0):
+                continue
             bad.append((lineno(text, a + s),
                         'first person %r in %s' % (m.group(0),
                         'comment' if kind == 'comment' else 'string')))

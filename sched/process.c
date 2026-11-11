@@ -250,6 +250,7 @@ int process_create(const char *name, int parent, int uid, bool announce,
         p->cwd[c] = '\0';
         if (p_parent != NULL) {
             memcpy(p->arr_root, p_parent->arr_root, sizeof p->arr_root);
+            memcpy(p->arr_exe, p_parent->arr_exe, sizeof p->arr_exe);
         }
 
         size_t n = 0;
@@ -1458,6 +1459,153 @@ void process_set_name(int i_pid, const char *str_name)
         p->name[sz_at] = '\0';
     }
     spin_unlock_irq(&process_lock, u_flags);
+}
+
+void process_set_exe(int i_pid, const char *str_path)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    struct process *p = slot_for(i_pid);
+    if (p != NULL) {
+        strncpy(p->arr_exe, str_path, PATH_MAX - 1);
+        p->arr_exe[PATH_MAX - 1] = '\0';
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+}
+
+/* the signals whose action is a handler, or to be ignored */
+static void actions_of(const struct process *p, struct process_view *p_out)
+{
+    for (int i_sig = 1; i_sig < SIGNAL_MAX; i_sig++) {
+        uint64_t u_handler = p->sig.arr_action[i_sig].sa_handler;
+        if (u_handler == SIG_IGNORE) {
+            p_out->u_ignored |= SIGNAL_BIT(i_sig);
+        } else if (u_handler != SIG_DEFAULT) {
+            p_out->u_caught |= SIGNAL_BIT(i_sig);
+        }
+    }
+}
+
+bool process_view(int i_pid, int i_tid, struct process_view *p_out)
+{
+    memset(p_out, 0, sizeof *p_out);
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    const struct process *p = slot_for(i_pid);
+    const struct task *t = task_for(i_tid);
+    for (size_t sz_i = 0; p != NULL && t == NULL && sz_i < MAX_THREADS;
+         sz_i++) {
+        if (s_arr_tasks[sz_i].i_tid != 0 && s_arr_tasks[sz_i].i_pid == i_pid) {
+            t = &s_arr_tasks[sz_i];
+        }
+    }
+    bool b_found = p != NULL && (t == NULL || t->i_pid == i_pid);
+    if (b_found) {
+        p_out->i_pid = p->pid;
+        p_out->i_tid = (t != NULL) ? t->i_tid : i_tid;
+        p_out->i_thread = (t != NULL) ? t->i_thread : 0;
+        p_out->i_ppid = p->parent;
+        p_out->i_pgid = p->pgid;
+        p_out->i_sid = p->i_sid;
+        p_out->i_uid = p->uid;
+        p_out->i_gid = p->i_gid;
+        memcpy(p_out->arr_groups, p->arr_groups, sizeof p_out->arr_groups);
+        p_out->i_groups = p->i_groups;
+        p_out->u_umask = p->u_umask;
+        memcpy(p_out->arr_name, p->name, sizeof p_out->arr_name);
+        p_out->b_exited = p->exited;
+        p_out->i_stopped_by = p->i_stopped_by;
+        p_out->i_wait_status = p->i_wait_status;
+        p_out->sz_threads = count_threads(p);
+        for (size_t sz_fd = 0; sz_fd < MAX_FDS; sz_fd++) {
+            p_out->sz_fds += (p->fds[sz_fd] != NULL) ? 1 : 0;
+        }
+        p_out->u_started_ms = p->started_ms;
+        p_out->u_shared = p->sig.shared.u_pending;
+        p_out->u_pending = (t != NULL) ? t->sig.own.u_pending : 0;
+        p_out->u_blocked = (t != NULL) ? t->sig.u_blocked : 0;
+        actions_of(p, p_out);
+        memcpy(p_out->arr_limits, p->arr_limits, sizeof p_out->arr_limits);
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    return b_found;
+}
+
+/* str_from into PATH_MAX of str_to, unless that is NULL */
+static void copy_path(char *str_to, const char *str_from)
+{
+    if (str_to != NULL) {
+        strncpy(str_to, str_from, PATH_MAX - 1);
+        str_to[PATH_MAX - 1] = '\0';
+    }
+}
+
+bool process_paths(int i_pid, char *str_cwd, char *str_root, char *str_exe)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    const struct process *p = slot_for(i_pid);
+    if (p != NULL) {
+        copy_path(str_cwd, p->cwd);
+        copy_path(str_root, (p->arr_root[0] != '\0') ? p->arr_root : "/");
+        copy_path(str_exe, p->arr_exe);
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    return p != NULL;
+}
+
+/* p_ids sorted, lowest first: there are never many */
+static void sort_ids(int *p_ids, size_t sz_count)
+{
+    for (size_t sz_at = 1; sz_at < sz_count; sz_at++) {
+        int i_id = p_ids[sz_at];
+        size_t sz_to = sz_at;
+        while (sz_to > 0 && p_ids[sz_to - 1] > i_id) {
+            p_ids[sz_to] = p_ids[sz_to - 1];
+            sz_to--;
+        }
+        p_ids[sz_to] = i_id;
+    }
+}
+
+size_t process_pids(int *p_pids, size_t sz_max)
+{
+    size_t sz_count = 0;
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    for (size_t sz_i = 0; sz_i < MAX_PROCESSES && sz_count < sz_max; sz_i++) {
+        if (table[sz_i].pid != 0) {
+            p_pids[sz_count++] = table[sz_i].pid;
+        }
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    sort_ids(p_pids, sz_count);
+    return sz_count;
+}
+
+size_t process_tids(int i_pid, int *p_tids, size_t sz_max)
+{
+    size_t sz_count = 0;
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    for (size_t sz_i = 0; sz_i < MAX_THREADS && sz_count < sz_max; sz_i++) {
+        if (s_arr_tasks[sz_i].i_tid != 0 && s_arr_tasks[sz_i].i_pid == i_pid) {
+            p_tids[sz_count++] = s_arr_tasks[sz_i].i_tid;
+        }
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    sort_ids(p_tids, sz_count);
+    return sz_count;
+}
+
+int process_fd_from(int i_pid, int i_from)
+{
+    int i_found = -1;
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    const struct process *p = slot_for(i_pid);
+    for (int i_fd = (i_from > 0) ? i_from : 0;
+         p != NULL && i_found < 0 && i_fd < MAX_FDS; i_fd++) {
+        if (p->fds[i_fd] != NULL) {
+            i_found = i_fd;
+        }
+    }
+    spin_unlock_irq(&process_lock, u_flags);
+    return i_found;
 }
 
 /* whether descriptor i_fd closes when its process runs another program */

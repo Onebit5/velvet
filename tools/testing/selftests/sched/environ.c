@@ -32,12 +32,13 @@ static bool listed(int64_t i_len, const char *str_entry)
 
 /*
  * the program again, given an environment of the test's choosing: what
- * it reads of its own in /proc/environ, as a bit for each check, is its
- * exit status
+ * it reads of its own in /proc/self/environ, as a bit for each check, is
+ * its exit status
  */
 static int as_child(void)
 {
-    int64_t i_len = ksft_read_file("/proc/environ", s_arr_text, TEXT_MAX);
+    int64_t i_len = ksft_read_file("/proc/self/environ", s_arr_text,
+                                   TEXT_MAX);
     int i_bits = 0;
 
     i_bits |= listed(i_len, "SELFTEST_ONE=first") ? 1 : 0;
@@ -71,7 +72,7 @@ int main(int i_argc, char **pp_argv)
     int i_bits = WIFEXITED(i_status) ? WEXITSTATUS(i_status) : 0;
 
     ksft_test_result(i_bits != 255 && (i_bits & 1),
-                     "/proc/environ lists what exec was given\n");
+                     "/proc/self/environ lists what exec was given\n");
     ksft_test_result(i_bits != 255 && (i_bits & 2),
                      "and the next, each ended by a NUL\n");
     ksft_test_result(i_bits != 255 && (i_bits & 4),

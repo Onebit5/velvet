@@ -115,6 +115,27 @@ address of the kernel's is no business of a guest's.
 and when, on one line, and ``uptime``, seconds since boot to the
 hundredth. the rest are each subsystem's own.
 
+and a directory for every process, named by its pid, which
+``proc_pid.c`` writes. nothing in it is stored either: a name under
+/proc is walked to a node, a ``struct proc_ref`` the vfs carries in the
+``struct vfs_file`` it hands back, which says which file of which
+process seen through which of its threads, and what the file says is
+worked out from the process table, the scheduler and the process's own
+memory when it is read. ``self`` is a link to the reader's own
+directory, ``thread-self`` to its thread's, ``<pid>/task/<tid>`` a
+directory for each thread with what the process's has but ``task``, and
+a thread's number names a directory too, its process's seen through it,
+though only processes are listed. what a process's directory has is
+laid out for the programs that read it, written for another kernel and
+parsing it field by field: ``stat`` and ``statm`` on a line each,
+``status`` a name and a tab before each value, ``cmdline`` and
+``environ`` the strings exec laid out, ``comm``, ``maps``, ``limits``,
+``mounts`` as the process sees them from its own root, and ``stack``,
+the kernel's calls that led the thread where it is, which is root's.
+the rest belong to whoever the process runs as, ``environ`` to them
+alone. a node's number is a hash of its canonical name, so
+``/proc/self/stat`` and ``/proc/<pid>/stat`` are one file.
+
 the filesystem's own are written by ``diskinfo.c``: ``disk``, the drive
 with every filesystem on it and what the block cache is holding;
 ``partitions``, what each drive's table says it has; and ``mounts``, which

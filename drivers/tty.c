@@ -75,26 +75,41 @@ static bool is_of(const struct tty *t, int i_sid)
 }
 
 /*
- * the terminal i_pid's session has taken, or NULL: a console's or a
- * pty's, which are looked through alike. the lock is held
+ * the terminal session i_sid has taken, or NULL: a console's or a pty's,
+ * which are looked through alike. the lock is held
  */
-static struct tty *ctty_of(int i_pid)
+static struct tty *tty_of(int i_sid)
 {
-    const struct process *p = process_find(i_pid);
-    if (p == NULL) {
-        return NULL;
-    }
     for (unsigned u_at = 0; u_at < VCONSOLE_COUNT; u_at++) {
-        if (is_of(tty_at(u_at), p->i_sid)) {
+        if (is_of(tty_at(u_at), i_sid)) {
             return tty_at(u_at);
         }
     }
     for (size_t sz_at = 0; sz_at < PTY_MAX; sz_at++) {
-        if (is_of(pty_tty_at(sz_at), p->i_sid)) {
+        if (is_of(pty_tty_at(sz_at), i_sid)) {
             return pty_tty_at(sz_at);
         }
     }
     return NULL;
+}
+
+/* and i_pid's session's. the lock is held */
+static struct tty *ctty_of(int i_pid)
+{
+    const struct process *p = process_find(i_pid);
+    return (p != NULL) ? tty_of(p->i_sid) : NULL;
+}
+
+bool tty_of_session(int i_sid, uint32_t *p_rdev, int *p_front)
+{
+    uint64_t u_flags = spin_lock_irq(&g_tty_lock);
+    const struct tty *t = tty_of(i_sid);
+    if (t != NULL) {
+        *p_rdev = t->u_rdev;
+        *p_front = t->i_pgrp;
+    }
+    spin_unlock_irq(&g_tty_lock, u_flags);
+    return t != NULL;
 }
 
 int tty_front(struct tty *t)

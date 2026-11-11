@@ -102,6 +102,38 @@ struct cpu_usage sched_process_usage(int i_pid, struct cpu_usage *p_children);
 /* what a thread has had of the cpus, handed to its process as it ends */
 void sched_account(struct thread *t);
 
+/* what the scheduler knows of one thread, for whoever reports on it */
+struct sched_info {
+    enum thread_state e_state;
+    bool b_stopped;
+    struct cpu_usage cpu;
+    int i_cpu;                  /* where it last ran, -1 for never */
+    char arr_name[THREAD_NAME_MAX];
+};
+
+/* thread i_id's, into p_out: false for no such thread */
+bool sched_info(int i_id, struct sched_info *p_out);
+
+/*
+ * the space a process's threads run in, with a use of it the caller lets
+ * go of with addrspace_put: NULL for one with no thread left in ring 3
+ */
+struct addrspace *sched_space_of(int i_pid);
+
+/*
+ * thread t, the caller, running in p_new from now on: the space it ran
+ * in, whose use is the caller's to let go of. under the lock, so nobody
+ * finding the thread finds a space it has let go of
+ */
+struct addrspace *sched_swap_space(struct thread *t, struct addrspace *p_new);
+
+/*
+ * the kernel's calls that led thread i_id to where it is, printed: the
+ * caller's own, or one parked, and nothing for one running on another
+ * core, whose stack is changing as it is read
+ */
+void sched_show_stack(int i_id);
+
 enum sched_kill_result {
     SCHED_KILL_OK,
     SCHED_KILL_NO_SUCH,

@@ -5,17 +5,21 @@
  * /proc: files the kernel writes at the moment they are read.
  */
 
-#include <velvet/proc.h>
+#include "proc_node.h"
+
 #include <asm/cpu.h>
 #include <velvet/file.h>
 #include <velvet/kmalloc.h>
 #include <velvet/kprintf.h>
 #include <velvet/pit.h>
+#include <velvet/process.h>
 #include <velvet/sched.h>
 #include <velvet/spinlock.h>
 #include <velvet/string.h>
+#include <velvet/vfs.h>
 #include <uapi/velvet/errno.h>
 #include <uapi/velvet/fcntl.h>
+#include <uapi/velvet/stat.h>
 #include <generated/version.h>
 
 /*
@@ -77,21 +81,407 @@ uint32_t proc_mode(size_t sz_index)
     return (sz_index < s_sz_count) ? s_arr_files[sz_index].u_mode : 0;
 }
 
-int64_t proc_render(size_t sz_index, char *str_buf, size_t sz_size)
+/* whether p_ref is a file there is text for */
+static bool is_file(const struct proc_ref *p_ref)
 {
-    if (sz_index >= s_sz_count) {
+    return (p_ref->u_kind == PROC_KIND_FILE && p_ref->sz_index < s_sz_count)
+           || (p_ref->u_kind == PROC_KIND_ENTRY
+               && proc_entry_at(p_ref->sz_index) != NULL
+               && proc_entry_at(p_ref->sz_index)->p_show != NULL);
+}
+
+/* the text of a file as it is now, as proc_render tells it */
+static int64_t render(const struct proc_ref *p_ref, char *str_buf,
+                      size_t sz_size)
+{
+    if (!is_file(p_ref)) {
         return -1;
     }
     struct kcapture cap = { str_buf, sz_size, 0, false };
 
     sched_capture(&cap);
-    s_arr_files[sz_index].p_show();
+    if (p_ref->u_kind == PROC_KIND_FILE) {
+        s_arr_files[p_ref->sz_index].p_show();
+    } else {
+        proc_entry_at(p_ref->sz_index)->p_show(p_ref);
+    }
     sched_capture(NULL);
     return (int64_t)cap.sz_len;
 }
 
+int64_t proc_render(size_t sz_index, char *str_buf, size_t sz_size)
+{
+    struct proc_ref ref = { .u_kind = PROC_KIND_FILE, .sz_index = sz_index };
+    return render(&ref, str_buf, sz_size);
+}
+
+void proc_text_add(struct proc_text *p_text, const char *str_more)
+{
+    for (const char *p_at = str_more; *p_at != '\0'; p_at++) {
+        if (p_text->sz_len + 1 < p_text->sz_size) {
+            p_text->str_buf[p_text->sz_len++] = *p_at;
+        }
+    }
+    if (p_text->sz_size > 0) {
+        p_text->str_buf[p_text->sz_len] = '\0';
+    }
+}
+
+void proc_text_number(struct proc_text *p_text, uint64_t u_number)
+{
+    char arr_digits[24];
+    size_t sz_at = sizeof arr_digits - 1;
+    arr_digits[sz_at] = '\0';
+    do {
+        arr_digits[--sz_at] = (char)('0' + u_number % 10);
+        u_number /= 10;
+    } while (u_number > 0);
+    proc_text_add(p_text, &arr_digits[sz_at]);
+}
+
 /*
- * an open file of /proc: which file, and the text it was last written
+ * the node's name as the namespace has it, with self and thread-self
+ * already followed, into sz_size of str_out: what its number is made of
+ */
+static void canonical(const struct proc_ref *p_ref, char *str_out,
+                      size_t sz_size)
+{
+    struct proc_text text = { str_out, sz_size, 0 };
+    bool b_thread = p_ref->u_kind == PROC_KIND_THREAD
+                    || (p_ref->u_kind == PROC_KIND_ENTRY && p_ref->b_thread);
+    proc_text_add(&text, PROC_AT);
+    switch (p_ref->u_kind) {
+    case PROC_KIND_FILE:
+        proc_text_add(&text, "/");
+        proc_text_add(&text, proc_name(p_ref->sz_index));
+        return;
+    case PROC_KIND_SELF:
+        proc_text_add(&text, "/self");
+        return;
+    case PROC_KIND_THREAD_SELF:
+        proc_text_add(&text, "/thread-self");
+        return;
+    case PROC_KIND_ROOT:
+        return;
+    default:
+        break;
+    }
+    proc_text_add(&text, "/");
+    proc_text_number(&text, (uint64_t)(b_thread ? p_ref->i_pid
+                                                : p_ref->i_tid));
+    if (p_ref->u_kind == PROC_KIND_TASKS || b_thread) {
+        proc_text_add(&text, "/task");
+    }
+    if (b_thread) {
+        proc_text_add(&text, "/");
+        proc_text_number(&text, (uint64_t)p_ref->i_tid);
+    }
+    if (p_ref->u_kind == PROC_KIND_ENTRY) {
+        proc_text_add(&text, "/");
+        proc_text_add(&text, proc_entry_at(p_ref->sz_index)->str_name);
+    }
+}
+
+/*
+ * a number for a node, the same every time it is asked: the hash a path
+ * with no inode of its own is numbered by, of the node's canonical name
+ */
+static uint32_t ino_of(const struct proc_ref *p_ref)
+{
+    char arr_name[PATH_MAX];
+    canonical(p_ref, arr_name, sizeof arr_name);
+    uint64_t u_hash = 1469598103934665603ull;
+    for (const char *p_at = arr_name; *p_at != '\0'; p_at++) {
+        u_hash = (u_hash ^ (uint8_t)*p_at) * 1099511628211ull;
+    }
+    return (uint32_t)((u_hash & 0x7fffffffull) | 0x80000000ull);
+}
+
+/* the node p_ref names, as the namespace is told it */
+static void fill(const struct proc_ref *p_ref, struct vfs_file *p_out)
+{
+    memset(p_out, 0, sizeof *p_out);
+    p_out->kind = VFS_PROC;
+    p_out->proc = *p_ref;
+    p_out->u_ino = ino_of(p_ref);
+    struct proc_text name = { p_out->name, sizeof p_out->name, 0 };
+    const struct proc_entry *p_entry = proc_entry_at(p_ref->sz_index);
+    uint32_t u_mode = S_IFDIR | 0555;
+    switch (p_ref->u_kind) {
+    case PROC_KIND_ROOT:
+        proc_text_add(&name, "proc");
+        break;
+    case PROC_KIND_FILE:
+        /*
+         * none has a size until it is read, so it says 0 and a reader
+         * reads to the end like any other file. who may read it is the
+         * file's own say
+         */
+        proc_text_add(&name, proc_name(p_ref->sz_index));
+        u_mode = S_IFREG | proc_mode(p_ref->sz_index);
+        break;
+    case PROC_KIND_SELF:
+    case PROC_KIND_THREAD_SELF:
+        proc_text_add(&name, (p_ref->u_kind == PROC_KIND_SELF)
+                             ? "self" : "thread-self");
+        u_mode = S_IFLNK | 0777;
+        break;
+    case PROC_KIND_TASKS:
+        proc_text_add(&name, "task");
+        break;
+    case PROC_KIND_ENTRY:
+        proc_text_add(&name, p_entry->str_name);
+        u_mode = p_entry->u_mode;
+        break;
+    default:
+        proc_text_number(&name, (uint64_t)p_ref->i_tid);
+        break;
+    }
+    p_out->is_dir = (u_mode & S_IFMT) == S_IFDIR;
+    p_out->is_symlink = (u_mode & S_IFMT) == S_IFLNK;
+    p_out->mode = u_mode & 07777;
+    /* a process's are whoever it runs as, but for what is root's alone */
+    bool b_process = p_ref->u_kind >= PROC_KIND_PROCESS;
+    if (b_process && !(p_ref->u_kind == PROC_KIND_ENTRY && p_entry->b_root)) {
+        proc_owner(p_ref->i_pid, &p_out->uid, &p_out->gid);
+    }
+}
+
+/*
+ * a name that is a number, as the number: 0 for one that is not, or that
+ * starts with a nought, which no pid is written with
+ */
+static int number_in(const char *str_part)
+{
+    int i_number = 0;
+    if (str_part[0] == '0') {
+        return 0;
+    }
+    for (const char *p_at = str_part; *p_at != '\0'; p_at++) {
+        if (*p_at < '0' || *p_at > '9' || i_number > 99999999) {
+            return 0;
+        }
+        i_number = i_number * 10 + (*p_at - '0');
+    }
+    return i_number;
+}
+
+/*
+ * process i_pid's directory, seen through its thread i_tid, under task/
+ * when b_thread
+ */
+static void see_process(struct proc_ref *p_ref, int i_pid, int i_tid,
+                        bool b_thread)
+{
+    p_ref->u_kind = b_thread ? PROC_KIND_THREAD : PROC_KIND_PROCESS;
+    p_ref->i_pid = i_pid;
+    p_ref->i_tid = i_tid;
+    p_ref->b_thread = b_thread;
+}
+
+/* what str_part is at the top: false for nothing */
+static bool step_top(struct proc_ref *p_ref, const char *str_part,
+                     bool b_follow)
+{
+    int i_number = number_in(str_part);
+    int i_me = current_pid();
+    if (proc_find(str_part, &p_ref->sz_index)) {
+        p_ref->u_kind = PROC_KIND_FILE;
+    } else if (strcmp(str_part, "self") == 0 && !b_follow) {
+        p_ref->u_kind = PROC_KIND_SELF;
+    } else if (strcmp(str_part, "thread-self") == 0 && !b_follow) {
+        p_ref->u_kind = PROC_KIND_THREAD_SELF;
+    } else if (strcmp(str_part, "self") == 0 && i_me != 0) {
+        see_process(p_ref, i_me, i_me, false);
+    } else if (strcmp(str_part, "thread-self") == 0 && i_me != 0) {
+        see_process(p_ref, i_me, current_tid(), true);
+    } else if (i_number != 0 && process_find(i_number) != NULL) {
+        see_process(p_ref, i_number, i_number, false);
+    } else if (i_number != 0 && process_pid_of(i_number) != 0) {
+        see_process(p_ref, process_pid_of(i_number), i_number, false);
+    } else {
+        return false;
+    }
+    return true;
+}
+
+/* p_ref moved to str_part in it, a link there followed when b_follow */
+static bool step(struct proc_ref *p_ref, const char *str_part, bool b_follow)
+{
+    size_t sz_index;
+    int i_tid = number_in(str_part);
+    switch (p_ref->u_kind) {
+    case PROC_KIND_ROOT:
+        return step_top(p_ref, str_part, b_follow);
+    case PROC_KIND_PROCESS:
+    case PROC_KIND_THREAD:
+        if (!proc_entry_find(str_part, p_ref->b_thread, &sz_index)) {
+            return false;
+        }
+        p_ref->sz_index = sz_index;
+        p_ref->u_kind = (proc_entry_at(sz_index)->u_kind != 0)
+                        ? proc_entry_at(sz_index)->u_kind : PROC_KIND_ENTRY;
+        return true;
+    case PROC_KIND_TASKS:
+        if (i_tid == 0 || process_pid_of(i_tid) != p_ref->i_pid) {
+            return false;
+        }
+        see_process(p_ref, p_ref->i_pid, i_tid, true);
+        return true;
+    default:
+        return false;   /* a file, or a link not followed, holds nothing */
+    }
+}
+
+/*
+ * the node str_rest names, every link on the way followed and the last
+ * one when b_follow: false for nothing there
+ */
+static bool walk(const char *str_rest, bool b_follow, struct proc_ref *p_ref)
+{
+    char arr_part[PROC_NAME_MAX];
+    const char *p_at = str_rest;
+
+    memset(p_ref, 0, sizeof *p_ref);
+    p_ref->u_kind = PROC_KIND_ROOT;
+    while (*p_at == '/') {
+        p_at++;
+    }
+    while (*p_at != '\0') {
+        size_t sz_len = 0;
+        while (p_at[sz_len] != '\0' && p_at[sz_len] != '/') {
+            sz_len++;
+        }
+        if (sz_len >= sizeof arr_part) {
+            return false;
+        }
+        memcpy(arr_part, p_at, sz_len);
+        arr_part[sz_len] = '\0';
+        p_at += sz_len;
+        while (*p_at == '/') {
+            p_at++;
+        }
+        if (!step(p_ref, arr_part, b_follow || *p_at != '\0')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool proc_lookup(const char *str_rest, bool b_follow, struct vfs_file *p_out)
+{
+    struct proc_ref ref;
+    if (!walk(str_rest, b_follow, &ref)) {
+        return false;
+    }
+    fill(&ref, p_out);
+    return true;
+}
+
+/*
+ * the entry sz_index of a process's or thread's directory, into p_ref,
+ * skipping what is not in a thread's: false past the last
+ */
+static bool nth_entry(struct proc_ref *p_ref, size_t sz_index)
+{
+    for (size_t sz_at = 0; proc_entry_at(sz_at) != NULL; sz_at++) {
+        const struct proc_entry *p_entry = proc_entry_at(sz_at);
+        if (p_ref->b_thread && p_entry->b_process) {
+            continue;
+        }
+        if (sz_index-- == 0) {
+            p_ref->sz_index = sz_at;
+            p_ref->u_kind = (p_entry->u_kind != 0) ? p_entry->u_kind
+                                                   : PROC_KIND_ENTRY;
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ * what is at the top, in order: the files, self and thread-self, and a
+ * directory for each process
+ */
+static bool nth_top(struct proc_ref *p_ref, size_t sz_index)
+{
+    int arr_pids[MAX_PROCESSES];
+    if (sz_index < s_sz_count) {
+        p_ref->u_kind = PROC_KIND_FILE;
+        p_ref->sz_index = sz_index;
+        return true;
+    }
+    sz_index -= s_sz_count;
+    if (sz_index < 2) {
+        p_ref->u_kind = (sz_index == 0) ? PROC_KIND_SELF
+                                        : PROC_KIND_THREAD_SELF;
+        return true;
+    }
+    sz_index -= 2;
+    size_t sz_pids = process_pids(arr_pids, MAX_PROCESSES);
+    if (sz_index >= sz_pids) {
+        return false;
+    }
+    see_process(p_ref, arr_pids[sz_index], arr_pids[sz_index], false);
+    return true;
+}
+
+bool proc_readdir(const char *str_rest, size_t sz_index,
+                  struct vfs_file *p_out)
+{
+    struct proc_ref ref;
+    int arr_tids[MAX_THREADS];
+    bool b_found = false;
+    if (!walk(str_rest, true, &ref)) {
+        return false;
+    }
+    switch (ref.u_kind) {
+    case PROC_KIND_ROOT:
+        b_found = nth_top(&ref, sz_index);
+        break;
+    case PROC_KIND_PROCESS:
+    case PROC_KIND_THREAD:
+        b_found = nth_entry(&ref, sz_index);
+        break;
+    case PROC_KIND_TASKS:
+        b_found = sz_index < process_tids(ref.i_pid, arr_tids, MAX_THREADS);
+        if (b_found) {
+            see_process(&ref, ref.i_pid, arr_tids[sz_index], true);
+        }
+        break;
+    default:
+        break;
+    }
+    if (b_found) {
+        fill(&ref, p_out);
+    }
+    return b_found;
+}
+
+bool proc_readlink(const char *str_rest, char *str_out, size_t sz_size)
+{
+    struct proc_ref ref;
+    struct proc_text text = { str_out, sz_size, 0 };
+    if (!walk(str_rest, false, &ref) || current_pid() == 0) {
+        return false;
+    }
+    /* relative, so a process under a root of its own reads it the same */
+    switch (ref.u_kind) {
+    case PROC_KIND_SELF:
+        proc_text_number(&text, (uint64_t)current_pid());
+        return true;
+    case PROC_KIND_THREAD_SELF:
+        proc_text_number(&text, (uint64_t)current_pid());
+        proc_text_add(&text, "/task/");
+        proc_text_number(&text, (uint64_t)current_tid());
+        return true;
+    default:
+        return false;
+    }
+}
+
+/*
+ * an open file of /proc: which node, and the text it was last written
  * with, NULL before the first read and for a file that said nothing.
  * the text is swapped under the lock and read under it, so a thread
  * reading from the start while another reads further on hands the
@@ -99,7 +489,7 @@ int64_t proc_render(size_t sz_index, char *str_buf, size_t sz_size)
  */
 struct proc_open {
     struct spinlock lock;
-    size_t sz_index;
+    struct proc_ref ref;
     bool b_written;
     char *p_text;
     size_t sz_len;
@@ -109,13 +499,14 @@ struct proc_open {
  * the file's text as it is now, in memory of its own length, into
  * *pp_text: false with no memory to write it in
  */
-static bool written(size_t sz_index, char **pp_text, size_t *p_len)
+static bool written(const struct proc_ref *p_ref, char **pp_text,
+                    size_t *p_len)
 {
     char *str_whole = kmalloc(PROC_TEXT_MAX);
     if (str_whole == NULL) {
         return false;
     }
-    int64_t i_len = proc_render(sz_index, str_whole, PROC_TEXT_MAX);
+    int64_t i_len = render(p_ref, str_whole, PROC_TEXT_MAX);
     char *p_text = (i_len > 0) ? kmalloc((size_t)i_len) : NULL;
     bool b_ok = i_len == 0 || p_text != NULL;
     if (p_text != NULL) {
@@ -134,7 +525,7 @@ static int64_t open_read(struct file *p_file, void *p_buf, size_t sz_len)
     if (p_file->u_pos == 0 || !p_open->b_written) {
         char *p_text;
         size_t sz_text;
-        if (!written(p_open->sz_index, &p_text, &sz_text)) {
+        if (!written(&p_open->ref, &p_text, &sz_text)) {
             return -ENOMEM;
         }
         uint64_t u_flags = spin_lock_irq(&p_open->lock);
@@ -187,9 +578,9 @@ static const struct file_operations s_open_ops = {
     .release = open_release,
 };
 
-struct file *proc_open(size_t sz_index, uint32_t u_mode)
+struct file *proc_open(const struct proc_ref *p_ref, uint32_t u_mode)
 {
-    if (sz_index >= s_sz_count) {
+    if (!is_file(p_ref)) {
         return NULL;
     }
     struct proc_open *p_open = kmalloc(sizeof *p_open);
@@ -203,7 +594,7 @@ struct file *proc_open(size_t sz_index, uint32_t u_mode)
     }
     memset(p_open, 0, sizeof *p_open);
     spin_init_unlisted(&p_open->lock, "proc file", LOCK_RANK_DEVICE);
-    p_open->sz_index = sz_index;
+    p_open->ref = *p_ref;
     p_file->p_private = p_open;
     return p_file;
 }

@@ -32,7 +32,11 @@
 enum vma_kind {
     VMA_NONE = 0,
     VMA_ANON,       /* zeroes. a stack, or something mmap handed out */
-    VMA_FILE,       /* bytes out of an image that is already in memory */
+    /*
+     * the program's image: bytes out of it as each page is touched, when
+     * it is in memory to be read from, or zeroes past what was read in
+     */
+    VMA_FILE,
 };
 
 struct vma {
@@ -65,9 +69,18 @@ struct addrspace {
     uint64_t u_brk_start;       /* where the program break began, at exec */
     uint64_t u_brk;             /* and where it is now */
 
-    /* where exec put the environment's strings, for whoever asks to see it */
+    /*
+     * where exec put the arguments' strings and the environment's, for
+     * whoever asks to see them
+     */
+    uint64_t u_arg_start;
+    uint64_t u_arg_end;
     uint64_t u_env_start;
     uint64_t u_env_end;
+    uint64_t u_stack_start;     /* and where its stack pointer started */
+
+    /* the faults it has answered: pages made, copied, or already there */
+    uint64_t u_faults;
 
     struct vma vmas[VMA_MAX];
 };
@@ -163,5 +176,34 @@ bool addrspace_fault(struct addrspace *as, uint64_t virt, bool write,
 void addrspace_switch(struct addrspace *as);
 
 uint64_t addrspace_frames(struct addrspace *as);
+
+/*
+ * up to sz_len bytes of the space from u_virt into p_out, for a reader
+ * that is not one of its threads: what /proc shows of a program's
+ * arguments. a page not made yet is not made for this, and is where the
+ * copy stops. how many bytes it copied
+ */
+size_t addrspace_read(struct addrspace *p_as, uint64_t u_virt, void *p_out,
+                      size_t sz_len);
+
+/* what a space holds, in pages, for a report on it */
+struct addrspace_sizes {
+    uint64_t u_size;            /* every page its regions allow */
+    uint64_t u_resident;        /* the pages it has */
+    uint64_t u_file;            /* of those, the ones in an image's regions */
+    uint64_t u_exe;             /* the image's executable regions */
+    uint64_t u_data;            /* the rest it may write, but the stack */
+    uint64_t u_stack;
+    uint64_t u_tables;          /* and the tables saying where they are */
+};
+
+void addrspace_sizes(struct addrspace *p_as, struct addrspace_sizes *p_out);
+
+/*
+ * up to sz_max of its regions into p_out, lowest first: how many it has,
+ * which may be more than fit
+ */
+size_t addrspace_regions(struct addrspace *p_as, struct vma *p_out,
+                         size_t sz_max);
 
 #endif

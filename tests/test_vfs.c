@@ -92,30 +92,59 @@ static const struct {
 #define WORK_COUNT (sizeof work_tree / sizeof work_tree[0])
 
 /*
- * /proc, faked with one file, so what is tested here is the routing: the
- * real files and what they say are tests/test_proc.c's
+ * /proc, faked with two files and a link, so what is tested here is the
+ * routing: the real tree and what it says are tests/test_proc.c's
  */
-bool proc_find(const char *str_name, size_t *p_index)
+static const char *const s_arr_proc[] = { "version", "secret", "self" };
+#define PROC_FAKES (sizeof s_arr_proc / sizeof s_arr_proc[0])
+
+static bool proc_node(size_t sz_index, struct vfs_file *p_out)
 {
-    if (strcmp(str_name, "version") == 0) {
-        *p_index = 0;
-        return true;
+    if (sz_index >= PROC_FAKES) {
+        return false;
     }
-    if (strcmp(str_name, "secret") == 0) {
-        *p_index = 1;
-        return true;
+    memset(p_out, 0, sizeof *p_out);
+    p_out->kind = VFS_PROC;
+    p_out->proc.sz_index = sz_index;
+    strcpy(p_out->name, s_arr_proc[sz_index]);
+    p_out->mode = (sz_index == 0) ? 0444 : (sz_index == 1) ? 0400 : 0777;
+    p_out->is_symlink = sz_index == 2;
+    return true;
+}
+
+/* where under /proc a name is, its own slashes gone */
+static const char *in_proc(const char *str_rest)
+{
+    while (*str_rest == '/') {
+        str_rest++;
+    }
+    return str_rest;
+}
+
+bool proc_lookup(const char *str_rest, bool b_follow, struct vfs_file *p_out)
+{
+    (void)b_follow;
+    for (size_t sz_at = 0; sz_at < PROC_FAKES; sz_at++) {
+        if (strcmp(in_proc(str_rest), s_arr_proc[sz_at]) == 0) {
+            return proc_node(sz_at, p_out);
+        }
     }
     return false;
 }
 
-const char *proc_name(size_t sz_index)
+bool proc_readdir(const char *str_rest, size_t sz_index,
+                  struct vfs_file *p_out)
 {
-    return (sz_index == 0) ? "version" : (sz_index == 1) ? "secret" : NULL;
+    return in_proc(str_rest)[0] == '\0' && proc_node(sz_index, p_out);
 }
 
-uint32_t proc_mode(size_t sz_index)
+bool proc_readlink(const char *str_rest, char *str_out, size_t sz_size)
 {
-    return (sz_index == 0) ? 0444 : (sz_index == 1) ? 0400 : 0;
+    if (strcmp(in_proc(str_rest), "self") != 0 || sz_size < 2) {
+        return false;
+    }
+    strcpy(str_out, "7");
+    return true;
 }
 
 /* an open file of /proc is /proc's own, and here it is the one file */
@@ -140,11 +169,11 @@ static const struct file_operations s_version_ops = {
     .read = version_read,
 };
 
-struct file *proc_open(size_t sz_index, uint32_t u_mode)
+struct file *proc_open(const struct proc_ref *p_ref, uint32_t u_mode)
 {
-    return (sz_index == 0) ? file_alloc(&s_version_ops, u_mode,
-                                        FILE_TYPE_REGULAR)
-                           : NULL;
+    return (p_ref->sz_index == 0) ? file_alloc(&s_version_ops, u_mode,
+                                               FILE_TYPE_REGULAR)
+                                  : NULL;
 }
 
 bool disk_ready(size_t which)
@@ -621,7 +650,17 @@ int main(void)
           "so a guest may not read it, and root may");
     CHECK(vfs_readdir("/proc", 1, &f) && strcmp(f.name, "secret") == 0
           && f.mode == 0400, "it is listed with the mode it has");
-    CHECK(!vfs_readdir("/proc", 2, &f), "and the listing ends there");
+    CHECK(vfs_readdir("/proc", 2, &f) && strcmp(f.name, "self") == 0
+          && f.is_symlink, "and a link");
+    CHECK(!vfs_readdir("/proc", 3, &f), "and the listing ends there");
+    {
+        char arr_to[8];
+        CHECK(vfs_readlink("/proc/self", arr_to, sizeof arr_to)
+              && strcmp(arr_to, "7") == 0,
+              "where a link in /proc leads is /proc's to say");
+        CHECK(!vfs_readlink("/proc/version", arr_to, sizeof arr_to),
+              "and a file there is no link");
+    }
 
     /* the root's listing: the archive, and the directories made on it */
     {
