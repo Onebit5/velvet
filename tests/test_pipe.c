@@ -309,6 +309,38 @@ int main(void)
         CHECK(pipe_count() == before, "and the reading end going frees it");
     }
 
+    /*
+     * another end of a pipe, as opening a descriptor's link in /proc
+     * makes one: a writer out of the reading end, and one for both
+     */
+    {
+        struct file *p_read = NULL;
+        struct file *p_write = NULL;
+        char arr_got[16];
+        CHECK(pipe_open(&p_read, &p_write), "another pipe opens");
+        struct pipe *p_pipe = p_read->p_private;
+        struct file *p_more = pipe_reopen(p_read, FILE_WRITE);
+        CHECK(p_more != NULL && p_more->p_private == p_pipe
+              && p_pipe->writers == 2 && p_more->p_ops->read == NULL
+              && p_more->p_ops->write(p_more, "again", 5) == 5
+              && p_read->p_ops->read(p_read, arr_got, sizeof arr_got) == 5
+              && memcmp(arr_got, "again", 5) == 0,
+              "an end reopened is another writer into the same pipe");
+        struct file *p_both = pipe_reopen(p_more, FILE_READ | FILE_WRITE);
+        CHECK(p_both != NULL && p_pipe->readers == 2 && p_pipe->writers == 3
+              && p_both->p_ops->write(p_both, "xy", 2) == 2
+              && p_both->p_ops->read(p_both, arr_got, sizeof arr_got) == 2,
+              "and one open both ways reads and writes it");
+        CHECK(pipe_reopen(p_both, 0) == NULL, "but not one open for nothing");
+        file_put(p_write);
+        file_put(p_more);
+        file_put(p_both);
+        CHECK(p_pipe->writers == 0 && p_pipe->readers == 1
+              && pipe_count() == before + 1,
+              "each counts as its end until it goes");
+        file_put(p_read);
+    }
+
     CHECK(pipe_count() == before, "nothing leaked along the way");
 
     /* a descriptor that may not wait is told so, rather than waited on */

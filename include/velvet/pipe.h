@@ -35,6 +35,9 @@ struct pipe {
 
     struct waitq readable;      /* writers wake this */
     struct waitq writable;      /* readers wake this */
+
+    /* a number of its own, which fstat and /proc call it by */
+    uint32_t u_ino;
 };
 
 /*
@@ -78,6 +81,13 @@ struct file;
 
 /* a new pipe, as two files: one to read it and one to write it */
 bool pipe_open(struct file **pp_read, struct file **pp_write);
+
+/*
+ * another end of the pipe p_end is an end of, open for u_mode, either way
+ * or both: what opening a pipe's descriptor in /proc is. NULL for no
+ * memory, or for p_end not being a pipe's end
+ */
+struct file *pipe_reopen(const struct file *p_end, uint32_t u_mode);
 
 struct vfs_file;
 

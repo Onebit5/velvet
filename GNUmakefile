@@ -677,7 +677,7 @@ $(T)/epoch:    tests/test_epoch.c    lib/epoch.c lib/clock.c
 # structure, and its interesting cases are all at the edges
 $(T)/pressure: tests/test_pressure.c mm/pressure.c
 $(T)/vfs:      tests/test_vfs.c      fs/vfs.c fs/file.c fs/dev.c \
-               fs/ramdisk.c fs/ramfs.c sched/spinlock.c \
+               fs/ramdisk.c fs/ramfs.c fs/path.c sched/spinlock.c \
                lib/string.c
 # the protocol as the kernel declares it against the loader's own header,
 # field by field, since the two describe the same bytes and neither can

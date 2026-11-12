@@ -20,6 +20,9 @@
 /* how many are alive. only for saying so, nothing depends on it */
 static size_t live;
 
+/* how many have been made, which numbers the next */
+static uint32_t s_u_made;
+
 void pipe_reset(struct pipe *p)
 {
     memset(p, 0, sizeof *p);
@@ -89,6 +92,7 @@ struct pipe *pipe_create(void)
         return NULL;
     }
     pipe_reset(p);
+    p->u_ino = __atomic_add_fetch(&s_u_made, 1, __ATOMIC_RELAXED);
     live++;
     return p;
 }
@@ -311,6 +315,53 @@ static const struct file_operations write_end_ops = {
     .release = end_release_write,
     .poll = end_poll_write,
 };
+
+/* an end open for both, which only an open through /proc makes */
+static uint32_t end_poll_both(struct file *p_file)
+{
+    return end_poll_read(p_file) | end_poll_write(p_file);
+}
+
+static void end_release_both(struct file *p_file)
+{
+    pipe_close_read(p_file->p_private);
+    pipe_close_write(p_file->p_private);
+}
+
+static const struct file_operations both_end_ops = {
+    .read = end_read,
+    .write = end_write,
+    .release = end_release_both,
+    .poll = end_poll_both,
+};
+
+struct file *pipe_reopen(const struct file *p_end, uint32_t u_mode)
+{
+    bool b_end = p_end->p_ops == &read_end_ops
+                 || p_end->p_ops == &write_end_ops
+                 || p_end->p_ops == &both_end_ops;
+    bool b_read = (u_mode & FILE_READ) != 0;
+    bool b_write = (u_mode & FILE_WRITE) != 0;
+    const struct file_operations *p_ops = (b_read && b_write) ? &both_end_ops
+                                        : b_read ? &read_end_ops
+                                        : &write_end_ops;
+    struct file *p_file = (b_end && (b_read || b_write))
+                          ? file_alloc(p_ops, u_mode, FILE_TYPE_PIPE) : NULL;
+    if (p_file == NULL) {
+        return NULL;
+    }
+    /*
+     * p_end is open, so the pipe has an end still, and nothing frees it
+     * while the count is raised
+     */
+    struct pipe *p = p_end->p_private;
+    uint64_t u_flags = spin_lock_irq(&p->lock);
+    p->readers += b_read ? 1 : 0;
+    p->writers += b_write ? 1 : 0;
+    spin_unlock_irq(&p->lock, u_flags);
+    p_file->p_private = p;
+    return p_file;
+}
 
 /*
  * a fifo is a pipe with a name. every open of the one node shares one

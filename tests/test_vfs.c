@@ -138,13 +138,35 @@ bool proc_readdir(const char *str_rest, size_t sz_index,
     return in_proc(str_rest)[0] == '\0' && proc_node(sz_index, p_out);
 }
 
-bool proc_readlink(const char *str_rest, char *str_out, size_t sz_size)
+int64_t proc_readlink(const char *str_rest, char *str_out, size_t sz_size)
 {
     if (strcmp(in_proc(str_rest), "self") != 0 || sz_size < 2) {
-        return false;
+        return -EINVAL;
     }
     strcpy(str_out, "7");
-    return true;
+    return 0;
+}
+
+/*
+ * and two links out of /proc, as a process's are: one to the work disk,
+ * and one to itself, round and round. a name without them has none
+ */
+int64_t proc_expand(const char *str_rest, bool b_last, char *str_out,
+                    size_t *p_used)
+{
+    static const char *const s_arr_from[] = { "/self/cwd", "/self/loop" };
+    static const char *const s_arr_to[] = { "/mnt", "/proc/self/loop" };
+    for (size_t sz_at = 0; sz_at < 2; sz_at++) {
+        size_t sz_len = strlen(s_arr_from[sz_at]);
+        bool b_more = str_rest[sz_len] == '/';
+        if (strncmp(str_rest, s_arr_from[sz_at], sz_len) == 0
+            && (b_more || (str_rest[sz_len] == '\0' && b_last))) {
+            strcpy(str_out, s_arr_to[sz_at]);
+            *p_used = sz_len;
+            return 1;
+        }
+    }
+    return 0;
 }
 
 /* an open file of /proc is /proc's own, and here it is the one file */
@@ -655,11 +677,35 @@ int main(void)
     CHECK(!vfs_readdir("/proc", 3, &f), "and the listing ends there");
     {
         char arr_to[8];
-        CHECK(vfs_readlink("/proc/self", arr_to, sizeof arr_to)
+        CHECK(vfs_readlink("/proc/self", arr_to, sizeof arr_to) == 0
               && strcmp(arr_to, "7") == 0,
               "where a link in /proc leads is /proc's to say");
-        CHECK(!vfs_readlink("/proc/version", arr_to, sizeof arr_to),
+        CHECK(vfs_readlink("/proc/version", arr_to, sizeof arr_to) == -EINVAL,
               "and a file there is no link");
+    }
+    {
+        char arr_path[PATH_MAX];
+        strcpy(arr_path, "/proc/self/cwd/notes.txt");
+        CHECK(vfs_expand(arr_path, false) == 0
+              && strcmp(arr_path, "/mnt/notes.txt") == 0,
+              "a link out of /proc on the way is followed by the namespace");
+        strcpy(arr_path, "/proc/self/cwd/../job");
+        CHECK(vfs_expand(arr_path, false) == 0
+              && strcmp(arr_path, "/job") == 0,
+              "and a .. after it climbs out of where it led");
+        strcpy(arr_path, "/proc/self/cwd");
+        CHECK(vfs_expand(arr_path, false) == 0
+              && strcmp(arr_path, "/proc/self/cwd") == 0
+              && vfs_expand(arr_path, true) == 0
+              && strcmp(arr_path, "/mnt") == 0,
+              "the last only when it is to be followed");
+        strcpy(arr_path, "/proc/self/loop");
+        CHECK(vfs_expand(arr_path, true) == -ELOOP,
+              "and one that leads to itself, only so far");
+        strcpy(arr_path, "/mnt/self/cwd/x");
+        CHECK(vfs_expand(arr_path, true) == 0
+              && strcmp(arr_path, "/mnt/self/cwd/x") == 0,
+              "a name anywhere else is left as it is");
     }
 
     /* the root's listing: the archive, and the directories made on it */

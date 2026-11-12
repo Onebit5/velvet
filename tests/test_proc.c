@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <sys/stat.h>      /* S_IFIFO, which is the same number here */
 
 /* the lock complains through this when something is wrong with it */
 void panic(const char *fmt, ...)
@@ -27,10 +28,13 @@ void panic(const char *fmt, ...)
 #include <velvet/addrspace.h>
 #include <velvet/file.h>
 #include <velvet/kprintf.h>
+#include <velvet/dev.h>
 #include <velvet/namei.h>
+#include <velvet/pipe.h>
 #include <velvet/process.h>
 #include <velvet/sched.h>
 #include <velvet/slab.h>
+#include <velvet/socket.h>
 #include <velvet/tty.h>
 #include <velvet/usermode.h>
 #include <velvet/vfs.h>
@@ -345,6 +349,86 @@ void path_seen_from(const char *str_root, const char *str_path,
     strcpy(str_out, str_path);
 }
 
+/* who the reader is: worker's owner, unless a test says otherwise */
+static int s_i_my_uid = 1000;
+int current_uid(void)
+{
+    return s_i_my_uid;
+}
+
+/*
+ * what worker has open: the terminal the kernel gave it, a pipe's
+ * writing end, a file by its name, and a socket. each with references
+ * enough that a test's puts never free it
+ */
+static struct pipe s_pipe = { .u_ino = 77 };
+static struct file s_arr_fds[4] = {
+    { .u_refs = 1000, .u_mode = FILE_READ | FILE_WRITE,
+      .e_type = FILE_TYPE_TTY, .u_rdev = (4u << 8) | 1u },
+    { .u_refs = 1000, .u_mode = FILE_WRITE, .e_type = FILE_TYPE_PIPE,
+      .p_private = &s_pipe },
+    { .u_refs = 1000, .u_mode = FILE_READ | FILE_WRITE,
+      .e_type = FILE_TYPE_REGULAR, .u_pos = 12, .u_flags = O_APPEND,
+      .arr_path = "/home/notes" },
+    { .u_refs = 1000, .u_mode = FILE_READ | FILE_WRITE,
+      .e_type = FILE_TYPE_SOCKET },
+};
+static const int s_arr_fd_numbers[4] = { 0, 1, 2, 5 };
+
+struct file *process_fd_file(int i_pid, int i_fd)
+{
+    for (size_t sz_at = 0; i_pid == 7 && sz_at < 4; sz_at++) {
+        if (s_arr_fd_numbers[sz_at] == i_fd) {
+            s_arr_fds[sz_at].u_refs++;
+            return &s_arr_fds[sz_at];
+        }
+    }
+    return NULL;
+}
+int process_fd_from(int i_pid, int i_from)
+{
+    for (size_t sz_at = 0; i_pid == 7 && sz_at < 4; sz_at++) {
+        if (s_arr_fd_numbers[sz_at] >= i_from) {
+            return s_arr_fd_numbers[sz_at];
+        }
+    }
+    return -1;
+}
+int process_fd_cloexec(int i_pid, int i_fd, int i_set)
+{
+    (void)i_set;
+    return (i_pid == 7 && i_fd == 5) ? 1 : 0;
+}
+uint64_t file_ino(const struct file *p_file)
+{
+    return (p_file == &s_arr_fds[1]) ? 77 : 4321;
+}
+uint32_t socket_ino(const struct file *p_file)
+{
+    (void)p_file;
+    return 1048577;
+}
+bool dev_find_rdev(uint32_t u_rdev, size_t *p_index)
+{
+    *p_index = 0;
+    return u_rdev == ((4u << 8) | 1u);
+}
+const char *dev_name(size_t sz_index)
+{
+    return (sz_index == 0) ? "tty1" : NULL;
+}
+
+/* an end reopened: which it was another of, and how */
+static const struct file *s_p_reopened;
+static uint32_t s_u_reopened_mode;
+static struct file s_new_end = { .u_refs = 1000 };
+struct file *pipe_reopen(const struct file *p_end, uint32_t u_mode)
+{
+    s_p_reopened = p_end;
+    s_u_reopened_mode = u_mode;
+    return &s_new_end;
+}
+
 static int s_i_failures = 0;
 #define CHECK(cond, msg) do { \
     if (!(cond)) { printf("FAIL: %s\n", msg); s_i_failures++; } \
@@ -455,19 +539,19 @@ static void check_tree(void)
 
     CHECK(proc_lookup("/self", false, &node) && node.is_symlink
           && node.mode == 0777, "self is a link");
-    CHECK(proc_readlink("/self", arr_to, sizeof arr_to)
+    CHECK(proc_readlink("/self", arr_to, sizeof arr_to) == 0
           && strcmp(arr_to, "7") == 0, "to the reader's process");
     CHECK(proc_lookup("/self", true, &node) && node.is_dir
           && node.proc.i_pid == 7, "and followed, is its directory");
     s_i_my_tid = 9;
-    CHECK(proc_readlink("/thread-self", arr_to, sizeof arr_to)
+    CHECK(proc_readlink("/thread-self", arr_to, sizeof arr_to) == 0
           && strcmp(arr_to, "7/task/9") == 0,
           "thread-self is the reader's thread's");
     CHECK(proc_lookup("/thread-self/comm", true, &node)
           && node.proc.b_thread && node.proc.i_tid == 9,
           "and what is in it is that thread's");
     s_i_my_tid = 7;
-    CHECK(!proc_readlink("/7", arr_to, sizeof arr_to),
+    CHECK(proc_readlink("/7", arr_to, sizeof arr_to) == -EINVAL,
           "a directory is no link");
 
     CHECK(strcmp(listed("/7/task", 0), "7") == 0
@@ -479,7 +563,7 @@ static void check_tree(void)
           "each a directory of its own, with no task in it, and only its own"
           " process's");
     CHECK(strcmp(listed("/7", 0), "task") == 0
-          && strcmp(listed("/7/task/9", 0), "environ") == 0,
+          && strcmp(listed("/7/task/9", 0), "fd") == 0,
           "which a thread's listing leaves out");
 
     CHECK(proc_lookup("/7/stack", true, &node) && node.mode == 0400
@@ -494,6 +578,100 @@ static void check_tree(void)
     CHECK(!proc_lookup("/7/nothing", true, &node)
           && !proc_lookup("/version/x", true, &node),
           "and what is not there is not");
+}
+
+/* where the link str_rest names leads, or why not, as a string */
+static const char *link_to(const char *str_rest)
+{
+    static char s_arr_to[PATH_MAX];
+    int64_t i_why = proc_readlink(str_rest, s_arr_to, sizeof s_arr_to);
+    return (i_why == -EACCES) ? "EACCES" : (i_why < 0) ? "ERROR" : s_arr_to;
+}
+
+static void check_links(void)
+{
+    struct vfs_file node;
+    char arr_text[512];
+    char arr_to[PATH_MAX];
+    size_t sz_used = 0;
+
+    CHECK(strcmp(listed("/7/fd", 0), "0") == 0
+          && strcmp(listed("/7/fd", 1), "1") == 0
+          && strcmp(listed("/7/fd", 3), "5") == 0 && listed("/7/fd", 4)[0] == 0
+          && strcmp(listed("/7/fdinfo", 2), "2") == 0,
+          "fd and fdinfo list what is open");
+    CHECK(proc_lookup("/7/fd", true, &node) && node.is_dir && node.mode == 0500
+          && node.uid == 1000, "fd is its owner's alone to look through");
+    CHECK(proc_lookup("/7/fd/1", false, &node) && node.is_symlink
+          && node.mode == 0300 && proc_lookup("/7/fd/2", false, &node)
+          && node.mode == 0700, "a descriptor is a link, as open as it is");
+    CHECK(!proc_lookup("/7/fd/3", false, &node)
+          && !proc_lookup("/7/fd/00", false, &node),
+          "one that is not open is nothing");
+
+    CHECK(strcmp(link_to("/7/fd/0"), "/dev/tty1") == 0,
+          "a terminal the kernel opened leads to its name in /dev");
+    CHECK(strcmp(link_to("/7/fd/1"), "pipe:[77]") == 0
+          && strcmp(link_to("/7/fd/5"), "socket:[1048577]") == 0,
+          "a pipe and a socket to what they are called");
+    CHECK(strcmp(link_to("/7/fd/2"), "/home/notes") == 0
+          && strcmp(link_to("/7/cwd"), "/home") == 0
+          && strcmp(link_to("/7/root"), "/") == 0
+          && strcmp(link_to("/self/exe"), "/bin/worker") == 0,
+          "and a file, where it stands, its root and its program, to names");
+    s_i_my_uid = 1001;
+    CHECK(strcmp(link_to("/7/cwd"), "EACCES") == 0
+          && strcmp(link_to("/7/fd/2"), "EACCES") == 0
+          && strcmp(link_to("/self"), "7") == 0,
+          "somebody else may not follow them");
+    CHECK(proc_expand("/7/cwd/notes", false, arr_to, &sz_used) == -EACCES,
+          "nor through them");
+    s_i_my_uid = 0;
+    CHECK(strcmp(link_to("/7/cwd"), "/home") == 0, "and root may");
+    s_i_my_uid = 1000;
+    CHECK(strcmp(link_to("/7/status"), "ERROR") == 0, "a file is no link");
+
+    CHECK(proc_lookup("/7/fd/1", true, &node) && !node.is_symlink
+          && node.u_type == S_IFIFO && node.u_ino == 77 && node.mode == 0600,
+          "followed, a pipe's is the pipe");
+    struct file *p_of = proc_file_of(&node);
+    CHECK(p_of == &s_arr_fds[1], "the very file the descriptor is");
+    if (p_of != NULL) {
+        file_put(p_of);
+    }
+    CHECK(proc_open(&node.proc, FILE_READ) == &s_new_end
+          && s_p_reopened == &s_arr_fds[1] && s_u_reopened_mode == FILE_READ,
+          "and opening it opens another end of that pipe, either way");
+    CHECK(proc_lookup("/7/fd/2", true, &node) && node.is_symlink,
+          "a name's is left for the namespace to follow");
+
+    CHECK(proc_expand("/7/cwd/notes", false, arr_to, &sz_used) == 1
+          && strcmp(arr_to, "/home") == 0 && sz_used == 6,
+          "a link out of /proc on the way is where it leads");
+    CHECK(proc_expand("/7/cwd", false, arr_to, &sz_used) == 0
+          && proc_expand("/7/cwd", true, arr_to, &sz_used) == 1
+          && sz_used == 6, "and the last one only when asked");
+    CHECK(proc_expand("/self/fd/2", true, arr_to, &sz_used) == 1
+          && strcmp(arr_to, "/home/notes") == 0 && sz_used == 10,
+          "a descriptor's, by whichever name it is reached");
+    CHECK(proc_expand("/7/fd/1/x", false, arr_to, &sz_used) == 0
+          && proc_expand("/7/status", true, arr_to, &sz_used) == 0
+          && proc_expand("/self/task/9", true, arr_to, &sz_used) == 0,
+          "and a pipe's, a file or a directory is no way out");
+
+    CHECK(read_node("/7/fdinfo/2", arr_text) > 0
+          && strcmp(arr_text, "pos:\t12\nflags:\t0102002\nmnt_id:\t0\n"
+                              "ino:\t4321\n") == 0,
+          "fdinfo is where it is and the flags it was opened with");
+    CHECK(read_node("/7/fdinfo/5", arr_text) > 0
+          && strncmp(arr_text, "pos:\t0\nflags:\t02000002\n", 23) == 0,
+          "close on exec among them");
+    struct vfs_file other;
+    CHECK(proc_lookup("/self/fd/1", false, &node)
+          && proc_lookup("/7/fd/1", false, &other) && node.u_ino == other.u_ino
+          && proc_lookup("/7/fdinfo/1", false, &other)
+          && node.u_ino != other.u_ino,
+          "a descriptor's link is numbered by its name too");
 }
 
 static void check_files(void)
@@ -745,6 +923,7 @@ int main(void)
 
     check_tree();
     check_files();
+    check_links();
 
     if (s_i_failures == 0) {
         printf("all good\n");

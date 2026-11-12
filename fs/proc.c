@@ -11,6 +11,8 @@
 #include <velvet/file.h>
 #include <velvet/kmalloc.h>
 #include <velvet/kprintf.h>
+#include <velvet/namei.h>
+#include <velvet/pipe.h>
 #include <velvet/pit.h>
 #include <velvet/process.h>
 #include <velvet/sched.h>
@@ -87,7 +89,8 @@ static bool is_file(const struct proc_ref *p_ref)
     return (p_ref->u_kind == PROC_KIND_FILE && p_ref->sz_index < s_sz_count)
            || (p_ref->u_kind == PROC_KIND_ENTRY
                && proc_entry_at(p_ref->sz_index) != NULL
-               && proc_entry_at(p_ref->sz_index)->p_show != NULL);
+               && proc_entry_at(p_ref->sz_index)->p_show != NULL)
+           || p_ref->u_kind == PROC_KIND_FDINFO;
 }
 
 /* the text of a file as it is now, as proc_render tells it */
@@ -102,6 +105,8 @@ static int64_t render(const struct proc_ref *p_ref, char *str_buf,
     sched_capture(&cap);
     if (p_ref->u_kind == PROC_KIND_FILE) {
         s_arr_files[p_ref->sz_index].p_show();
+    } else if (p_ref->u_kind == PROC_KIND_FDINFO) {
+        proc_show_fdinfo(p_ref);
     } else {
         proc_entry_at(p_ref->sz_index)->p_show(p_ref);
     }
@@ -147,8 +152,7 @@ static void canonical(const struct proc_ref *p_ref, char *str_out,
                       size_t sz_size)
 {
     struct proc_text text = { str_out, sz_size, 0 };
-    bool b_thread = p_ref->u_kind == PROC_KIND_THREAD
-                    || (p_ref->u_kind == PROC_KIND_ENTRY && p_ref->b_thread);
+    bool b_thread = p_ref->b_thread;
     proc_text_add(&text, PROC_AT);
     switch (p_ref->u_kind) {
     case PROC_KIND_FILE:
@@ -176,9 +180,25 @@ static void canonical(const struct proc_ref *p_ref, char *str_out,
         proc_text_add(&text, "/");
         proc_text_number(&text, (uint64_t)p_ref->i_tid);
     }
-    if (p_ref->u_kind == PROC_KIND_ENTRY) {
+    switch (p_ref->u_kind) {
+    case PROC_KIND_ENTRY:
         proc_text_add(&text, "/");
         proc_text_add(&text, proc_entry_at(p_ref->sz_index)->str_name);
+        break;
+    case PROC_KIND_FDS:
+    case PROC_KIND_FDINFOS:
+        proc_text_add(&text, (p_ref->u_kind == PROC_KIND_FDS) ? "/fd"
+                                                             : "/fdinfo");
+        break;
+    case PROC_KIND_FD:
+    case PROC_KIND_FD_FILE:
+    case PROC_KIND_FDINFO:
+        proc_text_add(&text, (p_ref->u_kind == PROC_KIND_FDINFO) ? "/fdinfo/"
+                                                                : "/fd/");
+        proc_text_number(&text, p_ref->sz_index);
+        break;
+    default:
+        break;
     }
 }
 
@@ -195,6 +215,35 @@ static uint32_t ino_of(const struct proc_ref *p_ref)
         u_hash = (u_hash ^ (uint8_t)*p_at) * 1099511628211ull;
     }
     return (uint32_t)((u_hash & 0x7fffffffull) | 0x80000000ull);
+}
+
+/*
+ * what a descriptor's node is: fdinfo's file, the link, readable or
+ * writable as the descriptor is, or what the link leads to, followed,
+ * which is the descriptor's own file and numbered as fstat numbers it
+ */
+static uint32_t descriptor_mode(const struct proc_ref *p_ref,
+                                struct vfs_file *p_out)
+{
+    if (p_ref->u_kind == PROC_KIND_FDINFO) {
+        return S_IFREG | 0400;
+    }
+    struct file *p_file = process_fd_file(p_ref->i_pid, (int)p_ref->sz_index);
+    if (p_file == NULL) {
+        return S_IFLNK;
+    }
+    uint32_t u_mode = ((p_file->u_mode & FILE_READ) ? 0500 : 0)
+                      | ((p_file->u_mode & FILE_WRITE) ? 0300 : 0);
+    if (p_ref->u_kind == PROC_KIND_FD_FILE) {
+        p_out->u_type = (p_file->e_type == FILE_TYPE_SOCKET) ? S_IFSOCK
+                                                             : S_IFIFO;
+        p_out->u_ino = (uint32_t)file_ino(p_file);
+        u_mode = p_out->u_type | 0600;
+    } else {
+        u_mode |= S_IFLNK;
+    }
+    file_put(p_file);
+    return u_mode;
 }
 
 /* the node p_ref names, as the namespace is told it */
@@ -233,6 +282,19 @@ static void fill(const struct proc_ref *p_ref, struct vfs_file *p_out)
         proc_text_add(&name, p_entry->str_name);
         u_mode = p_entry->u_mode;
         break;
+    case PROC_KIND_FDS:
+        proc_text_add(&name, "fd");
+        u_mode = S_IFDIR | 0500;
+        break;
+    case PROC_KIND_FDINFOS:
+        proc_text_add(&name, "fdinfo");
+        break;
+    case PROC_KIND_FD:
+    case PROC_KIND_FD_FILE:
+    case PROC_KIND_FDINFO:
+        proc_text_number(&name, p_ref->sz_index);
+        u_mode = descriptor_mode(p_ref, p_out);
+        break;
     default:
         proc_text_number(&name, (uint64_t)p_ref->i_tid);
         break;
@@ -264,6 +326,14 @@ static int number_in(const char *str_part)
         i_number = i_number * 10 + (*p_at - '0');
     }
     return i_number;
+}
+
+/* a descriptor's number, which may be 0: -1 for a name that is none */
+static int fd_in(const char *str_part)
+{
+    int i_number = number_in(str_part);
+    return (strcmp(str_part, "0") == 0) ? 0 : (i_number != 0) ? i_number
+                                                               : -1;
 }
 
 /*
@@ -305,6 +375,26 @@ static bool step_top(struct proc_ref *p_ref, const char *str_part,
     return true;
 }
 
+/*
+ * descriptor i_fd in fd/ or fdinfo/, if it is open. a link in fd/ that
+ * leads to a name is followed by the namespace, which looks that name
+ * up; one that leads to a file with no name, a pipe's or a socket's, is
+ * followed here, to that file
+ */
+static bool step_fd(struct proc_ref *p_ref, int i_fd, bool b_follow)
+{
+    char arr_to[PATH_MAX];
+    if (i_fd < 0 || process_fd_from(p_ref->i_pid, i_fd) != i_fd) {
+        return false;
+    }
+    bool b_named = proc_fd_target(p_ref->i_pid, i_fd, arr_to);
+    p_ref->sz_index = (size_t)i_fd;
+    p_ref->u_kind = (p_ref->u_kind == PROC_KIND_FDINFOS) ? PROC_KIND_FDINFO
+                  : (b_follow && !b_named) ? PROC_KIND_FD_FILE
+                  : PROC_KIND_FD;
+    return true;
+}
+
 /* p_ref moved to str_part in it, a link there followed when b_follow */
 static bool step(struct proc_ref *p_ref, const char *str_part, bool b_follow)
 {
@@ -328,6 +418,9 @@ static bool step(struct proc_ref *p_ref, const char *str_part, bool b_follow)
         }
         see_process(p_ref, p_ref->i_pid, i_tid, true);
         return true;
+    case PROC_KIND_FDS:
+    case PROC_KIND_FDINFOS:
+        return step_fd(p_ref, fd_in(str_part), b_follow);
     default:
         return false;   /* a file, or a link not followed, holds nothing */
     }
@@ -426,6 +519,22 @@ static bool nth_top(struct proc_ref *p_ref, size_t sz_index)
     return true;
 }
 
+/* the descriptor sz_index of those open, as a link or what fdinfo says */
+static bool nth_fd(struct proc_ref *p_ref, size_t sz_index)
+{
+    int i_fd = process_fd_from(p_ref->i_pid, 0);
+    for (; i_fd >= 0 && sz_index > 0; sz_index--) {
+        i_fd = process_fd_from(p_ref->i_pid, i_fd + 1);
+    }
+    if (i_fd < 0) {
+        return false;
+    }
+    p_ref->sz_index = (size_t)i_fd;
+    p_ref->u_kind = (p_ref->u_kind == PROC_KIND_FDS) ? PROC_KIND_FD
+                                                     : PROC_KIND_FDINFO;
+    return true;
+}
+
 bool proc_readdir(const char *str_rest, size_t sz_index,
                   struct vfs_file *p_out)
 {
@@ -449,6 +558,10 @@ bool proc_readdir(const char *str_rest, size_t sz_index,
             see_process(&ref, ref.i_pid, arr_tids[sz_index], true);
         }
         break;
+    case PROC_KIND_FDS:
+    case PROC_KIND_FDINFOS:
+        b_found = nth_fd(&ref, sz_index);
+        break;
     default:
         break;
     }
@@ -458,26 +571,116 @@ bool proc_readdir(const char *str_rest, size_t sz_index,
     return b_found;
 }
 
-bool proc_readlink(const char *str_rest, char *str_out, size_t sz_size)
+/*
+ * where a link that leads out of /proc leads, a name in the namespace,
+ * into PATH_MAX of str_out: false for no such link, or a descriptor's
+ * file with no name, which is then what str_out calls it
+ */
+static bool leads_to(const struct proc_ref *p_ref, char *str_out)
+{
+    const struct proc_entry *p_entry = proc_entry_at(p_ref->sz_index);
+    str_out[0] = '\0';
+    if (p_ref->u_kind == PROC_KIND_FD) {
+        return proc_fd_target(p_ref->i_pid, (int)p_ref->sz_index, str_out);
+    }
+    return p_ref->u_kind == PROC_KIND_ENTRY && p_entry->p_link != NULL
+           && p_entry->p_link(p_ref->i_pid, str_out);
+}
+
+/* whether p_ref is a link out of /proc */
+static bool is_link_out(const struct proc_ref *p_ref)
+{
+    return p_ref->u_kind == PROC_KIND_FD
+           || (p_ref->u_kind == PROC_KIND_ENTRY
+               && proc_entry_at(p_ref->sz_index)->p_link != NULL);
+}
+
+int64_t proc_readlink(const char *str_rest, char *str_out, size_t sz_size)
 {
     struct proc_ref ref;
     struct proc_text text = { str_out, sz_size, 0 };
+    char arr_to[PATH_MAX];
     if (!walk(str_rest, false, &ref) || current_pid() == 0) {
-        return false;
+        return -EINVAL;
     }
     /* relative, so a process under a root of its own reads it the same */
     switch (ref.u_kind) {
     case PROC_KIND_SELF:
         proc_text_number(&text, (uint64_t)current_pid());
-        return true;
+        return 0;
     case PROC_KIND_THREAD_SELF:
         proc_text_number(&text, (uint64_t)current_pid());
         proc_text_add(&text, "/task/");
         proc_text_number(&text, (uint64_t)current_tid());
-        return true;
+        return 0;
     default:
-        return false;
+        break;
     }
+    if (!is_link_out(&ref)) {
+        return -EINVAL;
+    }
+    if (!proc_may_follow(ref.i_pid)) {
+        return -EACCES;
+    }
+    /* a name as the reader would give it, under its own root */
+    char arr_seen[PATH_MAX];
+    if (leads_to(&ref, arr_to)) {
+        path_seen_from(process_root(current_pid()), arr_to, arr_seen);
+        proc_text_add(&text, arr_seen);
+    } else if (arr_to[0] != '\0') {
+        proc_text_add(&text, arr_to);
+    } else {
+        return -ENOENT;
+    }
+    return 0;
+}
+
+int64_t proc_expand(const char *str_rest, bool b_last, char *str_out,
+                    size_t *p_used)
+{
+    struct proc_ref ref;
+    char arr_part[PROC_NAME_MAX];
+    const char *p_at = str_rest;
+
+    memset(&ref, 0, sizeof ref);
+    ref.u_kind = PROC_KIND_ROOT;
+    while (*p_at == '/') {
+        p_at++;
+    }
+    while (*p_at != '\0') {
+        size_t sz_len = 0;
+        while (p_at[sz_len] != '\0' && p_at[sz_len] != '/') {
+            sz_len++;
+        }
+        if (sz_len >= sizeof arr_part) {
+            return 0;
+        }
+        memcpy(arr_part, p_at, sz_len);
+        arr_part[sz_len] = '\0';
+        p_at += sz_len;
+        size_t sz_used = (size_t)(p_at - str_rest);
+        while (*p_at == '/') {
+            p_at++;
+        }
+        bool b_more = *p_at != '\0';
+        /* what is not there is the lookup's to say, after this */
+        if (!step(&ref, arr_part, true)) {
+            return 0;
+        }
+        if (is_link_out(&ref) && (b_more || b_last)) {
+            if (!proc_may_follow(ref.i_pid)) {
+                return -EACCES;
+            }
+            if (!leads_to(&ref, str_out)) {
+                /* a pipe's, followed in /proc, or nothing there */
+                return (ref.u_kind == PROC_KIND_FD && str_out[0] != '\0')
+                       ? 0 : -ENOENT;
+            }
+            *p_used = sz_used;
+            return 1;
+        }
+    }
+    return 0;
 }
 
 /*
@@ -578,8 +781,35 @@ static const struct file_operations s_open_ops = {
     .release = open_release,
 };
 
+struct file *proc_file_of(const struct vfs_file *p_node)
+{
+    return (p_node->kind == VFS_PROC
+            && p_node->proc.u_kind == PROC_KIND_FD_FILE)
+           ? process_fd_file(p_node->proc.i_pid, (int)p_node->proc.sz_index)
+           : NULL;
+}
+
+/*
+ * a descriptor's file with no name opened again, the way a pipe is
+ * opened by the link to it: another end of the same pipe, either way. a
+ * socket is not opened by a name, and is not by this one
+ */
+static struct file *reopen(const struct proc_ref *p_ref, uint32_t u_mode)
+{
+    struct file *p_end = process_fd_file(p_ref->i_pid, (int)p_ref->sz_index);
+    struct file *p_file = (p_end != NULL && p_end->e_type == FILE_TYPE_PIPE)
+                          ? pipe_reopen(p_end, u_mode) : NULL;
+    if (p_end != NULL) {
+        file_put(p_end);
+    }
+    return p_file;
+}
+
 struct file *proc_open(const struct proc_ref *p_ref, uint32_t u_mode)
 {
+    if (p_ref->u_kind == PROC_KIND_FD_FILE) {
+        return reopen(p_ref, u_mode);
+    }
     if (!is_file(p_ref)) {
         return NULL;
     }

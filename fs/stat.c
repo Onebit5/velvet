@@ -15,6 +15,9 @@
 #include <velvet/epoch.h>
 #include <velvet/rtc.h>
 #include <velvet/kmalloc.h>
+#include <velvet/pipe.h>
+#include <velvet/proc.h>
+#include <velvet/socket.h>
 #include <asm/uaccess.h>
 #include <uapi/velvet/fcntl.h>
 #include <uapi/velvet/stat.h>
@@ -22,6 +25,10 @@
 
 /* a device number as stat gives it */
 #define DEVNO(major, minor) ((uint64_t)(major) << 8 | (minor))
+
+/* where the files no filesystem holds are said to be: pipes, and sockets */
+#define DEV_PIPES   DEVNO(0, 5)
+#define DEV_SOCKETS DEVNO(0, 6)
 
 /*
  * which filesystem a file is on: a disk's by the number of the drive or
@@ -97,27 +104,60 @@ static void fill_node(const struct vfs_file *p_node, const char *str_path,
 }
 
 /*
- * and of one that has no name: a pipe, a terminal, a socket, a device.
- * a fifo is a pipe with a name, and is its node
+ * the node a file opened on a device is: the one it was opened by, or,
+ * for one the kernel opened, a terminal it handed a program, the one
+ * /dev names its number by. so fstat and stat of that name agree, which
+ * is how a program finds the name of the terminal it was given. false
+ * for none
+ */
+static bool device_node(const struct file *p_file, struct vfs_file *p_node,
+                        char *str_path)
+{
+    size_t sz_dev;
+    if (p_file->arr_path[0] != '\0') {
+        strncpy(str_path, p_file->arr_path, PATH_MAX - 1);
+        str_path[PATH_MAX - 1] = '\0';
+    } else if (dev_find_rdev(p_file->u_rdev, &sz_dev)) {
+        strcpy(str_path, "/dev/");
+        strcat(str_path, dev_name(sz_dev));     /* a few letters each */
+    } else {
+        return false;
+    }
+    return vfs_open(str_path, p_node);
+}
+
+/*
+ * and of one opened: what it was opened by, its node, or the device it
+ * is; a pipe or a socket, which have no name, numbered as their own
  */
 static void fill_file(const struct file *p_file, struct stat *p_st)
 {
-    if (p_file->e_type == FILE_TYPE_REGULAR
-        || p_file->e_type == FILE_TYPE_DIR
-        || (p_file->e_type == FILE_TYPE_PIPE
-            && p_file->node.kind != VFS_NOWHERE)) {
-        struct vfs_file node = p_file->node;
+    struct vfs_file node;
+    char arr_path[PATH_MAX];
+    bool b_open_on = p_file->e_type != FILE_TYPE_PIPE
+                     && p_file->e_type != FILE_TYPE_SOCKET;
+    if (p_file->node.kind != VFS_NOWHERE) {
+        node = p_file->node;
         vfs_refresh(&node);
         fill_node(&node, p_file->arr_path, p_st);
         return;
     }
+    if (b_open_on && device_node(p_file, &node, arr_path)) {
+        fill_node(&node, arr_path, p_st);
+        return;
+    }
     memset(p_st, 0, sizeof *p_st);
+    p_st->st_ino = (uint64_t)(uintptr_t)p_file >> 4;
     switch (p_file->e_type) {
     case FILE_TYPE_PIPE:
         p_st->st_mode = S_IFIFO | 0600;
+        p_st->st_dev = DEV_PIPES;
+        p_st->st_ino = ((const struct pipe *)p_file->p_private)->u_ino;
         break;
     case FILE_TYPE_SOCKET:
         p_st->st_mode = S_IFSOCK | 0777;
+        p_st->st_dev = DEV_SOCKETS;
+        p_st->st_ino = socket_ino(p_file);
         break;
     case FILE_TYPE_BLOCK:
         p_st->st_mode = S_IFBLK | DEV_BLOCK_MODE;
@@ -130,11 +170,17 @@ static void fill_file(const struct file *p_file, struct stat *p_st)
         p_st->st_dev = DEVNO(0, 3);
         break;
     }
-    p_st->st_ino = (uint64_t)(uintptr_t)p_file >> 4;
     p_st->st_nlink = 1;
     p_st->st_uid = (uint32_t)current_uid();
     p_st->st_gid = (uint32_t)current_gid();
     p_st->st_blksize = 4096;
+}
+
+uint64_t file_ino(const struct file *p_file)
+{
+    struct stat st;
+    fill_file(p_file, &st);
+    return st.st_ino;
 }
 
 int64_t sys_fstat(int i_fd, uint64_t u_stat)
@@ -179,7 +225,14 @@ int64_t sys_newfstatat(int i_dirfd, uint64_t u_path, uint64_t u_stat,
     if (i_why < 0) {
         return i_why;
     }
-    fill_node(&node, arr_path, &st);
+    /* a descriptor's link to a pipe, followed, is the pipe */
+    struct file *p_target = proc_file_of(&node);
+    if (p_target != NULL) {
+        fill_file(p_target, &st);
+        file_put(p_target);
+    } else {
+        fill_node(&node, arr_path, &st);
+    }
     return (copy_to_user(u_stat, &st, sizeof st) == 0) ? 0 : -EFAULT;
 }
 

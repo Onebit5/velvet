@@ -3,7 +3,8 @@
  * tools/testing/selftests/fs/procself.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
  * a process's own directory in /proc, held against what the process
- * knows of itself.
+ * knows of itself: its files, and its links to where it stands and to
+ * what it has open.
  */
 
 #define _GNU_SOURCE
@@ -12,6 +13,7 @@
 #include <dirent.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <limits.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -332,16 +334,174 @@ static void check_memory(void)
                      "mounts has the root, and /proc as proc\n");
 }
 
+/* the name a descriptor's link leads to, into s_arr_text */
+static const char *fd_link(int i_fd)
+{
+    char arr_path[64];
+    snprintf(arr_path, sizeof arr_path, "/proc/self/fd/%d", i_fd);
+    return link_of(arr_path);
+}
+
+static void check_where(char *str_argv0)
+{
+    char arr_here[PATH_MAX];
+    struct stat st_link;
+    struct stat st_here;
+    ksft_test_result(getcwd(arr_here, sizeof arr_here) != NULL
+                     && ksft_streq(link_of("/proc/self/cwd"), arr_here)
+                     && stat("/proc/self/cwd", &st_link) == 0
+                     && stat(".", &st_here) == 0
+                     && st_link.st_ino == st_here.st_ino
+                     && st_link.st_dev == st_here.st_dev,
+                     "cwd leads to where it stands, and is that directory\n");
+    const char *str_base = strrchr(str_argv0, '/');
+    str_base = (str_base != NULL) ? str_base : str_argv0;
+    const char *str_exe = link_of("/proc/self/exe");
+    size_t sz_exe = strlen(str_exe);
+    size_t sz_base = strlen(str_base);
+    char arr_magic[4] = { 0 };
+    int i_fd = open("/proc/self/exe", O_RDONLY);
+    bool b_read = i_fd >= 0 && read(i_fd, arr_magic, 4) == 4;
+    if (i_fd >= 0) {
+        close(i_fd);
+    }
+    ksft_test_result(str_exe[0] == '/' && sz_exe >= sz_base
+                     && ksft_streq(str_exe + sz_exe - sz_base, str_base)
+                     && b_read && memcmp(arr_magic, "\177ELF", 4) == 0,
+                     "exe leads to the program, and opens as it\n");
+    struct stat st_root;
+    ksft_test_result(stat("/proc/self/root", &st_link) == 0
+                     && stat("/", &st_root) == 0
+                     && st_link.st_ino == st_root.st_ino
+                     && lstat("/proc/self/cwd", &st_link) == 0
+                     && S_ISLNK(st_link.st_mode),
+                     "root is its /, and each of them is a link\n");
+    if (getuid() == 0) {
+        ksft_test_result(true, "nobody else's to follow, which root may\n");
+    } else {
+        errno = 0;
+        ksft_test_result(readlink("/proc/1/cwd", s_arr_text, TEXT_MAX) < 0
+                         && errno == EACCES,
+                         "and nobody else's to follow\n");
+    }
+}
+
+static void check_descriptors(void)
+{
+    int arr_pipe[2] = { -1, -1 };
+    struct stat st_end;
+    struct stat st_link;
+    char arr_want[64];
+    char arr_got[8] = { 0 };
+
+    int i_dir = open("/proc", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    snprintf(arr_want, sizeof arr_want, "%d", i_dir);
+    ksft_test_result(i_dir >= 0 && lists("/proc/self/fd", arr_want)
+                     && lists("/proc/self/fd", "0")
+                     && ksft_streq(fd_link(i_dir), "/proc"),
+                     "fd lists what is open, each a link to its name\n");
+
+    bool b_pipe = pipe(arr_pipe) == 0 && fstat(arr_pipe[0], &st_end) == 0;
+    snprintf(arr_want, sizeof arr_want, "pipe:[%llu]",
+             (unsigned long long)st_end.st_ino);
+    char arr_path[64];
+    snprintf(arr_path, sizeof arr_path, "/proc/self/fd/%d", arr_pipe[0]);
+    ksft_test_result(b_pipe && ksft_streq(fd_link(arr_pipe[0]), arr_want)
+                     && stat(arr_path, &st_link) == 0
+                     && S_ISFIFO(st_link.st_mode)
+                     && st_link.st_ino == st_end.st_ino,
+                     "a pipe's leads to what it is, and is the pipe\n");
+    int i_writer = b_pipe ? open(arr_path, O_WRONLY) : -1;
+    ksft_test_result(i_writer >= 0 && write(i_writer, "hi", 2) == 2
+                     && read(arr_pipe[0], arr_got, sizeof arr_got) == 2
+                     && memcmp(arr_got, "hi", 2) == 0,
+                     "and opened for writing, writes into that pipe\n");
+    if (i_writer >= 0) {
+        close(i_writer);
+    }
+    if (b_pipe) {
+        close(arr_pipe[0]);
+        close(arr_pipe[1]);
+    }
+
+    int i_status = open("/proc/self/status", O_RDONLY | O_CLOEXEC);
+    bool b_moved = i_status >= 0 && read(i_status, arr_got, 5) == 5;
+    snprintf(arr_path, sizeof arr_path, "/proc/self/fdinfo/%d", i_status);
+    int64_t i_len = slurp(arr_path);
+    ksft_test_result(b_moved && i_len > 0
+                     && strncmp(s_arr_text, "pos:\t5\nflags:\t02100000\n",
+                                23) == 0,
+                     "fdinfo says where it is, and how it was opened\n");
+    if (i_status >= 0) {
+        close(i_status);
+    }
+    if (i_dir >= 0) {
+        close(i_dir);
+    }
+}
+
+/* a terminal of its own, a pty, and the name a libc finds for it */
+static void check_ttyname(void)
+{
+    int i_master = posix_openpt(O_RDWR | O_NOCTTY);
+    char *str_name = (i_master >= 0 && grantpt(i_master) == 0
+                      && unlockpt(i_master) == 0) ? ptsname(i_master) : NULL;
+    char arr_name[64] = "";
+    if (str_name != NULL) {
+        snprintf(arr_name, sizeof arr_name, "%s", str_name);
+    }
+    int i_slave = (arr_name[0] != '\0') ? open(arr_name, O_RDWR | O_NOCTTY)
+                                        : -1;
+    char *str_found = (i_slave >= 0) ? ttyname(i_slave) : NULL;
+    ksft_test_result(str_found != NULL && ksft_streq(str_found, arr_name)
+                     && ksft_streq(fd_link(i_slave), arr_name),
+                     "ttyname finds a terminal by its descriptor's link\n");
+    if (i_slave >= 0) {
+        close(i_slave);
+    }
+    if (i_master >= 0) {
+        close(i_master);
+    }
+}
+
+/* the program run again by a descriptor open on it, which is fexecve */
+static void check_fexecve(char *str_argv0, char **pp_env)
+{
+    int i_fd = open(str_argv0, O_RDONLY | O_CLOEXEC);
+    int i_status = -1;
+    pid_t i_child = (i_fd >= 0) ? fork() : -1;
+    if (i_child == 0) {
+        char *arr_argv[] = { str_argv0, "again", NULL };
+        fexecve(i_fd, arr_argv, pp_env);
+        _exit(1);
+    }
+    if (i_child > 0) {
+        waitpid(i_child, &i_status, 0);
+    }
+    if (i_fd >= 0) {
+        close(i_fd);
+    }
+    ksft_test_result(i_child > 0 && ksft_exited(i_status, 42),
+                     "fexecve runs a program by its descriptor\n");
+}
+
 int main(int i_argc, char **pp_argv, char **pp_env)
 {
+    if (i_argc == 2 && ksft_streq(pp_argv[1], "again")) {
+        return 42;
+    }
     s_pp_env = pp_env;
     ksft_print_header();
-    ksft_set_plan(17);
+    ksft_set_plan(27);
     check_links();
     check_stat(pp_argv[0]);
     check_status();
     check_strings(i_argc, pp_argv);
     check_threads();
     check_memory();
+    check_where(pp_argv[0]);
+    check_descriptors();
+    check_ttyname();
+    check_fexecve(pp_argv[0], pp_env);
     ksft_finished();
 }

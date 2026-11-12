@@ -9,17 +9,22 @@
 
 #include <asm/cpu.h>
 #include <velvet/addrspace.h>
+#include <velvet/dev.h>
+#include <velvet/file.h>
 #include <velvet/kmalloc.h>
 #include <velvet/kprintf.h>
 #include <velvet/namei.h>
+#include <velvet/pipe.h>
 #include <velvet/pmm.h>
 #include <velvet/process.h>
 #include <velvet/sched.h>
+#include <velvet/socket.h>
 #include <velvet/string.h>
 #include <velvet/tty.h>
 #include <velvet/usermode.h>
 #include <velvet/vfs.h>
 #include <velvet/vmm.h>
+#include <uapi/velvet/fcntl.h>
 #include <uapi/velvet/prctl.h>
 #include <uapi/velvet/signal.h>
 #include <uapi/velvet/stat.h>
@@ -629,6 +634,89 @@ static void show_mounts(const struct proc_ref *p_ref)
     kfree(str_root);
 }
 
+bool proc_may_follow(int i_pid)
+{
+    uint32_t u_uid;
+    uint32_t u_gid;
+    int i_me = current_uid();
+    return i_me == 0 || (proc_owner(i_pid, &u_uid, &u_gid)
+                         && u_uid == (uint32_t)i_me);
+}
+
+/* cwd, root and exe: where it stands, its "/", and the program it runs */
+static bool link_cwd(int i_pid, char *str_out)
+{
+    return process_paths(i_pid, str_out, NULL, NULL) && str_out[0] != '\0';
+}
+
+static bool link_root(int i_pid, char *str_out)
+{
+    return process_paths(i_pid, NULL, str_out, NULL);
+}
+
+static bool link_exe(int i_pid, char *str_out)
+{
+    return process_paths(i_pid, NULL, NULL, str_out) && str_out[0] != '\0';
+}
+
+bool proc_fd_target(int i_pid, int i_fd, char *str_out)
+{
+    struct proc_text text = { str_out, PATH_MAX, 0 };
+    struct file *p_file = process_fd_file(i_pid, i_fd);
+    size_t sz_dev;
+    bool b_name = false;
+    str_out[0] = '\0';
+    if (p_file == NULL) {
+        return false;
+    }
+    if (p_file->e_type == FILE_TYPE_PIPE && p_file->node.kind == VFS_NOWHERE) {
+        proc_text_add(&text, "pipe:[");
+        proc_text_number(&text, ((struct pipe *)p_file->p_private)->u_ino);
+        proc_text_add(&text, "]");
+    } else if (p_file->e_type == FILE_TYPE_SOCKET) {
+        proc_text_add(&text, "socket:[");
+        proc_text_number(&text, socket_ino(p_file));
+        proc_text_add(&text, "]");
+    } else if (p_file->arr_path[0] != '\0') {
+        proc_text_add(&text, p_file->arr_path);
+        b_name = true;
+    } else if (dev_find_rdev(p_file->u_rdev, &sz_dev)) {
+        /* a terminal the kernel opened, by the name /dev gives it */
+        proc_text_add(&text, "/dev/");
+        proc_text_add(&text, dev_name(sz_dev));
+        b_name = true;
+    } else {
+        proc_text_add(&text, "anon_inode:[file]");
+    }
+    file_put(p_file);
+    return b_name;
+}
+
+/*
+ * fdinfo/<fd>: where the descriptor is, the flags it was opened with as
+ * open takes them, and the number of what it is open on
+ */
+void proc_show_fdinfo(const struct proc_ref *p_ref)
+{
+    int i_fd = (int)p_ref->sz_index;
+    struct file *p_file = process_fd_file(p_ref->i_pid, i_fd);
+    if (p_file == NULL) {
+        return;
+    }
+    bool b_read = (p_file->u_mode & FILE_READ) != 0;
+    bool b_write = (p_file->u_mode & FILE_WRITE) != 0;
+    uint32_t u_flags = (b_read && b_write) ? O_RDWR : b_write ? O_WRONLY
+                                                              : O_RDONLY;
+    u_flags |= p_file->u_flags & (O_APPEND | O_NONBLOCK);
+    u_flags |= (process_fd_cloexec(p_ref->i_pid, i_fd, -1) == 1) ? O_CLOEXEC
+                                                                 : 0;
+    /* a file opened by its name is opened for every size it may have */
+    u_flags |= (p_file->arr_path[0] != '\0') ? O_LARGEFILE : 0;
+    kprintf("pos:\t%lu\nflags:\t0%o\nmnt_id:\t0\nino:\t%lu\n", p_file->u_pos,
+            u_flags, file_ino(p_file));
+    file_put(p_file);
+}
+
 /* stack: the kernel's calls that led the thread to where it waits */
 static void show_stack(const struct proc_ref *p_ref)
 {
@@ -640,18 +728,25 @@ static void show_stack(const struct proc_ref *p_ref)
 }
 
 static const struct proc_entry s_arr_entries[] = {
-    { "task",    S_IFDIR | 0555, false, true,  PROC_KIND_TASKS, NULL },
-    { "environ", S_IFREG | 0400, false, false, 0, show_environ },
-    { "status",  S_IFREG | 0444, false, false, 0, show_status },
-    { "limits",  S_IFREG | 0444, false, false, 0, show_limits },
-    { "comm",    S_IFREG | 0444, false, false, 0, show_comm },
-    { "cmdline", S_IFREG | 0444, false, false, 0, show_cmdline },
-    { "stat",    S_IFREG | 0444, false, false, 0, show_stat },
-    { "statm",   S_IFREG | 0444, false, false, 0, show_statm },
-    { "maps",    S_IFREG | 0444, false, false, 0, show_maps },
-    { "mounts",  S_IFREG | 0444, false, false, 0, show_mounts },
+    { "task",    S_IFDIR | 0555, false, true,  PROC_KIND_TASKS, NULL, NULL },
+    /* what it has open is its owner's to look through */
+    { "fd",      S_IFDIR | 0500, false, false, PROC_KIND_FDS, NULL, NULL },
+    { "fdinfo",  S_IFDIR | 0555, false, false, PROC_KIND_FDINFOS, NULL,
+      NULL },
+    { "environ", S_IFREG | 0400, false, false, 0, show_environ, NULL },
+    { "status",  S_IFREG | 0444, false, false, 0, show_status, NULL },
+    { "limits",  S_IFREG | 0444, false, false, 0, show_limits, NULL },
+    { "comm",    S_IFREG | 0444, false, false, 0, show_comm, NULL },
+    { "cmdline", S_IFREG | 0444, false, false, 0, show_cmdline, NULL },
+    { "stat",    S_IFREG | 0444, false, false, 0, show_stat, NULL },
+    { "statm",   S_IFREG | 0444, false, false, 0, show_statm, NULL },
+    { "maps",    S_IFREG | 0444, false, false, 0, show_maps, NULL },
+    { "mounts",  S_IFREG | 0444, false, false, 0, show_mounts, NULL },
+    { "cwd",     S_IFLNK | 0777, false, false, 0, NULL, link_cwd },
+    { "root",    S_IFLNK | 0777, false, false, 0, NULL, link_root },
+    { "exe",     S_IFLNK | 0777, false, false, 0, NULL, link_exe },
     /* where the kernel keeps things is root's to know */
-    { "stack",   S_IFREG | 0400, true,  false, 0, show_stack },
+    { "stack",   S_IFREG | 0400, true,  false, 0, show_stack, NULL },
 };
 
 #define ENTRIES (sizeof s_arr_entries / sizeof s_arr_entries[0])

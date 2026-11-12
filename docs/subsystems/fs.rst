@@ -136,6 +136,24 @@ the rest belong to whoever the process runs as, ``environ`` to them
 alone. a node's number is a hash of its canonical name, so
 ``/proc/self/stat`` and ``/proc/<pid>/stat`` are one file.
 
+some of what is in a process's directory leads out of /proc: ``cwd``,
+``root`` and ``exe`` are links to where it stands, its ``/`` and the
+program it runs, and ``fd/`` has a link for each descriptor, to the name
+it was opened by, or to the name /dev gives a terminal the kernel
+opened. a filesystem follows its own links as a name is looked up on it,
+but these lead elsewhere in the namespace, so the namespace follows them:
+``vfs_expand`` puts each back as where it leads, ``path_at`` every one on
+the way to the last part of a name and ``path_lookup`` the last when it
+is to be followed, so a name through one is looked up, opened and
+remembered as the name it leads to. a descriptor open on what has no
+name, a pipe or a socket, leads to ``pipe:[<ino>]`` or
+``socket:[<ino>]``, the number fstat gives it, and followed is that file:
+stat says what it is, and opening it opens another end of the same pipe,
+either way, so ``fexecve`` and ``/dev/fd`` have what they need. only
+whoever the process runs as, or root, may follow these, and anybody else
+reading one is told ``EACCES``. ``fdinfo/`` has, for each descriptor,
+where it is, the flags it was opened with and its number.
+
 the filesystem's own are written by ``diskinfo.c``: ``disk``, the drive
 with every filesystem on it and what the block cache is holding;
 ``partitions``, what each drive's table says it has; and ``mounts``, which
@@ -415,6 +433,12 @@ nothing, and **``..`` from the root stays at the root**. the one rule that
 has to be got right, because a path that can climb above ``/`` can name
 anything at all. none of this touches a filesystem, which is what makes it
 entirely testable.
+
+an open file is numbered by what it was opened by: fstat of one gives
+what stat of its name gives, and of a terminal the kernel opened, what
+stat of the name /dev gives its number does. a pipe and a socket are
+numbered as their own, the number their link in ``/proc/<pid>/fd`` says,
+which is how a libc finds a terminal's name from its descriptor alone.
 
 open files
 ----------
@@ -838,8 +862,16 @@ which has no working directory, is the root's.
 ``bool vfs_chmod(const char *path, uint32_t mode);``
     every one of these answers false in /proc and /dev, and on a fat disk.
 
-``bool vfs_readlink(const char *path, char *out, size_t size);``
-    where a symlink points, and finding one without following it, which is what `ls -l` and `rm` want
+``int64_t vfs_readlink(const char *path, char *out, size_t size);``
+    where a symlink points, and finding one without following it, which is
+    what `ls -l` and `rm` want: 0, ``-EINVAL`` for none, or ``-EACCES``
+    for a process's in /proc the caller may not follow
+
+``int64_t vfs_expand(char *str_path, bool b_last);``
+    a path with every link on the way that leads out of its filesystem,
+    which only /proc has, put back as where it leads, and the last one
+    too when ``b_last``. at most ``VFS_LINKS_MAX`` of them, then
+    ``-ELOOP``
 
 ``bool vfs_mknod(const char *str_path, uint32_t u_mode, uint32_t u_uid, uint32_t u_gid, uint32_t u_rdev);``
     a device node, on a disk or in memory
@@ -1021,6 +1053,11 @@ rather than filling a buffer that will never drain.
 
 ``bool pipe_open(struct file **pp_read, struct file **pp_write);``
     a new pipe, as two files: one to read it and one to write it.
+
+``struct file *pipe_reopen(const struct file *p_end, uint32_t u_mode);``
+    another end of the pipe ``p_end`` is one of, either way or both:
+    what opening a pipe's descriptor in /proc does. each end counts as a
+    reader or a writer until it goes, and the pipe goes with the last.
 
 ``size_t pipe_count(void);``
     how many exist right now, for ``/proc/threads`` and for finding a leak

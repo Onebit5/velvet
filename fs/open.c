@@ -152,7 +152,7 @@ int64_t sys_faccessat(int i_dirfd, uint64_t u_path, int i_mode, int i_flags)
 }
 
 /* a directory the caller may search, as the place relative names start */
-static int64_t change_dir(const char *str_path)
+static int64_t change_dir(char *str_path)
 {
     struct vfs_file node;
     int64_t i_why = path_lookup(str_path, true, &node);
@@ -203,7 +203,7 @@ int64_t sys_getcwd(uint64_t u_buf, uint64_t u_size)
 }
 
 /* only the owner, or root, may change what a file allows */
-static int64_t change_mode(const char *str_path, uint32_t u_mode)
+static int64_t change_mode(char *str_path, uint32_t u_mode)
 {
     struct vfs_file node;
     int64_t i_why = path_lookup(str_path, true, &node);
@@ -255,7 +255,7 @@ int64_t sys_fchmod(int i_fd, uint32_t u_mode)
  * root's alone, since giving a file away is a way to escape a quota and
  * to plant one on somebody. -1 for either leaves it as it is
  */
-static int64_t change_owner(const char *str_path, bool b_follow,
+static int64_t change_owner(char *str_path, bool b_follow,
                             uint32_t u_uid, uint32_t u_gid)
 {
     struct vfs_file node;

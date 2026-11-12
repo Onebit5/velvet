@@ -24,9 +24,18 @@ enum proc_kind {
     PROC_KIND_TASKS,            /* its task directory */
     PROC_KIND_THREAD,           /* task/<i_tid> in that */
     PROC_KIND_ENTRY,            /* sz_index of what either has in it */
+    PROC_KIND_FDS,              /* its fd directory */
+    PROC_KIND_FD,               /* the link that is descriptor sz_index */
+    PROC_KIND_FD_FILE,          /* and the file it leads to, followed */
+    PROC_KIND_FDINFOS,          /* its fdinfo directory */
+    PROC_KIND_FDINFO,           /* and what descriptor sz_index is */
 };
 
-/* what a process's directory, and a thread's, have in them */
+/*
+ * what a process's directory, and a thread's, have in them: a file, with
+ * what writes it, a directory, with where it leads, or a link, with what
+ * says where to
+ */
 struct proc_entry {
     const char *str_name;
     uint32_t u_mode;            /* the type with the permissions */
@@ -34,6 +43,7 @@ struct proc_entry {
     bool b_process;             /* in a process's, and not in a thread's */
     uint32_t u_kind;            /* where a directory leads */
     void (*p_show)(const struct proc_ref *p_ref);
+    bool (*p_link)(int i_pid, char *str_out);
 };
 
 /* entry sz_index, or NULL past the last */
@@ -50,6 +60,23 @@ bool proc_entry_find(const char *str_name, bool b_thread, size_t *p_index);
  * false for a process that is not there any more
  */
 bool proc_owner(int i_pid, uint32_t *p_uid, uint32_t *p_gid);
+
+/*
+ * whether the caller may follow the links of process i_pid, which lead
+ * to what it has open and where it stands: its own, or root's to follow
+ */
+bool proc_may_follow(int i_pid);
+
+/*
+ * where the descriptor i_fd of process i_pid leads, into PATH_MAX of
+ * str_out: true with a name in the namespace there, false with what the
+ * file is called when it has none, a pipe's or a socket's, or "" for a
+ * descriptor that is not open
+ */
+bool proc_fd_target(int i_pid, int i_fd, char *str_out);
+
+/* what fdinfo says of the descriptor a proc_ref names */
+void proc_show_fdinfo(const struct proc_ref *p_ref);
 
 /* a string made a piece at a time in sz_size of str_buf, cut to fit */
 struct proc_text {

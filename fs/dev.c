@@ -181,6 +181,18 @@ bool dev_is_dir(size_t sz_index)
     return sz_index < DEV_COUNT && s_arr_devs[sz_index].i_console == DEV_DIR;
 }
 
+bool dev_find_rdev(uint32_t u_rdev, size_t *p_index)
+{
+    size_t sz_count = dev_count();
+    for (size_t sz_at = 0; sz_at < sz_count; sz_at++) {
+        if (u_rdev != 0 && dev_rdev(sz_at) == u_rdev) {
+            *p_index = sz_at;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool dev_find(const char *str_name, size_t *p_index)
 {
     size_t sz_count = dev_count();

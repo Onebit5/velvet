@@ -731,7 +731,7 @@ bool vfs_mknod(const char *str_path, uint32_t u_mode, uint32_t u_uid,
     return b_ok;
 }
 
-bool vfs_readlink(const char *path, char *out, size_t size)
+int64_t vfs_readlink(const char *path, char *out, size_t size)
 {
     char arr_buf[VFS_NAME_MAX + 1];
     const char *rest;
@@ -742,16 +742,53 @@ bool vfs_readlink(const char *path, char *out, size_t size)
                                                 &rest)
                                   : NULL;
     if (p_mount != NULL && p_mount->e_kind == VFS_PROC) {
-        bool b_link = proc_readlink(rest, out, size);
+        int64_t i_why = proc_readlink(rest, out, size);
         mount_leave(p_mount);
-        return b_link;
+        return i_why;
     }
     mount_leave(p_mount);
     p_mount = on_store(path, arr_buf, &rest, &p_ops);
     bool b_ok = p_mount != NULL
                 && p_ops->readlink(p_mount->sz_slot, rest, out, size);
     mount_leave(p_mount);
-    return b_ok;
+    return b_ok ? 0 : -EINVAL;
+}
+
+int64_t vfs_expand(char *str_path, bool b_last)
+{
+    char arr_to[PATH_MAX];
+    char arr_joined[PATH_MAX];
+    for (int i_links = 0; i_links <= VFS_LINKS_MAX; i_links++) {
+        const char *str_rest;
+        size_t sz_used = 0;
+        struct mount_point *p_mount = mount_enter(str_path, &str_rest);
+        int64_t i_found = (p_mount->e_kind == VFS_PROC)
+                          ? proc_expand(str_rest, b_last, arr_to, &sz_used)
+                          : 0;
+        const char *str_after = str_rest + sz_used;
+        mount_leave(p_mount);
+        if (i_found <= 0) {
+            return i_found;
+        }
+        if (i_links == VFS_LINKS_MAX) {
+            break;
+        }
+        /*
+         * where it leads, and the rest of the name after the link, made
+         * one name again, a .. in the rest climbing out of where it led
+         */
+        size_t sz_to = strlen(arr_to);
+        size_t sz_after = strlen(str_after);
+        if (sz_to + sz_after + 1 > sizeof arr_joined) {
+            return -ENAMETOOLONG;
+        }
+        memcpy(arr_joined, arr_to, sz_to);
+        memcpy(arr_joined + sz_to, str_after, sz_after + 1);
+        if (!path_resolve("/", arr_joined, str_path, PATH_MAX)) {
+            return -ENAMETOOLONG;
+        }
+    }
+    return -ELOOP;
 }
 
 bool vfs_unlink(const char *path)

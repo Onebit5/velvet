@@ -36,6 +36,9 @@ bool dev_is_dir(size_t sz_index);
 /* which one is called str_name: true and its index, or false */
 bool dev_find(const char *str_name, size_t *p_index);
 
+/* which device is numbered u_rdev, major << 8 | minor, for its name */
+bool dev_find_rdev(uint32_t u_rdev, size_t *p_index);
+
 /* the device opened for u_mode, with one reference, or NULL */
 struct file *dev_open(size_t sz_index, uint32_t u_mode);
 

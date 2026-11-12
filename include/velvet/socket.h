@@ -60,4 +60,12 @@ bool socket_port(const struct socket_table *t, int owner, int handle,
 
 size_t socket_waiting(const struct socket_table *t, int owner, int handle);
 
+struct file;
+
+/*
+ * the number a socket's file is known by, to fstat and in /proc: its
+ * own owner's, which no other socket has. 0 for a file that is none
+ */
+uint32_t socket_ino(const struct file *p_file);
+
 #endif

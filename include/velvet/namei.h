@@ -17,9 +17,10 @@
 /*
  * a path out of ring 3 made absolute: against i_dirfd, a directory
  * descriptor, or the working directory for AT_FDCWD, and against
- * nothing when it starts with a slash. 0, or -EFAULT, -ENAMETOOLONG,
- * -ENOENT for an empty one, -EBADF or -ENOTDIR for a dirfd that is not
- * an open directory
+ * nothing when it starts with a slash, with every link on the way that
+ * leads out of /proc followed but the last. 0, or -EFAULT,
+ * -ENAMETOOLONG, -ENOENT for an empty one, -EBADF or -ENOTDIR for a
+ * dirfd that is not an open directory, and what following says
  */
 int64_t path_at(int i_dirfd, uint64_t u_path, char *str_out);
 
@@ -32,12 +33,13 @@ void path_seen_from(const char *str_root, const char *str_path,
                     char *str_out);
 
 /*
- * what is at an absolute path, following a link at the end or not: 0,
- * -ENOENT, -ENOTDIR when a directory on the way is not one, or -EACCES
- * when one on the way may not be searched by the caller
+ * what is at an absolute path, PATH_MAX of it, following a link at the
+ * end or not: 0, -ENOENT, -ENOTDIR when a directory on the way is not
+ * one, or -EACCES when one on the way may not be searched by the caller.
+ * a link at the end that leads out of /proc, followed, rewrites the path
+ * as where it leads, which is the name the file is opened by
  */
-int64_t path_lookup(const char *str_path, bool b_follow,
-                    struct vfs_file *p_out);
+int64_t path_lookup(char *str_path, bool b_follow, struct vfs_file *p_out);
 
 /*
  * the directory a new name would go in, ready for one: 0, or what is in
@@ -65,5 +67,10 @@ uint64_t path_ino(const char *str_path);
 
 /* the number stat gives the filesystem a node is on, as st_dev */
 uint64_t node_dev(const struct vfs_file *p_node);
+
+struct file;
+
+/* and the number fstat gives an open file, as st_ino */
+uint64_t file_ino(const struct file *p_file);
 
 #endif

@@ -79,9 +79,29 @@ bool proc_readdir(const char *str_rest, size_t sz_index,
 
 /*
  * where the link str_rest names leads, as the reader is told it, into
- * sz_size of str_out: false for no link there
+ * sz_size of str_out: 0, -EINVAL for no link there, -EACCES for one into
+ * a process the reader may not look into, or -ENOENT for one that leads
+ * nowhere now
  */
-bool proc_readlink(const char *str_rest, char *str_out, size_t sz_size);
+int64_t proc_readlink(const char *str_rest, char *str_out, size_t sz_size);
+
+/*
+ * the first link on the way along str_rest that leads out of /proc,
+ * where a process stands, its root, its program or what it has open,
+ * the last part's too when b_last: 1 with the name in the namespace it
+ * leads to in PATH_MAX of str_out, and in *p_used how much of str_rest
+ * it took to reach it, 0 for none on the way, or -EACCES for one the
+ * reader may not follow, -ENOENT for one that leads nowhere now
+ */
+int64_t proc_expand(const char *str_rest, bool b_last, char *str_out,
+                    size_t *p_used);
+
+/*
+ * the open file a node is when it is a descriptor's link followed to a
+ * file with no name, a pipe or a socket, with a reference the caller
+ * puts: NULL for any other node
+ */
+struct file *proc_file_of(const struct vfs_file *p_node);
 
 /*
  * the file p_ref names opened for reading, with one reference: NULL for

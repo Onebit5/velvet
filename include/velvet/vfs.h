@@ -20,6 +20,9 @@
 
 #define VFS_NAME_MAX 128
 
+/* how many links one name may be taken through, as a filesystem's own */
+#define VFS_LINKS_MAX 40
+
 
 enum vfs_kind {
     VFS_NOWHERE = 0,
@@ -104,7 +107,19 @@ bool vfs_mknod(const char *str_path, uint32_t u_mode, uint32_t u_uid,
  */
 bool vfs_is_device(const struct vfs_file *p_node);
 
-bool vfs_readlink(const char *path, char *out, size_t size);
+/* where a link leads, into size of out: 0, or -EINVAL for no link, -EACCES */
+int64_t vfs_readlink(const char *path, char *out, size_t size);
+
+/*
+ * an absolute path, PATH_MAX of it, with every link on the way that
+ * leads out of the filesystem it is on put back as where it leads, and
+ * the last one too when b_last. a filesystem follows its own links as a
+ * name is looked up on it; /proc's lead elsewhere in the namespace,
+ * where a process stands and what it has open, so the namespace follows
+ * them: 0, -ELOOP for more than VFS_LINKS_MAX, -ENAMETOOLONG, -EACCES
+ * for one the caller may not follow, or -ENOENT for one leading nowhere
+ */
+int64_t vfs_expand(char *str_path, bool b_last);
 bool vfs_open_nofollow(const char *path, struct vfs_file *out);
 
 int64_t vfs_read(const struct vfs_file *f, uint64_t offset, void *buf,

@@ -454,6 +454,13 @@ static int64_t sock_install(int i_type, bool b_ping, int i_handle,
     return install_fd(p_file, (i_flags & SOCK_CLOEXEC) != 0);
 }
 
+uint32_t socket_ino(const struct file *p_file)
+{
+    const struct sock *p_sock = p_file->p_private;
+    return (p_file->e_type == FILE_TYPE_SOCKET && p_sock != NULL)
+           ? (uint32_t)p_sock->i_owner : 0;
+}
+
 int64_t sys_socket(int i_family, int i_type, int i_protocol)
 {
     int i_kind = i_type & SOCK_TYPE_MASK;

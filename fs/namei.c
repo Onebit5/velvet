@@ -145,8 +145,9 @@ int64_t path_at(int i_dirfd, uint64_t u_path, char *str_out)
             str_base = arr_base;
         }
     }
-    return under_root(process_root(current_pid()), str_base, arr_raw,
-                      str_out);
+    int64_t i_why = under_root(process_root(current_pid()), str_base,
+                               arr_raw, str_out);
+    return (i_why < 0) ? i_why : vfs_expand(str_out, false);
 }
 
 /*
@@ -178,10 +179,13 @@ static int64_t walk_to(const char *str_path)
     return 0;
 }
 
-int64_t path_lookup(const char *str_path, bool b_follow,
-                    struct vfs_file *p_out)
+int64_t path_lookup(char *str_path, bool b_follow, struct vfs_file *p_out)
 {
-    int64_t i_why = walk_to(str_path);
+    int64_t i_why = b_follow ? vfs_expand(str_path, true) : 0;
+    if (i_why < 0) {
+        return i_why;
+    }
+    i_why = walk_to(str_path);
     if (i_why < 0) {
         return i_why;
     }
@@ -421,9 +425,12 @@ int64_t sys_readlinkat(int i_dirfd, uint64_t u_path, uint64_t u_buf,
     if (i_why < 0) {
         return i_why;
     }
-    if (!node.is_symlink || !vfs_readlink(arr_path, arr_target,
-                                          sizeof arr_target)) {
+    if (!node.is_symlink) {
         return -EINVAL;
+    }
+    i_why = vfs_readlink(arr_path, arr_target, sizeof arr_target);
+    if (i_why < 0) {
+        return i_why;
     }
     /* the target, cut to fit, and no NUL: what readlink has always given */
     uint64_t u_len = strlen(arr_target);
