@@ -35,4 +35,10 @@ ARCH_INLINE void irq_disable(void)
 {
 }
 
+/* and so none are ever taken */
+ARCH_INLINE uint64_t irq_count(void)
+{
+    return 0;
+}
+
 #endif

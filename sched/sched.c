@@ -27,6 +27,7 @@
 #include <velvet/netif.h>
 #include <velvet/backtrace.h>
 #include <velvet/proc.h>
+#include <velvet/loadavg.h>
 #include <asm/uaccess.h>
 
 /* how many ticks a thread gets before the kernel takes the cpu back. */
@@ -55,6 +56,15 @@ struct percpu {
 
     /* the thread this core switched away from and has not yet confirmed off the cpu. */
     struct thread *handoff;
+
+    /*
+     * what its ticks found it doing: a thread's work in ring 3, a
+     * thread's in the kernel, or idle, which is the kernel too and
+     * nobody's business, and how often it went from one thread to another
+     */
+    struct cpu_usage cpu;
+    uint64_t u_idle;
+    uint64_t u_switches;
 };
 
 static struct percpu percpu[CPU_MAX];
@@ -243,6 +253,7 @@ static void schedule(void)
      * one still running when it goes had the cpu taken from it; any
      * other gave it up, to wait for something
      */
+    ME->u_switches++;
     if (prev != NULL && prev->state == THREAD_RUNNING) {
         prev->state = THREAD_READY;
         prev->cpu.u_preempted++;
@@ -468,6 +479,51 @@ void sleep_ms(uint64_t ms)
     spin_unlock_irq(&sched_lock, flags);
 }
 
+/*
+ * the load: every five seconds and a tick, the threads that want a cpu
+ * folded into its three averages. a tick more than five seconds, so the
+ * count does not keep landing on whatever happens every five
+ */
+#define LOAD_EVERY (LOAD_EVERY_S * CLOCK_TICK_HZ + 1)
+
+static uint64_t s_arr_load[LOAD_SPANS];
+static uint64_t s_u_load_ticks;
+
+/*
+ * the threads that want a cpu: running, or ready to, and not stopped,
+ * and in *p_threads, unless that is NULL, how many there are. the lock
+ * is held
+ */
+static size_t count_runnable(size_t *p_threads)
+{
+    size_t sz_runnable = 0;
+    size_t sz_threads = 0;
+    struct thread *t = current;
+    do {
+        if (t->state != THREAD_DEAD && !is_idle(t)) {
+            sz_threads++;
+        }
+        if (!is_idle(t) && !t->stopped && (t->state == THREAD_READY
+                                           || t->state == THREAD_RUNNING)) {
+            sz_runnable++;
+        }
+        t = t->next;
+    } while (t != current);
+    if (p_threads != NULL) {
+        *p_threads = sz_threads;
+    }
+    return sz_runnable;
+}
+
+/* the lock is held */
+static void fold_load(uint64_t u_active)
+{
+    for (size_t sz_at = 0; sz_at < LOAD_SPANS; sz_at++) {
+        s_arr_load[sz_at] = load_fold(s_arr_load[sz_at], load_decay(sz_at),
+                                      u_active);
+    }
+}
+
 void sched_tick(bool b_user)
 {
     if (current == NULL) {
@@ -483,8 +539,15 @@ void sched_tick(bool b_user)
      */
     if (b_user) {
         current->cpu.u_user++;
+        ME->cpu.u_user++;
+    } else if (current == ME->idle) {
+        ME->u_idle++;
     } else {
         current->cpu.u_system++;
+        ME->cpu.u_system++;
+    }
+    if (cpu_id() == 0 && ++s_u_load_ticks % LOAD_EVERY == 0) {
+        fold_load(count_runnable(NULL) * LOAD_ONE);
     }
     wake_sleepers();
 
@@ -854,6 +917,34 @@ void sched_account(struct thread *t)
     uint64_t u_flags = spin_lock_irq(&sched_lock);
     hand_over(t);
     spin_unlock_irq(&sched_lock, u_flags);
+}
+
+bool sched_cpu_stat(unsigned u_cpu, struct sched_cpu_stat *p_out)
+{
+    if (u_cpu >= CPU_MAX || !percpu[u_cpu].scheduling) {
+        return false;
+    }
+    uint64_t u_flags = spin_lock_irq(&sched_lock);
+    p_out->cpu = percpu[u_cpu].cpu;
+    p_out->u_idle = percpu[u_cpu].u_idle;
+    p_out->u_switches = percpu[u_cpu].u_switches;
+    spin_unlock_irq(&sched_lock, u_flags);
+    return true;
+}
+
+void sched_load(uint64_t arr_load[LOAD_SPANS])
+{
+    uint64_t u_flags = spin_lock_irq(&sched_lock);
+    memcpy(arr_load, s_arr_load, sizeof s_arr_load);
+    spin_unlock_irq(&sched_lock, u_flags);
+}
+
+size_t sched_runnable(size_t *p_threads)
+{
+    uint64_t u_flags = spin_lock_irq(&sched_lock);
+    size_t sz_runnable = count_runnable(p_threads);
+    spin_unlock_irq(&sched_lock, u_flags);
+    return sz_runnable;
 }
 
 const char *sched_cpu_running(unsigned cpu)

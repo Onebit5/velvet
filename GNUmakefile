@@ -276,13 +276,13 @@ SELFTEST_ROOT := fs/blockdev fs/fsck fs/install fs/mknod fs/mount fs/root \
 
 # the tests written to say the same on any kernel with the interface
 # this one has: threads, futexes, posix_spawn, what a process has had of
-# the cpus and a process's own directory in /proc, asked through a libc
-# that has never heard of this kernel.
+# the cpus, a process's own directory in /proc and what /proc says of the
+# machine, asked through a libc that has never heard of this kernel.
 # make test runs them as programs on the machine the build is on as
 # well, and each saying ok there is the check that what they ask is
 # answered the same on both
-SELFTEST_BOTH := fs/procself sched/futex sched/pthread sched/spawn \
-                 sched/usage
+SELFTEST_BOTH := fs/procself fs/procstat sched/futex sched/pthread \
+                 sched/spawn sched/usage
 
 # the image's /init: asks which tests to run, runs each as a guest and
 # powers the machine off. built the way a test is, since it is a program
@@ -487,6 +487,7 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/signal $(T)/futex $(T)/ansi \
              $(T)/termios $(T)/string \
              $(T)/epoch $(T)/pressure $(T)/hash $(T)/chacha20 \
+             $(T)/loadavg \
              $(T)/random \
              $(T)/crash \
              $(T)/resize $(T)/switch \
@@ -496,7 +497,7 @@ $(T)/kprintf:  tests/test_kprintf.c  lib/kprintf.c \
                sched/spinlock.c
 $(T)/kprintf:  LDLIBS = -pthread
 $(T)/proc:     tests/test_proc.c     fs/proc.c fs/proc_pid.c fs/file.c \
-               lib/kprintf.c lib/string.c sched/spinlock.c
+               lib/kprintf.c lib/loadavg.c lib/string.c sched/spinlock.c
 $(T)/mm:       tests/test_mm.c       sched/spinlock.c \
                mm/pmm.c \
                mm/buddy.c mm/slab.c \
@@ -577,6 +578,7 @@ $(T)/part:     tests/test_part.c     drivers/part.c \
 $(T)/hash:     tests/test_hash.c     lib/hash.c \
                lib/string.c
 $(T)/chacha20: tests/test_chacha20.c lib/chacha20.c
+$(T)/loadavg:  tests/test_loadavg.c  lib/loadavg.c
 $(T)/random:   tests/test_random.c   drivers/random.c lib/chacha20.c \
                sched/spinlock.c lib/string.c
 # the six python build tools, rewritten in C. not suites: they are

@@ -52,18 +52,33 @@ static bool listed(const char *str_name)
     return b_found;
 }
 
-/* seconds, a point, two digits and the end of the line */
-static bool looks_like_uptime(const char *str_text, int64_t i_len)
+static bool is_digit(char c_at)
+{
+    return c_at >= '0' && c_at <= '9';
+}
+
+/* seconds, a point and two digits at str_text: how long, or 0 for none */
+static int64_t seconds_at(const char *str_text, int64_t i_len)
 {
     int64_t i_at = 0;
 
-    while (i_at < i_len && str_text[i_at] >= '0' && str_text[i_at] <= '9') {
+    while (i_at < i_len && is_digit(str_text[i_at])) {
         i_at++;
     }
-    return i_at > 0 && i_len == i_at + 4 && str_text[i_at] == '.'
-           && str_text[i_at + 1] >= '0' && str_text[i_at + 1] <= '9'
-           && str_text[i_at + 2] >= '0' && str_text[i_at + 2] <= '9'
-           && str_text[i_at + 3] == '\n';
+    bool b_seconds = i_at > 0 && i_at + 3 <= i_len && str_text[i_at] == '.'
+                     && is_digit(str_text[i_at + 1])
+                     && is_digit(str_text[i_at + 2]);
+    return b_seconds ? i_at + 3 : 0;
+}
+
+/* two of those, up and idle, a space between and the end of the line */
+static bool looks_like_uptime(const char *str_text, int64_t i_len)
+{
+    int64_t i_up = seconds_at(str_text, i_len);
+    int64_t i_idle = (i_up > 0 && i_up < i_len && str_text[i_up] == ' ')
+                     ? seconds_at(str_text + i_up + 1, i_len - i_up - 1) : 0;
+    return i_idle > 0 && i_len == i_up + 1 + i_idle + 1
+           && str_text[i_len - 1] == '\n';
 }
 
 int main(void)
@@ -102,7 +117,8 @@ int main(void)
 
     i_len = slurp("/proc/uptime", arr_whole, TEXT_MAX, TEXT_MAX);
     ksft_test_result(looks_like_uptime(arr_whole, i_len),
-                     "/proc/uptime is seconds, to the hundredth\n");
+                     "/proc/uptime is seconds up and idle, to the "
+                     "hundredth\n");
 
     ksft_test_result(listed("version") && listed("uptime"),
                      "/proc lists its files\n");

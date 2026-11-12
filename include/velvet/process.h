@@ -276,6 +276,12 @@ void process_set_name(int i_pid, const char *str_name);
 /* the program a process runs from now on, by its name in the namespace */
 void process_set_exe(int i_pid, const char *str_path);
 
+/* how many processes and threads have been made since boot */
+uint64_t process_made(void);
+
+/* the pid or tid handed out last */
+int process_last_id(void);
+
 /*
  * what /proc tells of a process, or of one of its threads, copied out of
  * the table at once so the fields of one report agree with each other

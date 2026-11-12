@@ -13,6 +13,7 @@
 #include <velvet/init.h>
 #include <velvet/kprintf.h>
 #include <velvet/kmalloc.h>
+#include <velvet/loadavg.h>
 #include <velvet/pmm.h>
 #include <velvet/pit.h>
 #include <velvet/random.h>
@@ -323,6 +324,12 @@ int64_t sys_sysinfo(uint64_t u_info)
     info.freeram = pmm_free_bytes();
     info.procs = (uint16_t)process_count();
     info.mem_unit = 1;
+    /* the loads in sixteen bits of fraction, which is what sysinfo has */
+    uint64_t arr_load[LOAD_SPANS];
+    sched_load(arr_load);
+    for (size_t sz_at = 0; sz_at < LOAD_SPANS; sz_at++) {
+        info.loads[sz_at] = arr_load[sz_at] << (16 - LOAD_SHIFT);
+    }
     return (copy_to_user(u_info, &info, sizeof info) == 0) ? 0 : -EFAULT;
 }
 

@@ -82,9 +82,21 @@ static void (*irq_handlers[16])(void);
 /* whether the interrupt each core is handling found it in ring 3 */
 static bool s_arr_from_user[CPU_MAX];
 
+/* and how many each has taken, each its own to count */
+static uint64_t s_arr_taken[CPU_MAX];
+
 bool irq_from_user(void)
 {
     return s_arr_from_user[cpu_id()];
+}
+
+uint64_t irq_count(void)
+{
+    uint64_t u_count = 0;
+    for (size_t sz_at = 0; sz_at < CPU_MAX; sz_at++) {
+        u_count += __atomic_load_n(&s_arr_taken[sz_at], __ATOMIC_RELAXED);
+    }
+    return u_count;
 }
 
 /*
@@ -199,6 +211,13 @@ static int fault_signal(const struct pt_regs *f, struct signal_origin *p_out)
 
 static void interrupt_handle(struct pt_regs *f)
 {
+    /* an exception is no interrupt, and is not counted as one */
+    if (f->vector >= 32) {
+        uint64_t *p_taken = &s_arr_taken[cpu_id()];
+        __atomic_store_n(p_taken, __atomic_load_n(p_taken, __ATOMIC_RELAXED)
+                                  + 1, __ATOMIC_RELAXED);
+    }
+
     /*
      * the apic timer arrives on a vector of its own, above the range
      * the 8259 was remapped into

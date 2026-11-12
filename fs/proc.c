@@ -8,9 +8,12 @@
 #include "proc_node.h"
 
 #include <asm/cpu.h>
+#include <asm/irq.h>
+#include <velvet/epoch.h>
 #include <velvet/file.h>
 #include <velvet/kmalloc.h>
 #include <velvet/kprintf.h>
+#include <velvet/loadavg.h>
 #include <velvet/namei.h>
 #include <velvet/pipe.h>
 #include <velvet/pit.h>
@@ -840,12 +843,92 @@ static void show_version(void)
             __VERSION__, __DATE__, __TIME__);
 }
 
-/* how long it has been up, in seconds, to the hundredth. */
+/* ticks as the hundredths of a second a clock tick is to a program */
+static uint64_t hundredths(uint64_t u_ticks)
+{
+    return u_ticks * 100 / CLOCK_TICK_HZ;
+}
+
+/*
+ * how long it has been up, in seconds, to the hundredth, and how long
+ * the cores have spent with nothing to do, every core's added up
+ */
 static void show_uptime(void)
 {
     uint64_t u_ms = pit_uptime_ms();
+    uint64_t u_idle = 0;
+    struct sched_cpu_stat stat;
 
-    kprintf("%lu.%02lu\n", u_ms / 1000, (u_ms % 1000) / 10);
+    for (unsigned u_cpu = 0; u_cpu < CPU_MAX; u_cpu++) {
+        u_idle += sched_cpu_stat(u_cpu, &stat) ? stat.u_idle : 0;
+    }
+    u_idle = hundredths(u_idle);
+    kprintf("%lu.%02lu %lu.%02lu\n", u_ms / 1000, (u_ms % 1000) / 10,
+            u_idle / 100, u_idle % 100);
+}
+
+/* one line of stat's cpus: user, nice, system, idle, and six never here */
+static void show_cpu(const struct sched_cpu_stat *p_stat)
+{
+    kprintf(" %lu 0 %lu %lu 0 0 0 0 0 0\n", hundredths(p_stat->cpu.u_user),
+            hundredths(p_stat->cpu.u_system), hundredths(p_stat->u_idle));
+}
+
+/*
+ * stat: the time every core has spent, all of them and then each, in
+ * clock ticks, the interrupts taken, the switches between threads, when
+ * the machine came up, how many processes and threads were ever made and
+ * how many want a core now
+ */
+static void show_stat(void)
+{
+    struct sched_cpu_stat all;
+    struct sched_cpu_stat one;
+    memset(&all, 0, sizeof all);
+    for (unsigned u_cpu = 0; u_cpu < CPU_MAX; u_cpu++) {
+        if (sched_cpu_stat(u_cpu, &one)) {
+            cpu_usage_add(&all.cpu, &one.cpu);
+            all.u_idle += one.u_idle;
+            all.u_switches += one.u_switches;
+        }
+    }
+    kprintf("cpu ");
+    show_cpu(&all);
+    for (unsigned u_cpu = 0; u_cpu < CPU_MAX; u_cpu++) {
+        if (sched_cpu_stat(u_cpu, &one)) {
+            kprintf("cpu%u", u_cpu);
+            show_cpu(&one);
+        }
+    }
+    uint64_t u_up = pit_uptime_ms() / 1000;
+    uint64_t u_booted = epoch_known() ? epoch_now() - u_up : 0;
+    kprintf("intr %lu\nctxt %lu\nbtime %lu\nprocesses %lu\n", irq_count(),
+            all.u_switches, u_booted, process_made());
+    kprintf("procs_running %lu\nprocs_blocked 0\n",
+            (uint64_t)sched_runnable(NULL));
+    kprintf("softirq 0 0 0 0 0 0 0 0 0 0 0\n");
+}
+
+/*
+ * loadavg: the three averages, the threads that want a core now of all
+ * there are, and the pid handed out last
+ */
+static void show_loadavg(void)
+{
+    uint64_t arr_load[LOAD_SPANS];
+    uint64_t arr_whole[LOAD_SPANS];
+    uint64_t arr_hundredths[LOAD_SPANS];
+    size_t sz_threads = 0;
+
+    sched_load(arr_load);
+    for (size_t sz_at = 0; sz_at < LOAD_SPANS; sz_at++) {
+        load_digits(arr_load[sz_at], &arr_whole[sz_at], &arr_hundredths[sz_at]);
+    }
+    size_t sz_runnable = sched_runnable(&sz_threads);
+    kprintf("%lu.%02lu %lu.%02lu %lu.%02lu %lu/%lu %d\n", arr_whole[0],
+            arr_hundredths[0], arr_whole[1], arr_hundredths[1], arr_whole[2],
+            arr_hundredths[2], (uint64_t)sz_runnable, (uint64_t)sz_threads,
+            process_last_id());
 }
 
 void proc_init(void)
@@ -853,4 +936,6 @@ void proc_init(void)
     proc_register("version", PROC_PUBLIC, show_version);
     proc_register("uptime", PROC_PUBLIC, show_uptime);
     proc_register("cpuinfo", PROC_PUBLIC, cpu_show);
+    proc_register("stat", PROC_PUBLIC, show_stat);
+    proc_register("loadavg", PROC_PUBLIC, show_loadavg);
 }

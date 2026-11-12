@@ -113,8 +113,8 @@ struct file *proc_file_of(const struct vfs_file *p_node);
 struct file *proc_open(const struct proc_ref *p_ref, uint32_t u_mode);
 
 /*
- * the files /proc has of its own: the version, the uptime, and cpuinfo,
- * which the architecture writes
+ * the files /proc has of its own: the version, the uptime, cpuinfo,
+ * which the architecture writes, the machine's stat and its load
  */
 void proc_init(void);
 

@@ -127,6 +127,25 @@ struct addrspace *sched_space_of(int i_pid);
  */
 struct addrspace *sched_swap_space(struct thread *t, struct addrspace *p_new);
 
+/* one core's ticks since it joined, by what each found, and its switches */
+struct sched_cpu_stat {
+    struct cpu_usage cpu;       /* a thread's, in ring 3 or the kernel */
+    uint64_t u_idle;            /* and nobody's */
+    uint64_t u_switches;
+};
+
+/* core u_cpu's, into p_out: false for one that is not scheduling */
+bool sched_cpu_stat(unsigned u_cpu, struct sched_cpu_stat *p_out);
+
+/*
+ * the load averaged over one minute, five and fifteen, in the fixed
+ * point of <velvet/loadavg.h>
+ */
+void sched_load(uint64_t arr_load[3]);
+
+/* how many threads want a cpu now, and in *p_threads how many there are */
+size_t sched_runnable(size_t *p_threads);
+
 /*
  * the kernel's calls that led thread i_id to where it is, printed: the
  * caller's own, or one parked, and nothing for one running on another

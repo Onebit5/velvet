@@ -550,6 +550,13 @@ the table means.
     of the cpus, and what its own children had, become its parent's
     children's.
 
+``uint64_t process_made(void);``
+    every process and thread made since boot: ``processes`` in
+    ``/proc/stat``.
+
+``int process_last_id(void);``
+    the pid or tid handed out last, which ``/proc/loadavg`` ends with.
+
 ``void process_account(int i_pid, const struct cpu_usage *p_used);``
     what an ended thread had of the cpus, added to its process's.
 
@@ -774,6 +781,21 @@ ready, goes to sleep, or stops existing.
 
 ``size_t sched_cores_scheduling(void);``
     how many cores are actually taking work
+
+``bool sched_cpu_stat(unsigned u_cpu, struct sched_cpu_stat *p_out);``
+    what a core's ticks found it doing since it joined, a thread's work
+    in ring 3, a thread's in the kernel, or idle, and how often it went
+    from one thread to another: ``/proc/stat`` and ``/proc/uptime``.
+
+``void sched_load(uint64_t arr_load[3]);``
+    the load averaged over one minute, five and fifteen. every five
+    seconds and a tick, the first core folds the threads that want a cpu,
+    running or ready and not stopped, into each with ``lib/loadavg.c``,
+    the tick more so the count does not keep landing on whatever happens
+    every five seconds.
+
+``size_t sched_runnable(size_t *p_threads);``
+    how many threads want a cpu now, and how many there are.
 
 ``const char *sched_cpu_running(unsigned cpu);``
     the name of whatever a given core is running this instant, for `cpus`

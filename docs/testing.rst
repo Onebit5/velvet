@@ -95,13 +95,14 @@ implementation exists, the project tests against that instead:
    shares no line with the checker.
 
 ``SELFTEST_BOTH``
-   five of the selftests, the static programs below, ``fs/procself``,
-   ``sched/futex``, ``sched/pthread``, ``sched/spawn`` and
-   ``sched/usage``, run on the machine the build is on as well as on this
-   kernel. they are written to say the same on any kernel with this one's
-   interface: a process's own directory in /proc, futexes, a libc's
-   threads, posix_spawn and what a process has had of the cpus, asked
-   through a libc that has never heard of this kernel. the kernel the
+   six of the selftests, the static programs below, ``fs/procself``,
+   ``fs/procstat``, ``sched/futex``, ``sched/pthread``, ``sched/spawn``
+   and ``sched/usage``, run on the machine the build is on as well as on
+   this kernel. they are written to say the same on any kernel with this
+   one's interface: a process's own directory in /proc and what /proc
+   says of the machine, futexes, a libc's threads, posix_spawn and what a
+   process has had of the cpus, asked through a libc that has never heard
+   of this kernel. the kernel the
    build runs on is the other implementation, and a test it passes and
    this one fails is this one wrong.
 

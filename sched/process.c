@@ -28,6 +28,9 @@ static int next_pid = 1;
 /* and every process's threads, under the same lock */
 static struct task s_arr_tasks[MAX_THREADS];
 
+/* every process and thread made, the first included, for /proc/stat */
+static uint64_t s_u_made;
+
 static struct process *slot_for(int pid)
 {
     if (pid <= 0) {
@@ -201,6 +204,7 @@ int process_create(const char *name, int parent, int uid, bool announce,
         memset(p, 0, sizeof *p);
 
         p->pid        = next_pid++;
+        s_u_made++;
         p->parent     = parent;
         /*
          * its own group until somebody says otherwise, which is what a
@@ -437,6 +441,7 @@ int process_add_thread(int i_from)
         && !p_from->b_doomed) {
         memset(t, 0, sizeof *t);
         t->i_tid = next_pid++;
+        s_u_made++;
         t->i_pid = p->pid;
         signal_inherit_thread(&t->sig, &p_from->sig, false);
         i_tid = t->i_tid;
@@ -1459,6 +1464,22 @@ void process_set_name(int i_pid, const char *str_name)
         p->name[sz_at] = '\0';
     }
     spin_unlock_irq(&process_lock, u_flags);
+}
+
+uint64_t process_made(void)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    uint64_t u_made = s_u_made;
+    spin_unlock_irq(&process_lock, u_flags);
+    return u_made;
+}
+
+int process_last_id(void)
+{
+    uint64_t u_flags = spin_lock_irq(&process_lock);
+    int i_last = next_pid - 1;
+    spin_unlock_irq(&process_lock, u_flags);
+    return i_last;
 }
 
 void process_set_exe(int i_pid, const char *str_path)

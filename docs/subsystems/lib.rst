@@ -70,6 +70,17 @@ printed a dozen lines to run out of time.
 checksums
 ---------
 
+``loadavg.c`` is the load average's arithmetic: how many threads want a
+cpu, folded every five seconds into three averages, over one minute,
+five and fifteen, in fixed point with eleven bits of fraction. each
+average keeps e to the minus five seconds over its span of itself at a
+fold, the weights every unix that has shown a load has shown it with,
+so the same work reads as the same load here as anywhere, and a fold
+rounds up while the count is above the average, so a load that stays
+put is reached and not only approached. it is the scheduler's numbers
+and touches nothing, which is what lets a host suite hold it to what
+the averages must do: 0.63 after a minute of one busy thread.
+
 ``hash.c`` is crc32, which answers "did this arrive intact". arithmetic in
 a polynomial field, chosen so that the errors a wire or a disk actually
 makes, a flipped bit or a short burst, are certain to change it rather than

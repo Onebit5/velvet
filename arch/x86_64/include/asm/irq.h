@@ -32,6 +32,10 @@ ARCH_INLINE bool irq_from_user(void)
 {
     return false;
 }
+ARCH_INLINE uint64_t irq_count(void)
+{
+    return 0;
+}
 #else
 void irq_install(uint8_t line, void (*handler)(void));
 
@@ -40,6 +44,9 @@ void irq_install(uint8_t line, void (*handler)(void));
  * handler that is not handed the frame and has to charge it to somebody
  */
 bool irq_from_user(void);
+
+/* every interrupt the cores have taken since boot, the timer's among them */
+uint64_t irq_count(void);
 #endif
 
 #ifdef VELVET_HOSTED

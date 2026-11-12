@@ -242,6 +242,48 @@ size_t sched_cores_scheduling(void)
     return 2;
 }
 
+/* two cores, their ticks by what each found, and the load */
+bool sched_cpu_stat(unsigned u_cpu, struct sched_cpu_stat *p_out)
+{
+    if (u_cpu > 1) {
+        return false;
+    }
+    p_out->cpu = (u_cpu == 0) ? (struct cpu_usage){ 120, 30, 0, 0 }
+                              : (struct cpu_usage){ 80, 20, 0, 0 };
+    p_out->u_idle = (u_cpu == 0) ? 5973 : 6023;
+    p_out->u_switches = (u_cpu == 0) ? 1000 : 2345;
+    return true;
+}
+void sched_load(uint64_t arr_load[3])
+{
+    arr_load[0] = 2048 + 1024;          /* 1.50 */
+    arr_load[1] = 41;                   /* 0.02 */
+    arr_load[2] = 0;
+}
+size_t sched_runnable(size_t *p_threads)
+{
+    if (p_threads != NULL) {
+        *p_threads = 12;
+    }
+    return 2;
+}
+uint64_t process_made(void)
+{
+    return 314;
+}
+int process_last_id(void)
+{
+    return 77;
+}
+bool epoch_known(void)
+{
+    return true;
+}
+uint64_t epoch_now(void)
+{
+    return 1800000061;
+}
+
 void sched_show_stack(int i_id)
 {
     kprintf("call trace of %d\n", i_id);
@@ -843,24 +885,29 @@ int main(void)
 
     CHECK(proc_find("cpuinfo", &sz_index) && sz_index == 2,
           "and cpuinfo, which the architecture writes, the third");
-    CHECK(strcmp(proc_name(3), "greeting") == 0, "listed by its name");
-    CHECK(proc_name(5) == NULL, "and the listing ends");
-    CHECK(proc_mode(3) == 0444 && proc_mode(4) == 0400,
-          "each keeps the mode it was registered with");
-    CHECK(proc_mode(9) == 0, "and one that does not exist has none");
 
-    int64_t i_len = proc_render(3, arr_text, sizeof arr_text);
+    /* the ones registered here come after the ones /proc has of its own */
+    size_t sz_greeting = 0;
+    size_t sz_empty = 0;
+    proc_find("greeting", &sz_greeting);
+    proc_find("empty", &sz_empty);
+    const size_t sz_none = PROC_FILES_MAX + 1;
+    CHECK(strcmp(proc_name(sz_greeting), "greeting") == 0,
+          "listed by its name");
+    CHECK(proc_name(sz_empty + 1) == NULL, "and the listing ends");
+    CHECK(proc_mode(sz_greeting) == 0444 && proc_mode(sz_empty) == 0400,
+          "each keeps the mode it was registered with");
+    CHECK(proc_mode(sz_none) == 0, "and one that does not exist has none");
+
+    int64_t i_len = proc_render(sz_greeting, arr_text, sizeof arr_text);
     CHECK(i_len == 31 && memcmp(arr_text, "hello from the kernel, 1 lines\n",
                                 31) == 0, "its text is what it printed");
     CHECK(s_p_capture == NULL, "and printing goes back to normal after");
-    CHECK(proc_render(4, arr_text, sizeof arr_text) == 0,
+    CHECK(proc_render(sz_empty, arr_text, sizeof arr_text) == 0,
           "a file that says nothing is empty");
-    CHECK(proc_render(9, arr_text, sizeof arr_text) == -1,
+    CHECK(proc_render(sz_none, arr_text, sizeof arr_text) == -1,
           "a file that does not exist cannot be written");
 
-    i_len = proc_render(1, arr_text, sizeof arr_text);
-    CHECK(i_len == 6 && memcmp(arr_text, "61.23\n", 6) == 0,
-          "uptime is seconds to the hundredth");
     i_len = proc_render(0, arr_text, sizeof arr_text);
     CHECK(i_len > 15 && memcmp(arr_text, "velvet version ", 15) == 0,
           "version says which kernel");
@@ -870,7 +917,7 @@ int main(void)
 
     /* read in pieces, it is the same file */
     char arr_whole[128];
-    struct file *p_file = open_file(3);
+    struct file *p_file = open_file(sz_greeting);
     CHECK(p_file != NULL && p_file->u_refs == 1 && p_file->p_ops->seek
           && p_file->p_ops->write == NULL, "a file opens, for reading");
     CHECK(read_rest(p_file, arr_whole, 5) == 31
@@ -879,12 +926,14 @@ int main(void)
     CHECK(p_file->p_ops->read(p_file, arr_whole, 5) == 0,
           "and the end is a read of nothing");
     file_put(p_file);
-    CHECK(open_file(9) == NULL, "no such file, no open");
+    CHECK(open_file(sz_none) == NULL, "no such file, no open");
 
     /* one open is one moment, and a read from the start is the next */
-    CHECK(proc_register("count", PROC_PUBLIC, show_count),
+    size_t sz_count = 0;
+    CHECK(proc_register("count", PROC_PUBLIC, show_count)
+          && proc_find("count", &sz_count),
           "a file that changes registers");
-    p_file = open_file(5);
+    p_file = open_file(sz_count);
     CHECK(read_rest(p_file, arr_whole, 7) == 42
           && strcmp(arr_whole, "asked 1 times, and this is the line after\n")
              == 0 && s_i_asked == 1,
@@ -905,7 +954,7 @@ int main(void)
           && read_rest(p_file, arr_whole, 64) == 42
           && strncmp(arr_whole, "asked 2 times", 13) == 0 && s_i_asked == 2,
           "a read from the start asks again");
-    struct file *p_other = open_file(5);
+    struct file *p_other = open_file(sz_count);
     CHECK(p_other->p_ops->seek(p_other, 10, SEEK_SET) == 10
           && read_rest(p_other, arr_whole, 64) == 32 && s_i_asked == 3,
           "an open first read further on is asked then");
@@ -916,7 +965,7 @@ int main(void)
     file_put(p_other);
     file_put(p_file);
 
-    p_file = open_file(4);
+    p_file = open_file(sz_empty);
     CHECK(read_rest(p_file, arr_whole, 64) == 0,
           "a file that says nothing reads as nothing");
     file_put(p_file);
@@ -924,6 +973,32 @@ int main(void)
     check_tree();
     check_files();
     check_links();
+
+    /* what the machine says of itself, a line or a few */
+    char arr_machine[1024];
+    CHECK(proc_find("uptime", &sz_index)
+          && proc_render(sz_index, arr_machine, sizeof arr_machine) == 13
+          && memcmp(arr_machine, "61.23 119.96\n", 13) == 0,
+          "uptime is seconds up and every core's seconds idle");
+    CHECK(proc_find("loadavg", &sz_index)
+          && (i_len = proc_render(sz_index, arr_machine,
+                                  sizeof arr_machine)) > 0
+          && memcmp(arr_machine, "1.50 0.02 0.00 2/12 77\n", 23) == 0
+          && i_len == 23,
+          "loadavg is the three averages, the threads and the last pid");
+    CHECK(proc_find("stat", &sz_index)
+          && (i_len = proc_render(sz_index, arr_machine,
+                                  sizeof arr_machine)) > 0,
+          "stat writes");
+    arr_machine[(i_len > 0) ? i_len : 0] = '\0';
+    CHECK(strcmp(arr_machine,
+                 "cpu  200 0 50 11996 0 0 0 0 0 0\n"
+                 "cpu0 120 0 30 5973 0 0 0 0 0 0\n"
+                 "cpu1 80 0 20 6023 0 0 0 0 0 0\n"
+                 "intr 0\nctxt 3345\nbtime 1800000000\nprocesses 314\n"
+                 "procs_running 2\nprocs_blocked 0\n"
+                 "softirq 0 0 0 0 0 0 0 0 0 0 0\n") == 0,
+          "and is the cores' time, all and each, and the machine's counts");
 
     if (s_i_failures == 0) {
         printf("all good\n");

@@ -112,8 +112,14 @@ which is what a file that says where the kernel keeps things is: an
 address of the kernel's is no business of a guest's.
 
 ``/proc`` has ``version``, which kernel this is, the compiler that made it
-and when, on one line, and ``uptime``, seconds since boot to the
-hundredth. the rest are each subsystem's own.
+and when, on one line; ``uptime``, seconds since boot and seconds every
+core spent idle, to the hundredth; ``stat``, each core's time and every
+core's, in clock ticks, the interrupts taken, the switches between
+threads, when the machine came up, how many processes and threads were
+ever made and how many want a core now; and ``loadavg``, the three load
+averages, the threads that want a core of all there are and the last
+pid. these are laid out as the programs reading them expect. the rest
+are each subsystem's own.
 
 and a directory for every process, named by its pid, which
 ``proc_pid.c`` writes. nothing in it is stored either: a name under
