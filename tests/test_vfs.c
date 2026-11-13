@@ -31,6 +31,23 @@ void kfree(void *p)
 {
     free(p);
 }
+/* a frame is a page of the host's, found where it was put */
+uint64_t pmm_alloc(void)
+{
+    return (uint64_t)(uintptr_t)aligned_alloc(4096, 4096);
+}
+void pmm_free(uint64_t u_phys)
+{
+    free((void *)(uintptr_t)u_phys);
+}
+void *pmm_phys_to_virt(uint64_t u_phys)
+{
+    return (void *)(uintptr_t)u_phys;
+}
+uint64_t pmm_hhdm_offset(void)
+{
+    return 0;
+}
 
 #include <velvet/vfs.h>
 #include <velvet/disk.h>

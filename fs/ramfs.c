@@ -11,12 +11,13 @@
 #include <velvet/ramfs.h>
 #include <velvet/epoch.h>
 #include <velvet/kmalloc.h>
+#include <velvet/pmm.h>
 #include <velvet/spinlock.h>
 #include <velvet/string.h>
 #include <uapi/velvet/errno.h>
 #include <uapi/velvet/stat.h>
 
-#define RAMFS_PAGE   4096
+#define RAMFS_PAGE   PAGE_SIZE
 #define LINKS_MAX    8          /* links followed on one walk */
 
 /*
@@ -117,12 +118,24 @@ static struct node *node_new(size_t sz_fs, uint32_t u_mode, uint32_t u_uid,
     return p_node;
 }
 
+/*
+ * a page of a file is a frame of its own. kmalloc would put its header
+ * in front of a page's worth and take two frames for it
+ */
+static uint8_t *page_new(void)
+{
+    uint64_t u_phys = pmm_alloc();
+    return (u_phys != 0) ? pmm_phys_to_virt(u_phys) : NULL;
+}
+
 /* a file's pages from the first one at or past sz_from */
 static void drop_pages(struct node *p_node, size_t sz_from)
 {
     for (size_t sz_at = sz_from; sz_at < p_node->sz_pages; sz_at++) {
-        kfree(p_node->pp_pages[sz_at]);
-        p_node->pp_pages[sz_at] = NULL;
+        if (p_node->pp_pages[sz_at] != NULL) {
+            pmm_free((uint64_t)p_node->pp_pages[sz_at] - pmm_hhdm_offset());
+            p_node->pp_pages[sz_at] = NULL;
+        }
     }
 }
 
@@ -625,7 +638,7 @@ int64_t ramfs_write(uint32_t u_ino, uint64_t u_offset, const void *p_buf,
             u_step = u_len - u_done;
         }
         if (p_node->pp_pages[sz_page] == NULL) {
-            p_node->pp_pages[sz_page] = kmalloc(RAMFS_PAGE);
+            p_node->pp_pages[sz_page] = page_new();
             if (p_node->pp_pages[sz_page] == NULL) {
                 break;
             }

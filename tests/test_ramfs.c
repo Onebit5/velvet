@@ -31,6 +31,27 @@ void kfree(void *p)
 {
     free(p);
 }
+/* a frame is a page of the host's, found where it was put, and counted */
+static int s_i_frames;
+uint64_t pmm_alloc(void)
+{
+    void *p_page = aligned_alloc(4096, 4096);
+    s_i_frames += (p_page != NULL) ? 1 : 0;
+    return (uint64_t)(uintptr_t)p_page;
+}
+void pmm_free(uint64_t u_phys)
+{
+    s_i_frames--;
+    free((void *)(uintptr_t)u_phys);
+}
+void *pmm_phys_to_virt(uint64_t u_phys)
+{
+    return (void *)(uintptr_t)u_phys;
+}
+uint64_t pmm_hhdm_offset(void)
+{
+    return 0;
+}
 static uint64_t s_u_now = 1000;
 uint64_t epoch_now(void)
 {
@@ -86,8 +107,10 @@ int main(void)
     CHECK(make_file(fs, "/hello", &e) && S_ISREG(e.u_mode) && e.u_size == 0,
           "a file is made, empty");
     CHECK(!make_file(fs, "/hello", &f), "and not made twice");
+    int i_before = s_i_frames;
     CHECK(ramfs_write(e.u_ino, 0, "hello there", 11) == 11,
           "it takes a write");
+    CHECK(s_i_frames == i_before + 1, "and holds it in one frame");
     memset(arr_buf, 0, sizeof arr_buf);
     CHECK(ramfs_read(e.u_ino, 0, arr_buf, sizeof arr_buf) == 11
           && memcmp(arr_buf, "hello there", 11) == 0,
@@ -335,6 +358,19 @@ int main(void)
         CHECK(ramfs_lookup(fs, "/random", true, &f) && f.u_size == u_size,
               "and the size it ends at is the array's");
         #undef NEXT
+    }
+
+    {
+        int i_held = s_i_frames;
+        int i_other = ramfs_new(0755);
+        struct ramfs_entry g;
+        CHECK(i_other >= 0 && make_file((size_t)i_other, "/far", &g)
+              && ramfs_write(g.u_ino, 3 * 4096 + 1, "x", 1) == 1
+              && s_i_frames == i_held + 1,
+              "a hole before a write takes no frames");
+        CHECK(i_other >= 0 && ramfs_free((size_t)i_other)
+              && s_i_frames == i_held,
+              "and a filesystem let go of gives back every frame it took");
     }
 
     CHECK(!ramfs_free(RAMFS_MAX) && ramfs_new(0755) >= 0,
