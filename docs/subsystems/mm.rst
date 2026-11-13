@@ -23,7 +23,8 @@ why a buddy allocator
    list of what was split from what.
 
    the cost is rounding: ask for five pages and you get eight. that waste
-   is real and is counted honestly, so ``/proc/meminfo`` shows it.
+   is real and is counted honestly: ``/proc/meminfo`` counts the frames
+   handed out, not the pages asked for.
 
 the interface leaks one consequence: sizes are rounded up to a power of
 two, so **the count you free with must be the count you allocated with**,
@@ -246,17 +247,24 @@ next will expect to be able to reach them.
 stats
 -----
 
-``/proc/meminfo`` is the pmm and heap figures: total, used, free, peak,
-metadata cost, and ``buddy_blocks_at()`` per order. the shape of the
-free memory, not just how much of it there is. a machine with plenty free
-and none of it contiguous is a machine about to fail a large allocation.
-``pressure_available()`` is the honest answer to "how much is left" for a
-program, which is not the same number as the free count.
+``mm/meminfo.c`` writes three files in the layouts ``free``, ``top`` and
+``slabtop`` read. ``/proc/meminfo`` is the frames there are and the ones
+free, with ``pressure_available()`` as ``MemAvailable``, the honest answer
+to "how much is left" for a program, which is not the same number as the
+free count. after them, what holds the rest: the files kept in ramfs as
+``Cached``, the object caches as ``Slab``, every thread's kernel stack as
+``KernelStack``, and no swap. a thing nothing counts has no line, rather
+than a line saying none.
 
-``/proc/slabinfo`` is every object cache, with what it holds against what
-it uses, and ``mm/meminfo.c`` writes both. ``/proc/vmm`` is the kernel's
-page tables, shown by where one of each kind of thing lands, and it is
-root's alone, since it is a map of where the kernel keeps things.
+``/proc/buddyinfo`` is ``buddy_blocks_at()`` for every order: the shape of
+the free memory, not just how much of it there is. a machine with plenty
+free and none of it contiguous is a machine about to fail a large
+allocation.
+
+``/proc/slabinfo`` is every object cache, as version 2.1 of that file. it
+is root's alone, as ``/proc/vmm`` is, the kernel's page tables shown by
+where one of each kind of thing lands: both are a map of where the kernel
+keeps things.
 
 the addrspace interface
 -----------------------
@@ -385,7 +393,7 @@ rounding: ask for five frames and get eight.
     take a block of 2^order frames.
 
 ``uint64_t buddy_blocks_at(unsigned order)``
-    how many blocks are on a free list, so ``/proc/meminfo`` can show the
+    how many blocks are on a free list, so ``/proc/buddyinfo`` can show the
     shape of the free memory rather than only how much of it there is: a
     machine with plenty free and none of it contiguous is a machine about
     to fail a large allocation.
@@ -412,7 +420,7 @@ lie.
 
 ``uint64_t kheap_total_bytes(void)``
     how much has been handed out, headers included. that is the honest
-    number, and it is the one ``/proc/meminfo`` prints.
+    number, and it is the one the boot log prints.
 
 the pmm interface
 -----------------
@@ -459,15 +467,8 @@ to a power of two, so the count freed has to be the count allocated.
     hand back the memory the loader was using for itself: its page tables,
     its stack, its structures, once nothing points into them any more.
 
-``uint64_t pmm_metadata_bytes(void)``
-    what the allocator's own bookkeeping costs.
-
 ``bool pmm_translate_is_tracked(uint64_t phys)``
     is this address covered by the allocator at all?
-
-``uint64_t pmm_peak_bytes(void)``
-    the most memory that has ever been in use at once, which is the number
-    that says how close the machine came.
 
 the pressure interface
 ----------------------

@@ -22,7 +22,6 @@ static uint64_t hhdm_offset;
 static uint64_t managed_frames;  /* how many frames the allocator covers */
 static uint64_t total_frames;    /* usable frames overall */
 static uint64_t highest_addr;    /* top of the direct map, see pmm.h */
-static uint64_t peak_used;       /* the high-water mark, in frames */
 static uint64_t meta_bytes;      /* what the buddy's bookkeeping costs */
 
 /* who shares what: one byte per frame, holding how many *extra* holders it has. */
@@ -111,7 +110,6 @@ void pmm_init_from_map(const struct boot_memmap_entry *entries, size_t count,
     total_frames = 0;
     highest_addr = 0;
     reclaim_count = 0;
-    peak_used = 0;
 
     /*
      * the old table, if there was one, came out of an allocator that is
@@ -259,11 +257,6 @@ uint64_t pmm_alloc_pages(size_t count)
     if (frame == BUDDY_NO_BLOCK) {
         spin_unlock_irq(&pmm_lock, flags);
         return 0;       /* the well is dry */
-    }
-
-    uint64_t used = total_frames - buddy_free_frames();
-    if (used > peak_used) {
-        peak_used = used;
     }
 
     spin_unlock_irq(&pmm_lock, flags);
@@ -446,19 +439,11 @@ uint64_t pmm_highest_address(void)
     return highest_addr;
 }
 
-uint64_t pmm_metadata_bytes(void)
-{
-    return meta_bytes;
-}
 uint64_t pmm_blocks_at(unsigned order)
 {
     return buddy_blocks_at(order);
 }
 
-uint64_t pmm_peak_bytes(void)
-{
-    return peak_used * PAGE_SIZE;
-}
 uint64_t pmm_total_bytes(void)
 {
     return total_frames * PAGE_SIZE;

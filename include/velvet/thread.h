@@ -132,6 +132,9 @@ void thread_free(struct thread *t);
 
 void thread_free_stack(struct thread *t);
 
+/* the memory every thread's kernel stack holds, its guard page included */
+uint64_t thread_stack_bytes(void);
+
 /* leave, with something to say about how it went. never returns */
 void thread_exit(int code) __attribute__((noreturn));
 

@@ -55,6 +55,7 @@ struct node {
 };
 
 static struct node *s_arr_nodes[NODES_MAX];
+static uint64_t     s_u_pages;      /* frames the files hold, every fs's */
 static uint32_t     s_arr_gens[NODES_MAX];
 static struct node *s_arr_roots[RAMFS_MAX];
 
@@ -125,7 +126,11 @@ static struct node *node_new(size_t sz_fs, uint32_t u_mode, uint32_t u_uid,
 static uint8_t *page_new(void)
 {
     uint64_t u_phys = pmm_alloc();
-    return (u_phys != 0) ? pmm_phys_to_virt(u_phys) : NULL;
+    if (u_phys == 0) {
+        return NULL;
+    }
+    __atomic_add_fetch(&s_u_pages, 1, __ATOMIC_RELAXED);
+    return pmm_phys_to_virt(u_phys);
 }
 
 /* a file's pages from the first one at or past sz_from */
@@ -135,6 +140,7 @@ static void drop_pages(struct node *p_node, size_t sz_from)
         if (p_node->pp_pages[sz_at] != NULL) {
             pmm_free((uint64_t)p_node->pp_pages[sz_at] - pmm_hhdm_offset());
             p_node->pp_pages[sz_at] = NULL;
+            __atomic_sub_fetch(&s_u_pages, 1, __ATOMIC_RELAXED);
         }
     }
 }
@@ -726,6 +732,11 @@ uint64_t ramfs_room(void)
     }
     spin_unlock_irq(&s_lock, u_flags);
     return u_free;
+}
+
+uint64_t ramfs_bytes(void)
+{
+    return __atomic_load_n(&s_u_pages, __ATOMIC_RELAXED) * RAMFS_PAGE;
 }
 
 void ramfs_usage(size_t sz_fs, uint64_t *p_bytes, uint64_t *p_nodes)

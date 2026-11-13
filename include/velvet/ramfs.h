@@ -114,4 +114,7 @@ void ramfs_usage(size_t sz_fs, uint64_t *p_bytes, uint64_t *p_nodes);
 /* how many more names all of them together have room for */
 uint64_t ramfs_room(void);
 
+/* the memory all their files hold, a frame for each page written */
+uint64_t ramfs_bytes(void);
+
 #endif

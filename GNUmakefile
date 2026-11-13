@@ -281,8 +281,8 @@ SELFTEST_ROOT := fs/blockdev fs/fsck fs/install fs/mknod fs/mount fs/root \
 # make test runs them as programs on the machine the build is on as
 # well, and each saying ok there is the check that what they ask is
 # answered the same on both
-SELFTEST_BOTH := fs/procself fs/procstat sched/futex sched/pthread \
-                 sched/spawn sched/usage
+SELFTEST_BOTH := fs/procself fs/procstat mm/meminfo sched/futex \
+                 sched/pthread sched/spawn sched/usage
 
 # the image's /init: asks which tests to run, runs each as a guest and
 # powers the machine off. built the way a test is, since it is a program
@@ -491,13 +491,15 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/random \
              $(T)/crash \
              $(T)/resize $(T)/switch \
-             $(T)/proc
+             $(T)/proc $(T)/meminfo
 
 $(T)/kprintf:  tests/test_kprintf.c  lib/kprintf.c \
                sched/spinlock.c
 $(T)/kprintf:  LDLIBS = -pthread
 $(T)/proc:     tests/test_proc.c     fs/proc.c fs/proc_pid.c fs/file.c \
                lib/kprintf.c lib/loadavg.c lib/string.c sched/spinlock.c
+$(T)/meminfo:  tests/test_meminfo.c  mm/meminfo.c lib/kprintf.c \
+               lib/string.c sched/spinlock.c
 $(T)/mm:       tests/test_mm.c       sched/spinlock.c \
                mm/pmm.c \
                mm/buddy.c mm/slab.c \

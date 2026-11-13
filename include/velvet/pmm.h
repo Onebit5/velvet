@@ -74,12 +74,9 @@ uint64_t pmm_highest_address(void);
 
 uint64_t pmm_reclaim_bootloader(void);
 
-uint64_t pmm_metadata_bytes(void);
 uint64_t pmm_blocks_at(unsigned order);
 
 bool pmm_translate_is_tracked(uint64_t phys);
-
-uint64_t pmm_peak_bytes(void);
 
 uint64_t pmm_total_bytes(void);
 uint64_t pmm_free_bytes(void);

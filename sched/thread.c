@@ -82,6 +82,8 @@ static struct spinlock thread_lock = SPINLOCK("thread", LOCK_RANK_SCHED);
 
 static struct slab_cache thread_cache;
 
+static uint64_t s_u_stack_pages;    /* frames the kernel stacks hold */
+
 static struct thread *create(const char *name, void (*entry)(void *),
                              void *arg, bool parked);
 
@@ -122,6 +124,7 @@ static struct thread *create(const char *name, void (*entry)(void *),
 
     t->stack_phys  = phys;
     t->stack_pages = THREAD_STACK_PAGES + 1;
+    __atomic_add_fetch(&s_u_stack_pages, t->stack_pages, __ATOMIC_RELAXED);
 
     t->state       = parked ? THREAD_BLOCKED : THREAD_READY;
     t->on_cpu      = -1;    /* ready is not the same as running */
@@ -244,6 +247,12 @@ void thread_free_stack(struct thread *t)
     }
 
     pmm_free_pages(t->stack_phys, t->stack_pages);
+    __atomic_sub_fetch(&s_u_stack_pages, t->stack_pages, __ATOMIC_RELAXED);
+}
+
+uint64_t thread_stack_bytes(void)
+{
+    return __atomic_load_n(&s_u_stack_pages, __ATOMIC_RELAXED) * PAGE_SIZE;
 }
 
 /*

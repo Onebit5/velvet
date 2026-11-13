@@ -72,13 +72,26 @@ the failing case. all of them:
    stop the machine at every write one of those operations takes and demand
    a filesystem at each one.
 
+``ramfs``
+   files kept in memory: what a write puts where a read finds it, against
+   a plain array of bytes, a frame for each page written and none for a
+   hole, and every frame given back when the filesystem goes.
+
 ``net``, ``tcp``
    checksums, headers, sockets and connections, checked against packets
    captured from the rfcs rather than invented here.
 
-``tty``, ``boot``, ``hash``
+``proc``, ``loadavg``, ``meminfo``
+   /proc: a process's directory over a process table made up for it, the
+   machine's files to the space, the load averages' arithmetic against
+   what the averages must do, and memory's three files over counts made
+   up for them.
+
+``tty``, ``boot``, ``hash``, ``chacha20``, ``random``
    the terminal discipline, the boot protocol held field by field against
-   philemon's own declaration of it, and crc32.
+   philemon's own declaration of it, crc32, and the generator behind
+   /dev/random: its cipher held to the published test vector, and bytes
+   that differ and look like they could be anything.
 
 the foreign-implementation checks
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -95,14 +108,14 @@ implementation exists, the project tests against that instead:
    shares no line with the checker.
 
 ``SELFTEST_BOTH``
-   six of the selftests, the static programs below, ``fs/procself``,
-   ``fs/procstat``, ``sched/futex``, ``sched/pthread``, ``sched/spawn``
-   and ``sched/usage``, run on the machine the build is on as well as on
-   this kernel. they are written to say the same on any kernel with this
-   one's interface: a process's own directory in /proc and what /proc
-   says of the machine, futexes, a libc's threads, posix_spawn and what a
-   process has had of the cpus, asked through a libc that has never heard
-   of this kernel. the kernel the
+   seven of the selftests, the static programs below, ``fs/procself``,
+   ``fs/procstat``, ``mm/meminfo``, ``sched/futex``, ``sched/pthread``,
+   ``sched/spawn`` and ``sched/usage``, run on the machine the build is
+   on as well as on this kernel. they are written to say the same on any
+   kernel with this one's interface: a process's own directory in /proc
+   and what /proc says of the machine and its memory, futexes, a libc's
+   threads, posix_spawn and what a process has had of the cpus, asked
+   through a libc that has never heard of this kernel. the kernel the
    build runs on is the other implementation, and a test it passes and
    this one fails is this one wrong.
 
