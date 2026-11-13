@@ -237,9 +237,12 @@ struct cpu_usage sched_process_usage(int i_pid, struct cpu_usage *p_children)
                         : (struct cpu_usage){ 0 };
 }
 
-size_t sched_cores_scheduling(void)
+/* the cores taking work: both, unless a check says otherwise */
+static uint64_t s_u_cores = 3;
+
+uint64_t sched_cores_mask(void)
 {
-    return 2;
+    return s_u_cores;
 }
 
 /* two cores, their ticks by what each found, and the load */
@@ -788,6 +791,13 @@ static void check_files(void)
           && strstr(arr_text, "\nCpus_allowed:\t3\nCpus_allowed_list:\t0-1\n")
              != NULL,
           "no capabilities for a guest, and either core");
+    s_u_cores = 0x2d;
+    i_len = read_node("/7/status", arr_text);
+    CHECK(strstr(arr_text, "\nCpus_allowed:\t2d\n"
+                           "Cpus_allowed_list:\t0,2-3,5\n") != NULL,
+          "and when a core between has not joined, the ones that have");
+    s_u_cores = 3;
+    i_len = read_node("/7/status", arr_text);
     const char *str_last = "voluntary_ctxt_switches:\t5\n"
                            "nonvoluntary_ctxt_switches:\t3\n";
     CHECK(i_len > (int64_t)strlen(str_last)

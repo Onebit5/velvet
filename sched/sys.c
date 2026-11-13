@@ -582,6 +582,27 @@ int64_t sys_sched_yield(void)
 }
 
 /*
+ * the cores thread i_tid may run on, 0 for the caller, as a mask a word
+ * long: every core taking work, since a thread here goes wherever there
+ * is room. how many bytes of mask were written, -EINVAL for a buffer not
+ * a whole number of words or too short for every core, -ESRCH for no
+ * such thread. which cores a thread may run on is not something a thread
+ * here can change, so there is no call to set it
+ */
+int64_t sys_sched_getaffinity(int i_tid, uint64_t u_len, uint64_t u_mask)
+{
+    uint64_t u_cores = sched_cores_mask();
+    if (u_len < sizeof u_cores || (u_len & (sizeof u_cores - 1)) != 0) {
+        return -EINVAL;
+    }
+    if (i_tid < 0 || (i_tid != 0 && process_pid_of(i_tid) == 0)) {
+        return -ESRCH;
+    }
+    return (copy_to_user(u_mask, &u_cores, sizeof u_cores) == 0)
+           ? (int64_t)sizeof u_cores : -EFAULT;
+}
+
+/*
  * where a thread keeps the robust mutexes it holds, for the kernel to
  * release if it dies holding one. a thread here ends by its own exit,
  * which a libc's thread exit comes to only having let go of its robust

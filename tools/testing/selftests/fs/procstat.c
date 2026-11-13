@@ -9,6 +9,8 @@
 #define _GNU_SOURCE
 #include "../kselftest.h"
 
+#include <limits.h>
+#include <sched.h>
 #include <sys/sysinfo.h>
 
 #define TEXT_MAX 16384
@@ -218,12 +220,61 @@ static void check_uptime(void)
                      "and how long the cores have been idle, going on\n");
 }
 
+/* how many cores a list such as 0-3,6 names */
+static int cores_listed(const char *str_list)
+{
+    int i_count = 0;
+    const char *p_at = str_list;
+    while (*p_at >= '0' && *p_at <= '9') {
+        char *p_end;
+        long i_from = strtol(p_at, &p_end, 10);
+        long i_to = (*p_end == '-') ? strtol(p_end + 1, &p_end, 10) : i_from;
+        i_count += (int)(i_to - i_from + 1);
+        p_at = (*p_end == ',') ? p_end + 1 : p_end;
+    }
+    return i_count;
+}
+
+/*
+ * the cores a thread may run on are the ones its status lists, all of
+ * them taking work, and what a libc counts as the processors there are
+ */
+static void check_affinity(void)
+{
+    cpu_set_t set;
+    long long i_all;
+    long long i_each;
+    long long i_user;
+    CPU_ZERO(&set);
+    bool b_got = sched_getaffinity(0, sizeof set, &set) == 0;
+    int i_mine = CPU_COUNT(&set);
+    slurp("/proc/stat");
+    int i_cores = cores_in_stat(&i_all, &i_each, &i_user);
+    slurp("/proc/self/status");
+    const char *str_list = strstr(s_arr_text, "\nCpus_allowed_list:\t");
+    int i_listed = (str_list != NULL) ? cores_listed(str_list + 20) : -1;
+    ksft_test_result(b_got && i_mine >= 1 && i_mine == i_listed
+                     && i_mine <= i_cores
+                     && sysconf(_SC_NPROCESSORS_ONLN) == i_mine,
+                     "a thread may run on the cores its status lists, which"
+                     " a libc counts\n");
+    errno = 0;
+    long i_short = syscall(SYS_sched_getaffinity, 0, 4, &set);
+    int i_short_errno = errno;
+    errno = 0;
+    long i_nobody = syscall(SYS_sched_getaffinity, INT_MAX, sizeof set, &set);
+    ksft_test_result(i_short == -1 && i_short_errno == EINVAL
+                     && i_nobody == -1 && errno == ESRCH,
+                     "and nobody's, or into too little room, is an error\n");
+}
+
 int main(void)
 {
     ksft_print_header();
-    ksft_set_plan(9);
+    ksft_set_plan(11);
     check_stat();
     check_loadavg();
     check_uptime();
+    check_affinity();
     ksft_finished();
 }

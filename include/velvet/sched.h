@@ -70,6 +70,11 @@ bool sched_join(unsigned cpu, const char *idle_name);
 /* which core a thread is on, or -1 if it is not running anywhere */
 int sched_thread_cpu(const struct thread *t);
 
+/*
+ * the cores taking work, a bit each, and how many. a thread goes to
+ * whichever has room, so these are also the cores any thread may run on
+ */
+uint64_t sched_cores_mask(void);
 size_t sched_cores_scheduling(void);
 
 const char *sched_cpu_running(unsigned cpu);

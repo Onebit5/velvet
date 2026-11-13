@@ -34,174 +34,186 @@ are the old ones a newer call does the work of, with the newer one in the
 notes, and the few that take the saved registers apart: fork, clone,
 execve, rt_sigreturn and arch_prctl.
 
-======  ===============  =====================  =========================================
-number  name             where                  notes
-======  ===============  =====================  =========================================
-0       read             fs/read_write.c
-1       write            fs/read_write.c
-2       open             arch/x86_64/syscall.c  openat from the working directory
-3       close            fs/open.c
-4       stat             arch/x86_64/syscall.c  newfstatat, following a link
-5       fstat            fs/stat.c
-6       lstat            arch/x86_64/syscall.c  newfstatat, not following one
-7       poll             fs/select.c            every 10 ms
-8       lseek            fs/read_write.c
-9       mmap             mm/mmap.c              anonymous, or a private copy of a file
-10      mprotect         mm/mmap.c
-11      munmap           mm/mmap.c
-12      brk              mm/mmap.c
-13      rt_sigaction     sched/sigcall.c
-14      rt_sigprocmask   sched/sigcall.c
-15      rt_sigreturn     arch/x86_64/syscall.c  from the frame a handler was entered with
-16      ioctl            fs/fcntl.c             terminals and ptys, sockets
-                                                and the interface under them,
-                                                drives, ext4 resize
-17      pread64          fs/read_write.c
-18      pwrite64         fs/read_write.c
-19      readv            fs/read_write.c
-20      writev           fs/read_write.c
-21      access           arch/x86_64/syscall.c  faccessat from the working directory
-22      pipe             arch/x86_64/syscall.c  pipe2 with no flags
-23      select           fs/select.c            every 10 ms
-24      sched_yield      sched/sys.c
-25      mremap           mm/mmap.c              smaller in place; larger is -ENOMEM
-28      madvise          mm/mmap.c              MADV_DONTNEED gives pages back
-32      dup              fs/fcntl.c
-33      dup2             fs/fcntl.c
-34      pause            sched/sigcall.c
-35      nanosleep        sched/time.c
-36      getitimer        sched/sigcall.c        ITIMER_REAL
-37      alarm            sched/sigcall.c
-38      setitimer        sched/sigcall.c        ITIMER_REAL
-39      getpid           sched/sys.c
-41      socket           net/sockets.c          AF_INET, stream and datagram,
-                                                and ping, datagram of icmp
-42      connect          net/sockets.c
-43      accept           arch/x86_64/syscall.c  accept4 with no flags
-44      sendto           net/sockets.c
-45      recvfrom         net/sockets.c
-46      sendmsg          net/sockets.c
-47      recvmsg          net/sockets.c
-48      shutdown         net/sockets.c
-49      bind             net/sockets.c
-50      listen           net/sockets.c
-51      getsockname      net/sockets.c
-52      getpeername      net/sockets.c
-54      setsockopt       net/sockets.c
-55      getsockopt       net/sockets.c
-56      clone            arch/x86_64/syscall.c  a thread or a process, below
-57      fork             arch/x86_64/syscall.c  clone with SIGCHLD
-58      vfork            arch/x86_64/syscall.c  the parent waits for exec or exit
-59      execve           arch/x86_64/syscall.c  see the stack below
-60      exit             sched/exit.c
-61      wait4            sched/exit.c           with the child's rusage
-62      kill             sched/sigcall.c
-63      uname            sched/sys.c            velvet, its version, x86_64
-72      fcntl            fs/fcntl.c
-74      fsync            fs/open.c
-75      fdatasync        arch/x86_64/syscall.c  fsync
-76      truncate         fs/open.c
-77      ftruncate        fs/open.c
-79      getcwd           fs/open.c
-80      chdir            fs/open.c
-81      fchdir           fs/open.c
-82      rename           arch/x86_64/syscall.c  renameat2
-83      mkdir            arch/x86_64/syscall.c  mkdirat
-84      rmdir            arch/x86_64/syscall.c  unlinkat with AT_REMOVEDIR
-85      creat            arch/x86_64/syscall.c  open with O_CREAT, O_WRONLY, O_TRUNC
-86      link             arch/x86_64/syscall.c  linkat: -EPERM, files have one name
-87      unlink           arch/x86_64/syscall.c  unlinkat
-88      symlink          arch/x86_64/syscall.c  symlinkat
-89      readlink         arch/x86_64/syscall.c  readlinkat
-90      chmod            arch/x86_64/syscall.c  fchmodat
-91      fchmod           fs/open.c
-92      chown            arch/x86_64/syscall.c  fchownat
-93      fchown           fs/open.c
-94      lchown           arch/x86_64/syscall.c  fchownat, not following
-95      umask            fs/open.c
-96      gettimeofday     sched/time.c
-97      getrlimit        sched/sys.c
-98      getrusage        sched/sys.c
-99      sysinfo          sched/sys.c
-100     times            sched/sys.c
-102     getuid           sched/sys.c
-103     syslog           sched/sys.c            actions 0, 1, 3 and 10
-104     getgid           sched/sys.c
-105     setuid           sched/sys.c
-106     setgid           sched/sys.c
-107     geteuid          arch/x86_64/syscall.c  the uid: there is one per process
-108     getegid          arch/x86_64/syscall.c  the gid, likewise
-109     setpgid          sched/sys.c
-110     getppid          sched/sys.c
-111     getpgrp          sched/sys.c
-112     setsid           sched/sys.c
-113     setreuid         sched/sys.c
-114     setregid         sched/sys.c
-115     getgroups        sched/sys.c
-116     setgroups        sched/sys.c
-117     setresuid        sched/sys.c
-118     getresuid        sched/sys.c
-119     setresgid        sched/sys.c
-120     getresgid        sched/sys.c
-121     getpgid          sched/sys.c
-124     getsid           sched/sys.c
-127     rt_sigpending    sched/sigcall.c
-128     rt_sigtimedwait  sched/sigcall.c
-130     rt_sigsuspend    sched/sigcall.c
-131     sigaltstack      sched/sigcall.c
-133     mknod            arch/x86_64/syscall.c  mknodat from the working directory
-137     statfs           fs/namespace.c
-138     fstatfs          fs/namespace.c
-155     pivot_root       fs/namespace.c         root; the old root under the new
-157     prctl            sched/sys.c            PR_SET_NAME, PR_GET_NAME
-158     arch_prctl       arch/x86_64/syscall.c  ARCH_SET_FS and ARCH_GET_FS
-160     setrlimit        sched/sys.c
-161     chroot           fs/namespace.c         root
-162     sync             fs/open.c
-164     settimeofday     sched/time.c
-165     mount            fs/namespace.c         root; ext2/3/4, vfat, ramfs, proc,
-                                                and MS_MOVE
-166     umount2          fs/namespace.c         root; UMOUNT_NOFOLLOW only
-169     reboot           sched/sys.c            root; restart or power off
-170     sethostname      sched/sys.c            root; uname tells it
-171     setdomainname    sched/sys.c            root, likewise
-186     gettid           sched/sys.c
-200     tkill            sched/sigcall.c
-201     time             sched/time.c
-202     futex            sched/futex.c          waits, wakes and requeues
-217     getdents64       fs/stat.c
-218     set_tid_address  sched/exit.c
-227     clock_settime    sched/time.c
-228     clock_gettime    sched/time.c
-229     clock_getres     sched/time.c
-230     clock_nanosleep  sched/time.c           not on a cpu-time clock
-231     exit_group       sched/exit.c
-234     tgkill           sched/sigcall.c
-257     openat           fs/open.c
-258     mkdirat          fs/namei.c
-259     mknodat          fs/namei.c             a file, a fifo, or a device,
-                                                root's
-260     fchownat         fs/open.c
-262     newfstatat       fs/stat.c
-263     unlinkat         fs/namei.c
-264     renameat         arch/x86_64/syscall.c  renameat2 with no flags
-265     linkat           fs/namei.c             -EPERM, files have one name
-266     symlinkat        fs/namei.c
-267     readlinkat       fs/namei.c
-268     fchmodat         fs/open.c
-269     faccessat        fs/open.c
-270     pselect6         fs/select.c            under its own mask
-271     ppoll            fs/select.c            under its own mask
-273     set_robust_list  sched/sys.c            accepted, for threads to come
-288     accept4          net/sockets.c
-292     dup3             fs/fcntl.c
-293     pipe2            fs/fcntl.c
-302     prlimit64        sched/sys.c
-306     syncfs           arch/x86_64/syscall.c  sync
-316     renameat2        fs/namei.c
-318     getrandom        sched/sys.c            chacha20, never blocks
-439     faccessat2       arch/x86_64/syscall.c  faccessat, with flags
-======  ===============  =====================  =========================================
+======  =================  =====================  ==============================
+number  name               where                  notes
+======  =================  =====================  ==============================
+0       read               fs/read_write.c
+1       write              fs/read_write.c
+2       open               arch/x86_64/syscall.c  openat from the working
+                                                  directory
+3       close              fs/open.c
+4       stat               arch/x86_64/syscall.c  newfstatat, following a link
+5       fstat              fs/stat.c
+6       lstat              arch/x86_64/syscall.c  newfstatat, not following one
+7       poll               fs/select.c            every 10 ms
+8       lseek              fs/read_write.c
+9       mmap               mm/mmap.c              anonymous, or a private copy
+                                                  of a file
+10      mprotect           mm/mmap.c
+11      munmap             mm/mmap.c
+12      brk                mm/mmap.c
+13      rt_sigaction       sched/sigcall.c
+14      rt_sigprocmask     sched/sigcall.c
+15      rt_sigreturn       arch/x86_64/syscall.c  from the frame a handler was
+                                                  entered with
+16      ioctl              fs/fcntl.c             terminals and ptys, sockets
+                                                  and the interface under them,
+                                                  drives, ext4 resize
+17      pread64            fs/read_write.c
+18      pwrite64           fs/read_write.c
+19      readv              fs/read_write.c
+20      writev             fs/read_write.c
+21      access             arch/x86_64/syscall.c  faccessat from the working
+                                                  directory
+22      pipe               arch/x86_64/syscall.c  pipe2 with no flags
+23      select             fs/select.c            every 10 ms
+24      sched_yield        sched/sys.c
+25      mremap             mm/mmap.c              smaller in place; larger is
+                                                  -ENOMEM
+28      madvise            mm/mmap.c              MADV_DONTNEED gives pages back
+32      dup                fs/fcntl.c
+33      dup2               fs/fcntl.c
+34      pause              sched/sigcall.c
+35      nanosleep          sched/time.c
+36      getitimer          sched/sigcall.c        ITIMER_REAL
+37      alarm              sched/sigcall.c
+38      setitimer          sched/sigcall.c        ITIMER_REAL
+39      getpid             sched/sys.c
+41      socket             net/sockets.c          AF_INET, stream and datagram,
+                                                  and ping, datagram of icmp
+42      connect            net/sockets.c
+43      accept             arch/x86_64/syscall.c  accept4 with no flags
+44      sendto             net/sockets.c
+45      recvfrom           net/sockets.c
+46      sendmsg            net/sockets.c
+47      recvmsg            net/sockets.c
+48      shutdown           net/sockets.c
+49      bind               net/sockets.c
+50      listen             net/sockets.c
+51      getsockname        net/sockets.c
+52      getpeername        net/sockets.c
+54      setsockopt         net/sockets.c
+55      getsockopt         net/sockets.c
+56      clone              arch/x86_64/syscall.c  a thread or a process, below
+57      fork               arch/x86_64/syscall.c  clone with SIGCHLD
+58      vfork              arch/x86_64/syscall.c  the parent waits for exec or
+                                                  exit
+59      execve             arch/x86_64/syscall.c  see the stack below
+60      exit               sched/exit.c
+61      wait4              sched/exit.c           with the child's rusage
+62      kill               sched/sigcall.c
+63      uname              sched/sys.c            velvet, its version, x86_64
+72      fcntl              fs/fcntl.c
+74      fsync              fs/open.c
+75      fdatasync          arch/x86_64/syscall.c  fsync
+76      truncate           fs/open.c
+77      ftruncate          fs/open.c
+79      getcwd             fs/open.c
+80      chdir              fs/open.c
+81      fchdir             fs/open.c
+82      rename             arch/x86_64/syscall.c  renameat2
+83      mkdir              arch/x86_64/syscall.c  mkdirat
+84      rmdir              arch/x86_64/syscall.c  unlinkat with AT_REMOVEDIR
+85      creat              arch/x86_64/syscall.c  open with O_CREAT, O_WRONLY,
+                                                  O_TRUNC
+86      link               arch/x86_64/syscall.c  linkat: -EPERM, files have one
+                                                  name
+87      unlink             arch/x86_64/syscall.c  unlinkat
+88      symlink            arch/x86_64/syscall.c  symlinkat
+89      readlink           arch/x86_64/syscall.c  readlinkat
+90      chmod              arch/x86_64/syscall.c  fchmodat
+91      fchmod             fs/open.c
+92      chown              arch/x86_64/syscall.c  fchownat
+93      fchown             fs/open.c
+94      lchown             arch/x86_64/syscall.c  fchownat, not following
+95      umask              fs/open.c
+96      gettimeofday       sched/time.c
+97      getrlimit          sched/sys.c
+98      getrusage          sched/sys.c
+99      sysinfo            sched/sys.c
+100     times              sched/sys.c
+102     getuid             sched/sys.c
+103     syslog             sched/sys.c            actions 0, 1, 3 and 10
+104     getgid             sched/sys.c
+105     setuid             sched/sys.c
+106     setgid             sched/sys.c
+107     geteuid            arch/x86_64/syscall.c  the uid: there is one per
+                                                  process
+108     getegid            arch/x86_64/syscall.c  the gid, likewise
+109     setpgid            sched/sys.c
+110     getppid            sched/sys.c
+111     getpgrp            sched/sys.c
+112     setsid             sched/sys.c
+113     setreuid           sched/sys.c
+114     setregid           sched/sys.c
+115     getgroups          sched/sys.c
+116     setgroups          sched/sys.c
+117     setresuid          sched/sys.c
+118     getresuid          sched/sys.c
+119     setresgid          sched/sys.c
+120     getresgid          sched/sys.c
+121     getpgid            sched/sys.c
+124     getsid             sched/sys.c
+127     rt_sigpending      sched/sigcall.c
+128     rt_sigtimedwait    sched/sigcall.c
+130     rt_sigsuspend      sched/sigcall.c
+131     sigaltstack        sched/sigcall.c
+133     mknod              arch/x86_64/syscall.c  mknodat from the working
+                                                  directory
+137     statfs             fs/namespace.c
+138     fstatfs            fs/namespace.c
+155     pivot_root         fs/namespace.c         root; the old root under the
+                                                  new
+157     prctl              sched/sys.c            PR_SET_NAME, PR_GET_NAME
+158     arch_prctl         arch/x86_64/syscall.c  ARCH_SET_FS and ARCH_GET_FS
+160     setrlimit          sched/sys.c
+161     chroot             fs/namespace.c         root
+162     sync               fs/open.c
+164     settimeofday       sched/time.c
+165     mount              fs/namespace.c         root; ext2/3/4, vfat, ramfs,
+                                                  proc, and MS_MOVE
+166     umount2            fs/namespace.c         root; UMOUNT_NOFOLLOW only
+169     reboot             sched/sys.c            root; restart or power off
+170     sethostname        sched/sys.c            root; uname tells it
+171     setdomainname      sched/sys.c            root, likewise
+186     gettid             sched/sys.c
+200     tkill              sched/sigcall.c
+201     time               sched/time.c
+202     futex              sched/futex.c          waits, wakes and requeues
+204     sched_getaffinity  sched/sys.c            every core taking work
+217     getdents64         fs/stat.c
+218     set_tid_address    sched/exit.c
+227     clock_settime      sched/time.c
+228     clock_gettime      sched/time.c
+229     clock_getres       sched/time.c
+230     clock_nanosleep    sched/time.c           not on a cpu-time clock
+231     exit_group         sched/exit.c
+234     tgkill             sched/sigcall.c
+257     openat             fs/open.c
+258     mkdirat            fs/namei.c
+259     mknodat            fs/namei.c             a file, a fifo, or a device,
+                                                  root's
+260     fchownat           fs/open.c
+262     newfstatat         fs/stat.c
+263     unlinkat           fs/namei.c
+264     renameat           arch/x86_64/syscall.c  renameat2 with no flags
+265     linkat             fs/namei.c             -EPERM, files have one name
+266     symlinkat          fs/namei.c
+267     readlinkat         fs/namei.c
+268     fchmodat           fs/open.c
+269     faccessat          fs/open.c
+270     pselect6           fs/select.c            under its own mask
+271     ppoll              fs/select.c            under its own mask
+273     set_robust_list    sched/sys.c            accepted, for threads to come
+288     accept4            net/sockets.c
+292     dup3               fs/fcntl.c
+293     pipe2              fs/fcntl.c
+302     prlimit64          sched/sys.c
+306     syncfs             arch/x86_64/syscall.c  sync
+316     renameat2          fs/namei.c
+318     getrandom          sched/sys.c            chacha20, never blocks
+439     faccessat2         arch/x86_64/syscall.c  faccessat, with flags
+======  =================  =====================  ==============================
 
 a call a signal cuts short
 --------------------------

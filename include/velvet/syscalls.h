@@ -157,6 +157,7 @@ int64_t sys_getrandom(uint64_t u_buf, uint64_t u_len, uint32_t u_flags);
 int64_t sys_prctl(int i_option, uint64_t u_arg2, uint64_t u_arg3,
                   uint64_t u_arg4, uint64_t u_arg5);
 int64_t sys_sched_yield(void);
+int64_t sys_sched_getaffinity(int i_tid, uint64_t u_len, uint64_t u_mask);
 int64_t sys_set_robust_list(uint64_t u_head, uint64_t u_len);
 int64_t sys_futex(uint64_t u_addr, int i_op, uint32_t u_val,
                   uint64_t u_timeout, uint64_t u_addr2, uint32_t u_val3);

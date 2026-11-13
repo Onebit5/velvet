@@ -303,6 +303,25 @@ static unsigned bits_in(uint64_t u_set)
     return u_count;
 }
 
+/* a set of cores as a list of runs, 0-3,6 */
+static void show_core_list(uint64_t u_cores)
+{
+    const char *str_sep = "";
+    for (unsigned u_from = 0; u_from < 64; u_from++) {
+        if ((u_cores >> u_from & 1) == 0) {
+            continue;
+        }
+        unsigned u_to = u_from;
+        while (u_to + 1 < 64 && (u_cores >> (u_to + 1) & 1) != 0) {
+            u_to++;
+        }
+        kprintf((u_to == u_from) ? "%s%u" : "%s%u-%u", str_sep, u_from, u_to);
+        str_sep = ",";
+        u_from = u_to;
+    }
+    kprintf("\n");
+}
+
 static void show_status_memory(const struct memory *p_mem)
 {
     const struct addrspace_sizes *s = &p_mem->sizes;
@@ -370,18 +389,9 @@ static void show_status(const struct proc_ref *p_ref)
             CAPS_ALL, 0ul);
     kprintf("NoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\n");
 
-    size_t sz_cores = sched_cores_scheduling();
-    if (sz_cores == 0) {
-        sz_cores = 1;
-    }
-    uint64_t u_cores = (sz_cores >= 64) ? ~(uint64_t)0
-                                        : ((uint64_t)1 << sz_cores) - 1;
-    kprintf("Cpus_allowed:\t%lx\n", u_cores);
-    if (sz_cores == 1) {
-        kprintf("Cpus_allowed_list:\t0\n");
-    } else {
-        kprintf("Cpus_allowed_list:\t0-%lu\n", (uint64_t)sz_cores - 1);
-    }
+    uint64_t u_cores = sched_cores_mask();
+    kprintf("Cpus_allowed:\t%lx\nCpus_allowed_list:\t", u_cores);
+    show_core_list(u_cores);
     kprintf("Mems_allowed:\t1\nMems_allowed_list:\t0\n");
     struct cpu_usage none = { 0 };
     const struct cpu_usage *p_cpu = seen.b_info ? &seen.info.cpu : &none;

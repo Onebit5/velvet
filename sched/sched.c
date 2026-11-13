@@ -956,13 +956,23 @@ const char *sched_cpu_running(unsigned cpu)
     return (t != NULL) ? t->name : "nothing yet";
 }
 
+_Static_assert(CPU_MAX <= 64, "the cores taking work are a mask a word long");
+
+uint64_t sched_cores_mask(void)
+{
+    uint64_t u_mask = 0;
+    for (unsigned u_cpu = 0; u_cpu < CPU_MAX; u_cpu++) {
+        u_mask |= percpu[u_cpu].scheduling ? (uint64_t)1 << u_cpu : 0;
+    }
+    return u_mask;
+}
+
 size_t sched_cores_scheduling(void)
 {
     size_t n = 0;
-    for (size_t i = 0; i < CPU_MAX; i++) {
-        if (percpu[i].scheduling) {
-            n++;
-        }
+    for (uint64_t u_mask = sched_cores_mask(); u_mask != 0;
+         u_mask &= u_mask - 1) {
+        n++;
     }
     return n;
 }
