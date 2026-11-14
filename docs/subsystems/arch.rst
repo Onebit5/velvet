@@ -100,8 +100,10 @@ kernel is built for it:
   ring 3.
 - ``switch.asm``. the context switch, six callee-saved registers and a
   return address.
-- ``cpuinfo.c``, ``machine.c``, ``asm/msr.h``, ``asm/io.h``, ``uart.c``. the
-  processor, the box, and the port i/o that makes a file visibly x86.
+- ``cpu.c``, ``cpuinfo.c``, ``machine.c``, ``asm/msr.h``, ``asm/io.h``,
+  ``uart.c``. the processor, the box, and the port i/o that makes a file
+  visibly x86. ``cpuinfo.c`` is cpuid and nothing else, so the host can
+  build it and hold what it says against the host's own kernel.
 - ``none/``. the architecture that does nothing; below.
 
 none: an instrument, not a port
@@ -175,10 +177,16 @@ by people porting it.
     uint64_t cpu_frame_pointer(void)
     uint64_t cpu_stack_pointer(void)
     void cpu_show(void)
+    void cpu_show_cores(void)
 
-``cpu_show`` writes, with kprintf, what the processors are and which of them
-are awake: what ``cpus`` prints, and ``/proc/cpuinfo``, which ``fs/proc.c``
-registers for every architecture. one with no table of processors says so.
+``cpu_show`` writes, with kprintf, ``/proc/cpuinfo``, which ``fs/proc.c``
+registers for every architecture: a block for each core taking work, laid
+out as programs read it. its flags are what the processor has that a
+program may use here, so a feature that needs state or a control bit the
+kernel leaves off is not among them. ``cpu_show_cores`` is which
+processors the firmware listed, which woke and what each runs, for a
+person, at the end of ``/proc/threads``. one with no table of processors
+says so there, and has no blocks in cpuinfo.
 
 ``<asm/irq.h>``::
 

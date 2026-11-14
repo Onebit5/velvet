@@ -81,11 +81,13 @@ the failing case. all of them:
    checksums, headers, sockets and connections, checked against packets
    captured from the rfcs rather than invented here.
 
-``proc``, ``loadavg``, ``meminfo``
+``proc``, ``loadavg``, ``meminfo``, ``cpuinfo``
    /proc: a process's directory over a process table made up for it, the
    machine's files to the space, the load averages' arithmetic against
-   what the averages must do, and memory's three files over counts made
-   up for them.
+   what the averages must do, memory's three files over counts made up
+   for them, and a core's block of cpuinfo, over a processor made up for
+   it and over the build machine's own, held against what that machine's
+   kernel says of it.
 
 ``tty``, ``boot``, ``hash``, ``chacha20``, ``random``
    the terminal discipline, the boot protocol held field by field against

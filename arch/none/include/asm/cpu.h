@@ -74,7 +74,10 @@ ARCH_INLINE bool cpu_random(uint64_t *p_out)
 /* the processors, of which a machine with no architecture has no table. */
 ARCH_INLINE void cpu_show(void)
 {
-    kprintf("this machine has no table of processors to read\n");
+}
+ARCH_INLINE void cpu_show_cores(void)
+{
+    kprintf("\nthis machine has no table of processors to read\n");
 }
 
 #endif

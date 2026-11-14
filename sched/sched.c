@@ -654,6 +654,9 @@ void sched_show_threads(void)
     if (sz_pipes > 0) {
         kprintf("%lu pipe%s still open\n", sz_pipes, sz_pipes == 1 ? "" : "s");
     }
+
+    /* and the cores they run on, which is where they are */
+    cpu_show_cores();
 }
 
 void sched_proc_init(void)

@@ -491,7 +491,7 @@ TEST_BINS := $(T)/kprintf $(T)/mm $(T)/buddy $(T)/slab \
              $(T)/random \
              $(T)/crash \
              $(T)/resize $(T)/switch \
-             $(T)/proc $(T)/meminfo
+             $(T)/proc $(T)/meminfo $(T)/cpuinfo
 
 $(T)/kprintf:  tests/test_kprintf.c  lib/kprintf.c \
                sched/spinlock.c
@@ -499,6 +499,8 @@ $(T)/kprintf:  LDLIBS = -pthread
 $(T)/proc:     tests/test_proc.c     fs/proc.c fs/proc_pid.c fs/file.c \
                lib/kprintf.c lib/loadavg.c lib/string.c sched/spinlock.c
 $(T)/meminfo:  tests/test_meminfo.c  mm/meminfo.c lib/kprintf.c \
+               lib/string.c sched/spinlock.c
+$(T)/cpuinfo:  tests/test_cpuinfo.c  arch/x86_64/cpuinfo.c lib/kprintf.c \
                lib/string.c sched/spinlock.c
 $(T)/mm:       tests/test_mm.c       sched/spinlock.c \
                mm/pmm.c \

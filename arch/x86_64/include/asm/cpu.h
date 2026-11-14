@@ -74,6 +74,9 @@ ARCH_INLINE uint64_t cpu_stack_pointer(void)
 ARCH_INLINE void cpu_show(void)
 {
 }
+ARCH_INLINE void cpu_show_cores(void)
+{
+}
 
 ARCH_INLINE uint32_t cpu_id(void)
 {
@@ -154,11 +157,14 @@ ARCH_INLINE uint64_t cpu_cycles(void)
 }
 
 #ifndef VELVET_HOSTED
-/*
- * the processors: what they are, which the firmware listed, which woke
- * and which are taking work. what `cpus` prints and /proc/cpuinfo is
- */
+/* the processors taking work, as programs read them: /proc/cpuinfo */
 void cpu_show(void);
+
+/*
+ * which processors the firmware listed, which woke and which are taking
+ * work, and what each runs, for a person: the end of /proc/threads
+ */
+void cpu_show_cores(void);
 
 /*
  * 64 bits from the core's own random number generator, rdrand: false
