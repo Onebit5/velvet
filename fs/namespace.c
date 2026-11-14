@@ -10,7 +10,9 @@
 #include <velvet/namei.h>
 #include <velvet/dev.h>
 #include <velvet/disk.h>
+#include <velvet/diskinfo.h>
 #include <velvet/file.h>
+#include <velvet/kprintf.h>
 #include <velvet/pmm.h>
 #include <velvet/process.h>
 #include <velvet/pty.h>
@@ -52,6 +54,15 @@ static const struct fs_type s_arr_types[] = {
     { "devtmpfs", VFS_DEV,   DISK_NONE },
     { "devpts",   VFS_PTS,   DISK_NONE },
 };
+
+void mount_show_types(void)
+{
+    for (size_t sz_at = 0;
+         sz_at < sizeof s_arr_types / sizeof s_arr_types[0]; sz_at++) {
+        kprintf("%s\t%s\n", (s_arr_types[sz_at].e_kind == VFS_DISK)
+                             ? "" : "nodev", s_arr_types[sz_at].str_name);
+    }
+}
 
 static const struct fs_type *type_named(const char *str_name)
 {

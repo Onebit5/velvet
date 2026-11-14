@@ -112,14 +112,20 @@ which is what a file that says where the kernel keeps things is: an
 address of the kernel's is no business of a guest's.
 
 ``/proc`` has ``version``, which kernel this is, the compiler that made it
-and when, on one line; ``uptime``, seconds since boot and seconds every
-core spent idle, to the hundredth; ``stat``, each core's time and every
-core's, in clock ticks, the interrupts taken, the switches between
-threads, when the machine came up, how many processes and threads were
-ever made and how many want a core now; and ``loadavg``, the three load
-averages, the threads that want a core of all there are and the last
-pid. these are laid out as the programs reading them expect. the rest
-are each subsystem's own.
+and when, on one line; ``cmdline``, the line the kernel was booted with,
+which is empty, since the loader hands it none; ``uptime``, seconds since
+boot and seconds every core spent idle, to the hundredth; ``stat``, each
+core's time and every core's, in clock ticks, the interrupts taken, the
+switches between threads, when the machine came up, how many processes
+and threads were ever made and how many want a core now; ``loadavg``,
+the three load averages, the threads that want a core of all there are
+and the last pid; ``partitions``, every drive and then its partitions,
+by device number, size in kilobytes and name; and ``filesystems``, every
+type ``mount`` knows, ``nodev`` before each that needs no drive. memory's
+three are in mm.rst. these are laid out as the programs reading them
+expect. ``threads``, ``vmm``, ``disk`` and ``pci`` are the kernel's own,
+written for a person: ``disk`` has the drives, each filesystem on them,
+the block cache and what each partition table says.
 
 and a directory for every process, named by its pid, which
 ``proc_pid.c`` writes. nothing in it is stored either: a name under
@@ -128,19 +134,21 @@ and a directory for every process, named by its pid, which
 process seen through which of its threads, and what the file says is
 worked out from the process table, the scheduler and the process's own
 memory when it is read. ``self`` is a link to the reader's own
-directory, ``thread-self`` to its thread's, ``<pid>/task/<tid>`` a
-directory for each thread with what the process's has but ``task``, and
-a thread's number names a directory too, its process's seen through it,
-though only processes are listed. what a process's directory has is
-laid out for the programs that read it, written for another kernel and
-parsing it field by field: ``stat`` and ``statm`` on a line each,
-``status`` a name and a tab before each value, ``cmdline`` and
-``environ`` the strings exec laid out, ``comm``, ``maps``, ``limits``,
-``mounts`` as the process sees them from its own root, and ``stack``,
-the kernel's calls that led the thread where it is, which is root's.
-the rest belong to whoever the process runs as, ``environ`` to them
-alone. a node's number is a hash of its canonical name, so
-``/proc/self/stat`` and ``/proc/<pid>/stat`` are one file.
+directory, ``thread-self`` to its thread's and ``mounts`` to
+``self/mounts``, and following one of these is walking what it says,
+from /proc. ``<pid>/task/<tid>`` is a directory for each thread with
+what the process's has but ``task``, and a thread's number names a
+directory too, its process's seen through it, though only processes are
+listed. what a process's directory has is laid out for the programs that
+read it, written for another kernel and parsing it field by field:
+``stat`` and ``statm`` on a line each, ``status`` a name and a tab
+before each value, ``cmdline`` and ``environ`` the strings exec laid
+out, ``comm``, ``maps``, ``limits``, ``mounts`` as the process sees them
+from its own root, and ``stack``, the kernel's calls that led the thread
+where it is, which is root's. the rest belong to whoever the process
+runs as, ``environ`` to them alone. a node's number is a hash of its
+canonical name, so ``/proc/self/stat`` and ``/proc/<pid>/stat`` are one
+file.
 
 some of what is in a process's directory leads out of /proc: ``cwd``,
 ``root`` and ``exe`` are links to where it stands, its ``/`` and the
@@ -747,15 +755,17 @@ the disk and the namespace, described. each call writes with kprintf, and
 ``/proc`` catches what it writes in the reader's buffer.
 
 ``void disk_show(void);``
-    the drive, every filesystem on it, and the block cache:
+    the drives, every filesystem on them, the block cache, and what each
+    partition table says it holds and where each one mounted is:
     ``/proc/disk``
 
 ``void disk_show_partitions(void);``
-    what each drive's partition table says it holds, and where each one
-    mounted is: ``/proc/partitions``
+    every drive and partition as a block device, by number, size and
+    name: ``/proc/partitions``
 
-``void vfs_show_mounts(void);``
-    which filesystem is where: ``/proc/mounts``
+``void mount_show_types(void);``
+    every type ``mount`` knows, in ``fs/namespace.c`` with its table of
+    them: ``/proc/filesystems``
 
 ``void fs_proc_init(void);``
     registers those three, for anyone to read
@@ -892,7 +902,7 @@ which has no working directory, is the root's.
     may anyone write here at all? /proc and /dev are the kernel's
 
 ``struct vfs_mount { char arr_at[PATH_MAX];``
-    one mount, copied out of the table, for /proc/mounts to print
+    one mount, copied out of the table, for a process's mounts to print
 
 ``int64_t vfs_mount_add(const char *str_at, enum vfs_kind e_kind, size_t sz_slot, const char *str_source);``
     a filesystem hung at a point: -EBUSY when something hangs there already. that there is a directory there is the caller's to see to

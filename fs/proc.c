@@ -148,7 +148,52 @@ void proc_text_number(struct proc_text *p_text, uint64_t u_number)
 }
 
 /*
- * the node's name as the namespace has it, with self and thread-self
+ * the links at the top, after the files, and what each says, written
+ * for the reader. following one is walking what it says from /proc, so
+ * a link here is a row of this and nothing more
+ */
+static void to_self(struct proc_text *p_text)
+{
+    proc_text_number(p_text, (uint64_t)current_pid());
+}
+
+static void to_thread_self(struct proc_text *p_text)
+{
+    to_self(p_text);
+    proc_text_add(p_text, "/task/");
+    proc_text_number(p_text, (uint64_t)current_tid());
+}
+
+/* the mounts the reader sees, under its own root */
+static void to_mounts(struct proc_text *p_text)
+{
+    proc_text_add(p_text, "self/mounts");
+}
+
+static const struct top_link {
+    const char *str_name;
+    void (*fn_say)(struct proc_text *p_text);
+} s_arr_links[] = {
+    { "self", to_self },
+    { "thread-self", to_thread_self },
+    { "mounts", to_mounts },
+};
+
+#define TOP_LINKS (sizeof s_arr_links / sizeof *s_arr_links)
+
+static bool link_find(const char *str_name, size_t *p_index)
+{
+    for (size_t sz_at = 0; sz_at < TOP_LINKS; sz_at++) {
+        if (strcmp(s_arr_links[sz_at].str_name, str_name) == 0) {
+            *p_index = sz_at;
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ * the node's name as the namespace has it, with the links at the top
  * already followed, into sz_size of str_out: what its number is made of
  */
 static void canonical(const struct proc_ref *p_ref, char *str_out,
@@ -162,11 +207,9 @@ static void canonical(const struct proc_ref *p_ref, char *str_out,
         proc_text_add(&text, "/");
         proc_text_add(&text, proc_name(p_ref->sz_index));
         return;
-    case PROC_KIND_SELF:
-        proc_text_add(&text, "/self");
-        return;
-    case PROC_KIND_THREAD_SELF:
-        proc_text_add(&text, "/thread-self");
+    case PROC_KIND_LINK:
+        proc_text_add(&text, "/");
+        proc_text_add(&text, s_arr_links[p_ref->sz_index].str_name);
         return;
     case PROC_KIND_ROOT:
         return;
@@ -272,10 +315,8 @@ static void fill(const struct proc_ref *p_ref, struct vfs_file *p_out)
         proc_text_add(&name, proc_name(p_ref->sz_index));
         u_mode = S_IFREG | proc_mode(p_ref->sz_index);
         break;
-    case PROC_KIND_SELF:
-    case PROC_KIND_THREAD_SELF:
-        proc_text_add(&name, (p_ref->u_kind == PROC_KIND_SELF)
-                             ? "self" : "thread-self");
+    case PROC_KIND_LINK:
+        proc_text_add(&name, s_arr_links[p_ref->sz_index].str_name);
         u_mode = S_IFLNK | 0777;
         break;
     case PROC_KIND_TASKS:
@@ -352,22 +393,33 @@ static void see_process(struct proc_ref *p_ref, int i_pid, int i_tid,
     p_ref->b_thread = b_thread;
 }
 
+static bool walk(const char *str_rest, bool b_follow, struct proc_ref *p_ref);
+
+/*
+ * the link at the top that p_ref is, followed: where what it says leads.
+ * false for a reader that is no process, which has no self to lead to
+ */
+static bool follow_top(struct proc_ref *p_ref)
+{
+    char arr_to[PROC_NAME_MAX * 2];
+    struct proc_text text = { arr_to, sizeof arr_to, 0 };
+    if (current_pid() == 0) {
+        return false;
+    }
+    s_arr_links[p_ref->sz_index].fn_say(&text);
+    return walk(arr_to, true, p_ref);
+}
+
 /* what str_part is at the top: false for nothing */
 static bool step_top(struct proc_ref *p_ref, const char *str_part,
                      bool b_follow)
 {
     int i_number = number_in(str_part);
-    int i_me = current_pid();
     if (proc_find(str_part, &p_ref->sz_index)) {
         p_ref->u_kind = PROC_KIND_FILE;
-    } else if (strcmp(str_part, "self") == 0 && !b_follow) {
-        p_ref->u_kind = PROC_KIND_SELF;
-    } else if (strcmp(str_part, "thread-self") == 0 && !b_follow) {
-        p_ref->u_kind = PROC_KIND_THREAD_SELF;
-    } else if (strcmp(str_part, "self") == 0 && i_me != 0) {
-        see_process(p_ref, i_me, i_me, false);
-    } else if (strcmp(str_part, "thread-self") == 0 && i_me != 0) {
-        see_process(p_ref, i_me, current_tid(), true);
+    } else if (link_find(str_part, &p_ref->sz_index)) {
+        p_ref->u_kind = PROC_KIND_LINK;
+        return !b_follow || follow_top(p_ref);
     } else if (i_number != 0 && process_find(i_number) != NULL) {
         see_process(p_ref, i_number, i_number, false);
     } else if (i_number != 0 && process_pid_of(i_number) != 0) {
@@ -496,8 +548,8 @@ static bool nth_entry(struct proc_ref *p_ref, size_t sz_index)
 }
 
 /*
- * what is at the top, in order: the files, self and thread-self, and a
- * directory for each process
+ * what is at the top, in order: the files, the links, and a directory
+ * for each process
  */
 static bool nth_top(struct proc_ref *p_ref, size_t sz_index)
 {
@@ -508,12 +560,12 @@ static bool nth_top(struct proc_ref *p_ref, size_t sz_index)
         return true;
     }
     sz_index -= s_sz_count;
-    if (sz_index < 2) {
-        p_ref->u_kind = (sz_index == 0) ? PROC_KIND_SELF
-                                        : PROC_KIND_THREAD_SELF;
+    if (sz_index < TOP_LINKS) {
+        p_ref->u_kind = PROC_KIND_LINK;
+        p_ref->sz_index = sz_index;
         return true;
     }
-    sz_index -= 2;
+    sz_index -= TOP_LINKS;
     size_t sz_pids = process_pids(arr_pids, MAX_PROCESSES);
     if (sz_index >= sz_pids) {
         return false;
@@ -607,17 +659,9 @@ int64_t proc_readlink(const char *str_rest, char *str_out, size_t sz_size)
         return -EINVAL;
     }
     /* relative, so a process under a root of its own reads it the same */
-    switch (ref.u_kind) {
-    case PROC_KIND_SELF:
-        proc_text_number(&text, (uint64_t)current_pid());
+    if (ref.u_kind == PROC_KIND_LINK) {
+        s_arr_links[ref.sz_index].fn_say(&text);
         return 0;
-    case PROC_KIND_THREAD_SELF:
-        proc_text_number(&text, (uint64_t)current_pid());
-        proc_text_add(&text, "/task/");
-        proc_text_number(&text, (uint64_t)current_tid());
-        return 0;
-    default:
-        break;
     }
     if (!is_link_out(&ref)) {
         return -EINVAL;
@@ -843,6 +887,12 @@ static void show_version(void)
             __VERSION__, __DATE__, __TIME__);
 }
 
+/* the kernel's command line, of which the loader hands it none */
+static void show_cmdline(void)
+{
+    kprintf("\n");
+}
+
 /* ticks as the hundredths of a second a clock tick is to a program */
 static uint64_t hundredths(uint64_t u_ticks)
 {
@@ -938,4 +988,5 @@ void proc_init(void)
     proc_register("cpuinfo", PROC_PUBLIC, cpu_show);
     proc_register("stat", PROC_PUBLIC, show_stat);
     proc_register("loadavg", PROC_PUBLIC, show_loadavg);
+    proc_register("cmdline", PROC_PUBLIC, show_cmdline);
 }

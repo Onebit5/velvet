@@ -577,10 +577,11 @@ static void check_tree(void)
     CHECK(strcmp(listed("/", sz_files - 1), proc_name(sz_files - 1)) == 0
           && strcmp(listed("/", sz_files), "self") == 0
           && strcmp(listed("/", sz_files + 1), "thread-self") == 0
-          && strcmp(listed("/", sz_files + 2), "1") == 0
-          && strcmp(listed("/", sz_files + 3), "7") == 0
-          && listed("/", sz_files + 4)[0] == '\0',
-          "the top lists its files, self and thread-self, and the processes");
+          && strcmp(listed("/", sz_files + 2), "mounts") == 0
+          && strcmp(listed("/", sz_files + 3), "1") == 0
+          && strcmp(listed("/", sz_files + 4), "7") == 0
+          && listed("/", sz_files + 5)[0] == '\0',
+          "the top lists its files, its links, and the processes");
 
     CHECK(proc_lookup("/self", false, &node) && node.is_symlink
           && node.mode == 0777, "self is a link");
@@ -596,6 +597,15 @@ static void check_tree(void)
           && node.proc.b_thread && node.proc.i_tid == 9,
           "and what is in it is that thread's");
     s_i_my_tid = 7;
+    CHECK(proc_lookup("/mounts", false, &node) && node.is_symlink
+          && proc_readlink("/mounts", arr_to, sizeof arr_to) == 0
+          && strcmp(arr_to, "self/mounts") == 0,
+          "mounts is a link to the reader's own");
+    struct vfs_file own;
+    CHECK(proc_lookup("/mounts", true, &node)
+          && proc_lookup("/7/mounts", true, &own) && !node.is_symlink
+          && node.u_ino == own.u_ino && node.proc.i_pid == 7,
+          "and followed, is the same file");
     CHECK(proc_readlink("/7", arr_to, sizeof arr_to) == -EINVAL,
           "a directory is no link");
 

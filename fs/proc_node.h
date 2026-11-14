@@ -18,8 +18,7 @@
 enum proc_kind {
     PROC_KIND_ROOT,             /* /proc itself */
     PROC_KIND_FILE,             /* sz_index of the files at the top */
-    PROC_KIND_SELF,             /* the link to the reader's process */
-    PROC_KIND_THREAD_SELF,      /* and to the reader's thread */
+    PROC_KIND_LINK,             /* sz_index of the links at the top */
     PROC_KIND_PROCESS,          /* /proc/<i_tid>: process i_pid */
     PROC_KIND_TASKS,            /* its task directory */
     PROC_KIND_THREAD,           /* task/<i_tid> in that */

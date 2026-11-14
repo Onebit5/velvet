@@ -2,7 +2,8 @@
 /*
  * fs/diskinfo.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * the drives, the partitions and the mounts, to a person or in /proc.
+ * the drives, the partitions and the filesystems, in /proc: the details
+ * for a person, and the partitions as programs read them.
  */
 
 #include <velvet/diskinfo.h>
@@ -65,6 +66,47 @@ static void say_mount(size_t which)
     }
 }
 
+/*
+ * what each drive's partition table says it holds, and where each one
+ * mounted is, under the rest of /proc/disk
+ */
+static void show_tables(void)
+{
+    size_t n = disk_part_count();
+    if (n == 0) {
+        return;
+    }
+
+    kprintf("\n  #  drive  scheme  start        sectors      kind\n");
+    for (size_t i = 0; i < n; i++) {
+        struct disk_part e;
+        if (!disk_part_at(i, &e)) {
+            continue;
+        }
+        const char *scheme = (e.scheme == PART_GPT) ? "gpt"
+                           : (e.scheme == PART_MBR) ? "mbr" : "-";
+
+        kprintf("  %2lu  %5u  %-6s  %-11lu  %-11lu  %s",
+                (uint64_t)i, e.p.drive, scheme,
+                e.p.first_lba, e.p.sectors, e.p.kind);
+        if (e.p.name[0] != '\0') {
+            kprintf("  \"%s\"", e.p.name);
+        }
+        if (e.fs[0] != '\0') {
+            kprintf("  [%s]", e.fs);
+        }
+        /* and where it is mounted, if it is */
+        for (size_t sz_slot = 0; sz_slot < DISK_MOUNTS; sz_slot++) {
+            char arr_at[PATH_MAX];
+            if (disk_ready(sz_slot) && disk_mounted_part(sz_slot) == (int)i
+                && vfs_where(VFS_DISK, sz_slot, arr_at, sizeof arr_at)) {
+                kprintf("  at %s", arr_at);
+            }
+        }
+        kprintf("\n");
+    }
+}
+
 void disk_show(void)
 {
     if (disk_block_count() == 0) {
@@ -109,55 +151,39 @@ void disk_show(void)
         kprintf("           %lu writes became %lu trips to the drive\n",
                 c.writes, c.writebacks);
     }
+    show_tables();
 }
 
+/* one line of partitions: its numbers, its size in kilobytes, its name */
+static void show_block(const struct disk_block *p_block)
+{
+    kprintf("%4u  %7u %10lu %s\n", p_block->u_rdev >> 8,
+            p_block->u_rdev & 0xff, p_block->u_sectors * AHCI_SECTOR / 1024,
+            p_block->arr_name);
+}
+
+/*
+ * partitions: each drive and then the partitions on it, every one a
+ * block device a program may open
+ */
 void disk_show_partitions(void)
 {
-    size_t n = disk_part_count();
-    if (n == 0) {
-        kprintf("no drives, or none the kernel could read a sector from\n");
-        return;
-    }
-
-    kprintf("  #  drive  scheme  start        sectors      kind\n");
-    for (size_t i = 0; i < n; i++) {
-        struct disk_part e;
-        if (!disk_part_at(i, &e)) {
+    kprintf("major minor  #blocks  name\n\n");
+    const struct disk_block *p_drive;
+    for (size_t sz_drive = 0; (p_drive = disk_block_at(sz_drive)) != NULL;
+         sz_drive++) {
+        if ((p_drive->u_rdev & 0xf) != 0) {
             continue;
         }
-        const char *scheme = (e.scheme == PART_GPT) ? "gpt"
-                           : (e.scheme == PART_MBR) ? "mbr" : "-";
-
-        kprintf("  %2lu  %5u  %-6s  %-11lu  %-11lu  %s",
-                (uint64_t)i, e.p.drive, scheme,
-                e.p.first_lba, e.p.sectors, e.p.kind);
-        if (e.p.name[0] != '\0') {
-            kprintf("  \"%s\"", e.p.name);
-        }
-        if (e.fs[0] != '\0') {
-            kprintf("  [%s]", e.fs);
-        }
-        /* and where it is mounted, if it is */
-        for (size_t sz_slot = 0; sz_slot < DISK_MOUNTS; sz_slot++) {
-            char arr_at[PATH_MAX];
-            if (disk_ready(sz_slot) && disk_mounted_part(sz_slot) == (int)i
-                && vfs_where(VFS_DISK, sz_slot, arr_at, sizeof arr_at)) {
-                kprintf("  at %s", arr_at);
+        show_block(p_drive);
+        const struct disk_block *p_block;
+        for (size_t sz_at = 0; (p_block = disk_block_at(sz_at)) != NULL;
+             sz_at++) {
+            if (p_block->u_drive == p_drive->u_drive
+                && (p_block->u_rdev & 0xf) != 0) {
+                show_block(p_block);
             }
         }
-        kprintf("\n");
-    }
-}
-
-void vfs_show_mounts(void)
-{
-    kprintf("%-10s %-7s %-5s %s\n", "at", "kind", "write", "on");
-
-    struct vfs_mount m;
-    for (size_t i = 0; vfs_mount_at(i, &m); i++) {
-        kprintf("%-10s %-7s %-5s %s%s\n", m.arr_at, m.what,
-                m.writable ? "yes" : "no", m.arr_where,
-                m.present ? "" : "   (absent)");
     }
 }
 
@@ -165,5 +191,5 @@ void fs_proc_init(void)
 {
     proc_register("disk", PROC_PUBLIC, disk_show);
     proc_register("partitions", PROC_PUBLIC, disk_show_partitions);
-    proc_register("mounts", PROC_PUBLIC, vfs_show_mounts);
+    proc_register("filesystems", PROC_PUBLIC, mount_show_types);
 }
