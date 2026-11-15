@@ -15,6 +15,50 @@ a kernel that booted.
 
 ---
 
+- **0.4.9**: `/proc` the way programs read it. **a directory for every
+  process.** a program written for another kernel finds out about itself,
+  and about every other program, by reading a directory named by its
+  pid, and every process has one now: `stat`, `statm`, `status`,
+  `cmdline`, `comm`, `environ`, `maps`, `limits`, `mounts` and `stack`,
+  laid out field for field as the programs reading them expect; `cwd`,
+  `root` and `exe`, links to where it stands, its `/` and the program it
+  runs; `fd/`, a link for each descriptor to the name it was opened by,
+  or to `pipe:[n]` or `socket:[n]`, and `fdinfo/`, where each one is; and
+  `task/`, a directory for each thread. `self`, `thread-self` and
+  `mounts` are links at the top, and following one is walking what it
+  says. so a libc's `ttyname` finds a terminal by its descriptor's link,
+  `fexecve` runs a program by its descriptor, and a `ps` finds every
+  process by walking the directory.
+
+  **the machine as programs read it.** `stat` is each core's time and
+  every core's, in clock ticks, ring 3's apart from the kernel's, with
+  the interrupts, the switches, when the machine came up and the
+  processes made; `loadavg` the one, five and fifteen minute loads, which
+  `sysinfo` has too; `uptime` the cores' idle time after how long it has
+  been up; `meminfo` the frames there are, the free ones, what a program
+  may still have and what holds the rest; `buddyinfo` the free blocks of
+  each size, and `slabinfo`, root's, the object caches; `cpuinfo` a block
+  for each core, whose flags are what a program may use here; and
+  `partitions`, `filesystems` and `cmdline`. `threads`, `vmm`, `disk`
+  and `pci` stay the kernel's own, for a person: the table of cores is
+  the end of `threads` now, and the partition tables the end of `disk`.
+
+  **one moment's answer.** a file here keeps the text a read from the
+  start wrote, so a program reading it in pieces reads one answer rather
+  than the ends of several, and seeks back to the start to ask again.
+  `getrusage`, `times` and `wait4` tell ring 3's time apart from the
+  kernel's, and a cpu given up apart from one taken, and a process's time
+  is its live threads' and its ended ones', and never goes down.
+  `sched_getaffinity` says which cores a thread may run on: a libc counts
+  the processors with it, and with no answer, musl counted one.
+
+  and what reading them found: a page of a file in ramfs took two frames,
+  since kmalloc puts its header in front of what it hands out, so the
+  root, the archive the loader hands over, held near six megabytes for
+  three; it is a frame a page now. the selftests for a process's own
+  directory, the machine's files, memory's and a `ps` over `/proc` run on
+  the machine the build is on as well, where they say the same.
+
 - **0.4.8**: threads the way a thread library makes them. **clone makes
   threads.** a process has as many threads as a program makes, and they
   are all of it at once: one address space, one table of descriptors,

@@ -51,22 +51,15 @@ the signals and the frame a handler is entered on, errno, the stack exec
 leaves, and floating point in ring 3, since 0.4.6 a root of its own to
 mount things under and the drives and the network a client, an installer
 and a checker need, since 0.4.7 terminals the way such a program asks
-for them, a pty among them, and fifos, and since 0.4.8 threads, made the
-way a thread library makes them and waiting on futexes, and a child
-posix_spawn makes in its parent's memory. what is left of the series is
-the rest of what such a program takes for granted: a `/proc`, a loader,
-and at the end somebody else's programs run unmodified. the reason is
-the one every checker in this project rests on, an outside answer: the
-same static binary run on both machines says, call by call, where this
-kernel differs.
-
-**0.4.9 `/proc`, laid out the way linux lays it out.** 0.4.1's `/proc` is
-the kernel's own reports, in the words its shell printed them, which is
-enough for a `ps` written against them and for nothing written elsewhere.
-software written elsewhere reads a directory per process, `/proc/self`,
-and files such as `stat` and `meminfo` in formats a great deal of code
-parses, and reading them is also how this version finds out how much of
-the kernel's state is still only reachable from inside the kernel.
+for them, a pty among them, and fifos, since 0.4.8 threads, made the way
+a thread library makes them and waiting on futexes, and a child
+posix_spawn makes in its parent's memory, and since 0.4.9 a `/proc` laid
+out the way such a program reads it. what is left of the series is the
+rest of what such a program takes for granted: a loader, and at the end
+somebody else's programs run unmodified. the reason is the one every
+checker in this project rests on, an outside answer: the same static
+binary run on both machines says, call by call, where this kernel
+differs.
 
 **0.4.10 a program that names its loader.** a dynamically linked program
 does not start at its own entry point: it names a loader in `PT_INTERP`,

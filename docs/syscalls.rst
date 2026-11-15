@@ -204,7 +204,7 @@ number  name               where                  notes
 269     faccessat          fs/open.c
 270     pselect6           fs/select.c            under its own mask
 271     ppoll              fs/select.c            under its own mask
-273     set_robust_list    sched/sys.c            accepted, for threads to come
+273     set_robust_list    sched/sys.c            accepted, and not walked
 288     accept4            net/sockets.c
 292     dup3               fs/fcntl.c
 293     pipe2              fs/fcntl.c
