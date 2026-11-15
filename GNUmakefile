@@ -281,7 +281,7 @@ SELFTEST_ROOT := fs/blockdev fs/fsck fs/install fs/mknod fs/mount fs/root \
 # make test runs them as programs on the machine the build is on as
 # well, and each saying ok there is the check that what they ask is
 # answered the same on both
-SELFTEST_BOTH := fs/procself fs/procstat mm/meminfo sched/futex \
+SELFTEST_BOTH := fs/procself fs/procstat fs/ps mm/meminfo sched/futex \
                  sched/pthread sched/spawn sched/usage
 
 # the image's /init: asks which tests to run, runs each as a guest and
