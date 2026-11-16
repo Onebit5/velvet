@@ -95,7 +95,7 @@ the targets
 
 ``make lint``
    the style guide, as much of it as a machine can check: the header, the
-   comment shape, the function brace, dashes and first person, tabs, markers.
+   comment shape, the function brace, tabs, markers.
    the whole tree by default, or ``make lint FILES='fs/ext4.c'`` for the
    files you name. it is the first thing CI runs, because it needs nothing
    built.

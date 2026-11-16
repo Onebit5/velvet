@@ -127,11 +127,11 @@ the static checks
 
 ``lint``
    the style guide, checked mechanically: the file header, the comment shape,
-   the function brace, dashes and first person in prose, tabs and the
-   ``//`` rule. ``make lint`` covers the tree and
-   ``make lint FILES='fs/ext4.c'`` covers the files named. naming prefixes are
-   warnings until the tree is converted. it runs before anything is built, on
-   its own and in ci, so it is covered here rather than under the suites.
+   the function brace, tabs and the ``//`` rule. ``make lint`` covers the
+   tree and ``make lint FILES='fs/ext4.c'`` covers the files named. naming
+   prefixes are warnings until the tree is converted. it runs before
+   anything is built, on its own and in ci, so it is covered here rather
+   than under the suites.
 
 ``checkfmt``
    every ``kprintf``/``panic`` format string against what ``lib/kprintf.c``

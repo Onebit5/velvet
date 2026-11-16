@@ -319,9 +319,6 @@ than each one in turn.
   say itself, in a sentence or three. a comment that runs on for a screen is a
   document, and documents live under ``docs/``: the subsystem page is the long
   form, and the file carries its brief.
-- **no dashes.** a dash is punctuation this project does not use, in prose or
-  in code. write with commas, semicolons, periods and parentheses instead.
-  that is no ``--``, no em dash and no en dash.
 - **write only for non-obvious logic.** a tricky bit trick, a lock-free
   assumption, an ABI or hardware quirk, a workaround for a bug somewhere
   else, a decision that looks wrong until you know what it prevents. the
@@ -376,7 +373,9 @@ than each one in turn.
   page"; "the program asks", not "I ask". where the sentence can be an
   instruction, use the imperative: "keep the free list sorted". the Persona
   flourishes are the one exception, and a line that says "thou art I" is
-  doing something deliberate.
+  doing something deliberate. this is a rule a reviewer holds and no
+  machine checks, since a pattern cannot tell "my own page" in a sentence
+  from ``my`` in a quoted name.
 
 error handling
 --------------
@@ -708,9 +707,8 @@ the rules for that gap:
   function is two commits, and the reviewer gets to see each one.
 - **the machine's half is ``tools/lint.py``.** it reads ``git ls-files`` and
   checks the rules in this document that need no judgement: the file header,
-  the shape of a multi-line comment, the function brace, dashes and first
-  person in prose, tabs and the ``//`` rule. it runs
-  as ``make lint``, or on the files you are touching as
+  the shape of a multi-line comment, the function brace, tabs and the ``//``
+  rule. it runs as ``make lint``, or on the files you are touching as
   ``make lint FILES='fs/ext4.c'``. ci runs it before anything is built, so a
   style error is the first thing a pull request hears about.
 

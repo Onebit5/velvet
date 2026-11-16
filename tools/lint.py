@@ -3,8 +3,9 @@
 
 a style guide is only worth having if a machine can hold most of it, so this
 checks the rules that need no judgement: the file header, the shape of a
-multi-line comment, the function brace, dashes and first person in prose,
-tabs, trailing whitespace, the `//` rule, and the include guard.
+multi-line comment, the function brace, tabs, trailing whitespace, the
+`//` rule, and the include guard. the prose, and the voice it is written
+in, are a reviewer's to judge rather than a pattern's.
 
 naming prefixes are reported as warnings rather than errors, because the tree
 predates that rule and is being converted a file at a time. line length is a
@@ -47,11 +48,6 @@ DECL = re.compile(r'\b(' + '|'.join(re.escape(t) for t in TYPES)
 # g_ for a global, s_ for a static, m_ for a member, so s_sz_count is a
 # static size_t and is named right
 SCOPE = ('g_', 's_', 'm_')
-DASH = re.compile(r'(?<![-\s]) -- (?![-\s])|[—–]')
-PERSONA = re.compile(r'\bthou\b|\bhath\b|velvet|arcana|persona|\bigor\b|'
-                     r'\bmargaret\b|\btheodore\b|\blavenza\b|'
-                     r'\bpixie\b|\bsouls\b', re.I)
-FIRST = re.compile(r"\b(I|me|my|mine|myself|we|us|our)\b")
 
 
 def scan(text):
@@ -98,41 +94,6 @@ def mask(text, tokens):
 
 def lineno(text, off):
     return text.count('\n', 0, off) + 1
-
-
-def prose_problems(path, text):
-    """dashes and first person inside comments and strings"""
-    bad = []
-    tokens = scan(text)
-    for kind, a, b in tokens:
-        if kind in ('line', 'char'):
-            continue
-        body = text[a:b]
-        if PERSONA.search(body):
-            continue
-        for m in DASH.finditer(body):
-            where = 'comment' if kind == 'comment' else 'string'
-            bad.append((lineno(text, a + m.start()),
-                        'dash in %s: %r' % (where, m.group(0).strip())))
-        for m in FIRST.finditer(body):
-            s, e = m.start(), m.end()
-            before = body[max(0, s - 1):s]
-            after = body[e:e + 1]
-            if before in ('`', "'", '%') or after in ('`', "'"):
-                continue
-            rest = body[e:e + 7]
-            if rest.startswith('()') or rest.startswith(' layout'):
-                continue
-            if body[s:s + 4] == 'i.e.':
-                continue
-            # a string that is the word and nothing else is a unit or a
-            # name, microseconds' us among them, and no sentence at all
-            if kind == 'string' and body[1:-1] == m.group(0):
-                continue
-            bad.append((lineno(text, a + s),
-                        'first person %r in %s' % (m.group(0),
-                        'comment' if kind == 'comment' else 'string')))
-    return bad
 
 
 def comment_shape(text, tokens):
@@ -264,8 +225,6 @@ def check_file(path, strict):
     for line, msg in brace_problems(text, tokens):
         problems.append((line, msg, 'error'))
     for line, msg in guard_problems(path, text, tokens):
-        problems.append((line, msg, 'error'))
-    for line, msg in prose_problems(path, text):
         problems.append((line, msg, 'error'))
     return problems
 

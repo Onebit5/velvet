@@ -903,9 +903,9 @@ $(T)/fuzz_parsers: tools/fuzz_parsers.c \
 	    -fno-sanitize-recover=all $(filter %.c,$^) -o $@
 
 # the style guide, as much of it as a machine can hold: the file header,
-# the shape of a multi-line comment, the function brace, dashes and first
-# person in prose, tabs, the `//` rule, and a marker with an owner. the
-# whole tree by default, or the files named in FILES while working on one.
+# the shape of a multi-line comment, the function brace, tabs, the `//`
+# rule, and a marker with an owner. the whole tree by default, or the
+# files named in FILES while working on one.
 #
 #   make lint                   the whole tree
 #   make lint FILES=fs/ext4.c   just that file
