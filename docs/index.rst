@@ -1,9 +1,12 @@
 docs
 ====
 
-velvet is a tiny 64-bit kernel for x86_64, written in C, booted by a
-bootloader of its own. this is its documentation: what each part is, why it
-is the way it is, and how to work on it.
+velvet is a 64-bit kernel for x86_64, written in C, booted by a bootloader
+of its own. it is built to make what happens between "power button" and
+"shell prompt" legible, every subsystem documented by why it is the way it
+is, and every promise to programs checked against another kernel's answer.
+this is its documentation: what each part is, why it is the way it is, and
+how to work on it.
 
 it is a kernel and nothing more. a libc, programs, and the tools that build
 them belong to a system built on a release of this one, and are not here.

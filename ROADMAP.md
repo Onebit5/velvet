@@ -21,8 +21,10 @@ nobody emulated, and 0.7.x is a kernel that can say what it is doing.
 
 ## non-goals
 
-- **being useful in any practical sense.** this is a kernel built to be
-  understood, small enough to fit in one head, and every decision below
+- **being useful in any practical sense.** this is a kernel built to make
+  what happens between "power button" and "shell prompt" legible, every
+  subsystem documented by why it is the way it is, and every promise to
+  programs checked against another kernel's answer. every decision below
   is made with that ahead of speed or reach.
 - **being linux.** the compatibility 0.4.x works towards is with linux's
   interface to programs: its system calls, its signals and the layout of

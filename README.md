@@ -2,10 +2,11 @@
 
 ![ci](https://github.com/Onebit5/velvet/actions/workflows/ci.yml/badge.svg)
 
-a tiny 64-bit kernel for x86_64, written in C, booted by a bootloader of its own.
+a 64-bit kernel for x86_64, written in C, booted by a bootloader of its own.
 
-built to make what happens between "power button" and "shell prompt" legible, rather
-than to be the next linux. small enough to fit in one head.
+built to make what happens between "power button" and "shell prompt" legible, every
+subsystem documented by why it is the way it is, and every promise to programs checked
+against another kernel's answer.
 
 it speaks linux's interface to programs, all the same: since 0.4.5 its system calls,
 its signals and the layouts it hands back are the ones a static program built for linux
