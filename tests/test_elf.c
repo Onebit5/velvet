@@ -2,9 +2,9 @@
 /*
  * tests/test_elf.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * the elf header checks. elf_load itself maps pages and needs a real cpu,
- * but everything it refuses to load is decided here, and a loader that
- * maps nonsense is a loader that hands ring 3 the kernel.
+ * the elf header checks. exec maps what these describe, so everything it
+ * refuses to load is decided here, and a loader that maps nonsense is a
+ * loader that hands ring 3 the kernel.
  */
 
 #include <stdio.h>
@@ -44,10 +44,18 @@ static void reset(void)
     *(uint16_t *)(img + 56) = 1;         /* phnum */
 }
 
+/* the header checked as exec checks it, against the whole of img */
+static bool loadable(const uint8_t *p_img, uint64_t u_size, const char **why)
+{
+    uint64_t u_phoff;
+    size_t sz_phlen;
+    return elf_check(p_img, u_size, &u_phoff, &sz_phlen, why);
+}
+
 static void refuses(const char *what)
 {
     const char *why = NULL;
-    if (elf_is_loadable(img, sizeof img, &why)) {
+    if (loadable(img, sizeof img, &why)) {
         printf("FAIL: accepted an image that %s\n", what);
         failures++;
     }
@@ -66,17 +74,24 @@ static void segment(int n, uint64_t offset, uint64_t vaddr, uint64_t filesz,
     *(uint64_t *)(p + 40) = memsz;
 }
 
-int main(void)
+int main(int i_argc, char **pp_argv)
 {
     const char *why = NULL;
 
     reset();
-    CHECK(elf_is_loadable(img, sizeof img, &why),
+    CHECK(loadable(img, sizeof img, &why),
           "a well formed header is accepted");
+    {
+        uint64_t u_phoff = 0;
+        size_t sz_phlen = 0;
+        CHECK(elf_check(img, sizeof img, &u_phoff, &sz_phlen, &why)
+              && u_phoff == 64 && sz_phlen == 56,
+              "and says where its program headers are, and how long");
+    }
 
-    CHECK(!elf_is_loadable(NULL, 0, &why), "NULL is not an elf");
-    CHECK(!elf_is_loadable(img, 8, &why), "eight bytes is not an elf");
-    CHECK(elf_is_loadable(img, sizeof img, NULL),
+    CHECK(!loadable(NULL, 0, &why), "NULL is not an elf");
+    CHECK(!loadable(img, 8, &why), "eight bytes is not an elf");
+    CHECK(loadable(img, sizeof img, NULL),
           "the reason pointer may be NULL");
 
     reset(); img[1] = 'X';                      refuses("has no elf magic");
@@ -102,39 +117,46 @@ int main(void)
     *(uint16_t *)(img + 56) = 1000;   /* 1000 * 56 bytes runs off the end */
     refuses("claims more program headers than fit");
 
-    /* and the real program the build makes */
-    {
-        FILE *fp = fopen("base/ramdisk/bin/hello", "rb");
-        if (fp == NULL) {
-            printf("  (skipping the real binary: run `make base/ramdisk/bin/hello`)\n");
-        } else {
-            static uint8_t real[256 * 1024];
-            size_t n = fread(real, 1, sizeof real, fp);
+    /*
+     * and a file claiming more than the kernel reads, even where they
+     * fit: they are read into the heap, all of them, before any is looked
+     * at
+     */
+    reset();
+    *(uint16_t *)(img + 56) = ELF_PHDRS_MAX + 1;
+    refuses("claims more program headers than the kernel reads");
+    reset();
+    *(uint64_t *)(img + 32) = ~0ull - 8;
+    refuses("puts its program headers where the sum wraps");
+
+    /* and a real program the build makes, the image's /init */
+    if (i_argc > 1) {
+        FILE *fp = fopen(pp_argv[1], "rb");
+        static uint8_t real[1024 * 1024];
+        size_t n = (fp != NULL) ? fread(real, 1, sizeof real, fp) : 0;
+        if (fp != NULL) {
             fclose(fp);
-            why = NULL;
-            CHECK(elf_is_loadable(real, n, &why),
-                  "the userspace program the build produces is loadable");
-            if (why) printf("    (it said: %s)\n", why);
         }
+        struct elf_image image;
+        why = NULL;
+        CHECK(n < sizeof real && loadable(real, n, &why)
+              && elf_describe(real, real + *(uint64_t *)(real + 32), n,
+                              &image, &why)
+              && image.sz_segs >= 2 && image.u_phdr != 0,
+              "the program the build makes is loadable, and says where "
+              "its headers are for its libc");
+        if (why) printf("    (it said: %s)\n", why);
     }
 
     /*
-     * the loader itself needs a real cpu, but its contract is worth
-     * stating: it maps into a given address space rather than whatever
-     * happens to be live, which is what lets a program be built before
-     * anything switches to it
-     */
-
-    /*
-     * for an image that will still be in memory when the program runs,
-     * the loader has nothing to do at load time. this is what it hands
-     * back instead, and the arithmetic in it is what decides which
-     * bytes a page gets when the fault arrives
+     * the loader has nothing to do at load time: a page of a segment is
+     * read out of the file the first time it is touched. this is what it
+     * works from, and the arithmetic in it is what decides which bytes a
+     * page gets when the fault arrives
      */
     {
-        struct elf_segment segs[ELF_SEGMENTS_MAX];
-        size_t count = 0;
-        uint64_t entry = 0, brk = 0;
+        struct elf_image image;
+        struct elf_segment *segs = image.arr_segs;
 
         reset();
         *(uint16_t *)(img + 56) = 2;    /* two segments */
@@ -143,11 +165,12 @@ int main(void)
         /* data: read + write, with 200 bytes of bss past the file */
         segment(1, 0x2000, 0x402000, 0x400, 0x4c8, 6);
 
-        CHECK(elf_describe(img, sizeof img, segs, ELF_SEGMENTS_MAX, &count,
-                           &entry, &brk, &why),
+        CHECK(elf_describe(img, img + 64, sizeof img, &image, &why),
               "a two-segment image can be described");
-        CHECK(count == 2, "as two segments");
-        CHECK(entry == 0x400000, "with the entry point");
+        CHECK(image.sz_segs == 2, "as two segments");
+        CHECK(image.u_entry == 0x400000, "with the entry point");
+        CHECK(image.u_phnum == 2 && image.u_phdr == 0,
+              "and its headers in no segment, so nowhere in memory");
 
         CHECK(segs[0].vaddr == 0x400000 && segs[0].end == 0x401000,
               "the first covers exactly its page");
@@ -165,7 +188,25 @@ int main(void)
         CHECK(segs[1].flags & PTE_WRITE, "and it is writable");
         CHECK(segs[1].offset == 0x2000, "reading from the right place");
 
-        CHECK(brk == 0x403000, "and the break is past all of it");
+        CHECK(image.u_high == 0x403000, "and the break is past all of it");
+
+        /* the headers in the first segment are where it puts them */
+        segment(0, 0, 0x400000, 0x1000, 0x1000, 5);
+        CHECK(elf_describe(img, img + 64, sizeof img, &image, &why)
+              && image.u_phdr == 0x400040,
+              "headers inside a segment are wherever it puts them");
+
+        /* and a segment that starts further into its page than the file */
+        reset();
+        segment(0, 0x10, 0x400100, 0x10, 0x10, 5);
+        CHECK(!elf_describe(img, img + 64, sizeof img, &image, &why),
+              "a segment starting before its file does is refused");
+
+        reset();
+        segment(0, 0x1000, 0x400000, 0x2000, 0x1000, 6);
+        CHECK(!elf_describe(img, img + 64, sizeof img, &image, &why),
+              "and so is one holding more of the file than it has room "
+              "for");
 
         /*
          * the refusals. each of these is a program that would otherwise
@@ -174,15 +215,13 @@ int main(void)
         reset();
         *(uint16_t *)(img + 56) = 1;
         segment(0, 0x1000, 0xffff800000000000ull, 0x1000, 0x1000, 6);
-        CHECK(!elf_describe(img, sizeof img, segs, ELF_SEGMENTS_MAX, &count,
-                            &entry, &brk, &why),
+        CHECK(!elf_describe(img, img + 64, sizeof img, &image, &why),
               "a segment that wants to live in kernel space is refused");
 
         reset();
         *(uint16_t *)(img + 56) = 1;
         segment(0, 0x1000, 0x400000, 0x100000, 0x100000, 6);
-        CHECK(!elf_describe(img, sizeof img, segs, ELF_SEGMENTS_MAX, &count,
-                            &entry, &brk, &why),
+        CHECK(!elf_describe(img, img + 64, sizeof img, &image, &why),
               "and so is one reaching past the end of the file");
 
         /*
@@ -194,15 +233,12 @@ int main(void)
         *(uint16_t *)(img + 56) = 2;
         segment(0, 0x1000, 0x400000, 0x100, 0x100, 5);
         segment(1, 0x1100, 0x400100, 0x100, 0x100, 6);
-        CHECK(!elf_describe(img, sizeof img, segs, ELF_SEGMENTS_MAX, &count,
-                            &entry, &brk, &why),
-              "two segments sharing a page are refused, so the caller "
-              "falls back to copying them in");
+        CHECK(!elf_describe(img, img + 64, sizeof img, &image, &why),
+              "two segments sharing a page are refused");
 
         reset();
         *(uint16_t *)(img + 56) = 0;
-        CHECK(!elf_describe(img, sizeof img, segs, ELF_SEGMENTS_MAX, &count,
-                            &entry, &brk, &why),
+        CHECK(!elf_describe(img, img + 64, sizeof img, &image, &why),
               "an image with nothing to load is refused");
 
         /* more segments than there is room to remember. */
@@ -211,8 +247,7 @@ int main(void)
         for (int i = 0; i <= ELF_SEGMENTS_MAX; i++) {
             segment(i, 0x1000, 0x400000 + (uint64_t)i * 0x1000, 0x10, 0x10, 6);
         }
-        CHECK(!elf_describe(img, sizeof img, segs, ELF_SEGMENTS_MAX, &count,
-                            &entry, &brk, &why),
+        CHECK(!elf_describe(img, img + 64, sizeof img, &image, &why),
               "and so is one with more segments than the test keeps room for");
     }
 

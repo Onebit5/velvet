@@ -15,7 +15,6 @@
 #include <velvet/ramfs.h>
 #include <velvet/disk.h>
 #include <velvet/epoch.h>
-#include <velvet/kmalloc.h>
 #include <velvet/process.h>
 #include <velvet/proc.h>
 #include <velvet/dev.h>
@@ -938,39 +937,6 @@ void vfs_refresh(struct vfs_file *p_node)
 
 
 
-bool vfs_slurp(const char *path, const void **data, uint64_t *size,
-               bool *owned)
-{
-    struct vfs_file f;
-    if (!vfs_open(path, &f) || f.is_dir) {
-        return false;
-    }
-
-    if (f.size == 0) {
-        return false;
-    }
-    void *buf = kmalloc(f.size);
-    if (buf == NULL) {
-        return false;
-    }
-    if (vfs_read(&f, 0, buf, f.size) != (int64_t)f.size) {
-        kfree(buf);
-        return false;
-    }
-
-    *data = buf;
-    *size = f.size;
-    *owned = true;
-    return true;
-}
-
-void vfs_release(const void *data, bool owned)
-{
-    if (owned) {
-        kfree((void *)data);
-    }
-}
-
 
 
 /* what kind of filesystem hangs at a mount, by the name mount knows it by */
@@ -1267,24 +1233,34 @@ int64_t vfs_pivot(const char *str_new, const char *str_old)
 
 /*
  * what keeps a mount up: a file open on what is there, which a regular
- * file and a directory are, the ones opened by a name on it
+ * file and a directory are, the ones opened by a name on it. counted as
+ * they are opened and let go of rather than looked for among the
+ * descriptors, since a file is also held open by the memory of a
+ * program reading its pages out of it, where no descriptor is
  */
+_Static_assert(RAMFS_MAX <= DISK_MOUNTS, "every slot has a count");
+
+static uint32_t s_arr_open[VFS_PTS + 1][DISK_MOUNTS];
+
+static uint32_t *open_count(const struct vfs_file *p_node)
+{
+    return ((size_t)p_node->kind <= VFS_PTS && p_node->mount < DISK_MOUNTS)
+           ? &s_arr_open[p_node->kind][p_node->mount] : NULL;
+}
+
+static void opened(const struct vfs_file *p_node, int i_by)
+{
+    uint32_t *p_count = open_count(p_node);
+    if (p_count != NULL) {
+        __atomic_add_fetch(p_count, (uint32_t)i_by, __ATOMIC_ACQ_REL);
+    }
+}
+
 struct mount_ref {
     enum vfs_kind e_kind;
     size_t sz_slot;
     const char *str_at;
 };
-
-static const struct file_operations node_ops;
-static const struct file_operations dir_ops;
-
-static bool holds_file(const struct file *p_file, const void *p_ctx)
-{
-    const struct mount_ref *p_ref = p_ctx;
-    return (p_file->p_ops == &node_ops || p_file->p_ops == &dir_ops)
-           && p_file->node.kind == p_ref->e_kind
-           && p_file->node.mount == p_ref->sz_slot;
-}
 
 /* and a working directory on it or below */
 static bool holds_cwd(const char *str_cwd, const void *p_ctx)
@@ -1316,7 +1292,10 @@ int64_t vfs_mount_remove(const char *str_at, enum vfs_kind *p_kind,
     if (i_why == 0) {
         struct mount_ref ref = { p_mount->e_kind, p_mount->sz_slot,
                                  p_mount->arr_at };
-        if (process_any_file(holds_file, &ref)
+        struct vfs_file key = { .kind = p_mount->e_kind,
+                                .mount = p_mount->sz_slot };
+        const uint32_t *p_open = open_count(&key);
+        if ((p_open != NULL && __atomic_load_n(p_open, __ATOMIC_ACQUIRE) != 0)
             || process_any_cwd(holds_cwd, &ref)) {
             i_why = -EBUSY;
         }
@@ -1406,6 +1385,7 @@ static void node_release(struct file *p_file)
     if (p_file->node.kind == VFS_RAMFS) {
         ramfs_let_go(p_file->node.u_ino);
     }
+    opened(&p_file->node, -1);
 }
 
 static const struct file_operations node_ops = {
@@ -1437,10 +1417,28 @@ static int64_t dir_seek(struct file *p_file, int64_t i_offset, int i_whence)
     return i_offset;
 }
 
+static void dir_release(struct file *p_file)
+{
+    opened(&p_file->node, -1);
+}
+
 static const struct file_operations dir_ops = {
     .read = dir_read,
     .seek = dir_seek,
+    .release = dir_release,
 };
+
+int64_t vfs_read_file(struct file *p_file, uint64_t u_offset, void *p_buf,
+                      size_t sz_len)
+{
+    int64_t i_got = vfs_read(&p_file->node, u_offset, p_buf, sz_len);
+    return (i_got < 0) ? -EIO : i_got;
+}
+
+bool vfs_mappable(const struct file *p_file)
+{
+    return p_file->p_ops == &node_ops;
+}
 
 struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode)
 {
@@ -1469,6 +1467,7 @@ struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode)
                                         FILE_TYPE_DIR);
         if (p_dir != NULL) {
             p_dir->node = *p_node;
+            opened(p_node, 1);
         }
         return p_dir;
     }
@@ -1478,6 +1477,7 @@ struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode)
         if (p_node->kind == VFS_RAMFS) {
             ramfs_hold(p_node->u_ino);
         }
+        opened(p_node, 1);
     }
     return p_file;
 }

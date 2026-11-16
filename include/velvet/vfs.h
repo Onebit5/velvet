@@ -144,16 +144,6 @@ bool vfs_writable(const struct vfs_file *f);
  */
 void vfs_refresh(struct vfs_file *p_node);
 
-/*
- * the whole of a file in one piece, for the things that need it all at
- * once, loading a program, reading passwd. a file already in memory
- * is handed over where it lies and `owned` comes back false; one on the
- * disk is read into the heap and the caller has to free it
- */
-bool vfs_slurp(const char *path, const void **data, uint64_t *size,
-               bool *owned);
-void vfs_release(const void *data, bool owned);
-
 struct file;
 
 /*
@@ -162,6 +152,20 @@ struct file;
  * decided the opener may
  */
 struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode);
+
+/*
+ * up to sz_len bytes of an open file from u_offset, wherever its
+ * position is: how many, 0 at its end, or -EIO
+ */
+int64_t vfs_read_file(struct file *p_file, uint64_t u_offset, void *p_buf,
+                      size_t sz_len);
+
+/*
+ * whether an open file is one whose pages can be read into a program's
+ * memory: a file kept on a filesystem, not a device or a pipe or a file
+ * the kernel writes as it is read
+ */
+bool vfs_mappable(const struct file *p_file);
 
 /* one mount, as the table has it, copied out */
 struct vfs_mount {

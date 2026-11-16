@@ -157,6 +157,43 @@ void kfree(void *p)
 
 #include <velvet/vmm.h>
 #include <velvet/addrspace.h>
+#include <velvet/file.h>
+
+/*
+ * a file the test makes up, which a region reads its pages out of: its
+ * bytes count up from zero, it is s_u_file_size long, and its holders are
+ * counted, since every region holds the file it reads and a hold not let
+ * go of is a file that is never closed
+ */
+static struct file s_file;
+static uint64_t s_u_file_size = 8192;
+static int s_i_holds;
+static bool s_b_file_fails;
+
+void file_get(struct file *p_file)
+{
+    if (p_file == &s_file) {
+        s_i_holds++;
+    }
+}
+void file_put(struct file *p_file)
+{
+    if (p_file == &s_file) {
+        s_i_holds--;
+    }
+}
+int64_t vfs_read_file(struct file *p_file, uint64_t u_offset, void *p_buf,
+                      size_t sz_len)
+{
+    if (p_file != &s_file || s_b_file_fails) {
+        return -5;
+    }
+    size_t sz_at = 0;
+    for (; sz_at < sz_len && u_offset + sz_at < s_u_file_size; sz_at++) {
+        ((uint8_t *)p_buf)[sz_at] = (uint8_t)((u_offset + sz_at) & 0xff);
+    }
+    return (int64_t)sz_at;
+}
 
 static int failures;
 #define CHECK(c, m) do { if (!(c)) { printf("FAIL: %s\n", m); failures++; } } while (0)
@@ -537,10 +574,8 @@ int main(void)
     /* the same record, with somewhere for the bytes to come from. */
     {
         uint64_t level = outstanding;
-        static uint8_t fake_image[8192];
-        for (int i = 0; i < 8192; i++) {
-            fake_image[i] = (uint8_t)(i & 0xff);
-        }
+        uint8_t fake_image[8192];
+        vfs_read_file(&s_file, 0, fake_image, sizeof fake_image);
 
         struct addrspace *p = addrspace_create(kernel_space);
 
@@ -549,13 +584,14 @@ int main(void)
          * the second page is bss, and one page is both
          */
         CHECK(addrspace_add_region(p, 0x400000, 0x402000, PTE_USER,
-                                   VMA_FILE, fake_image, 0, 0x400000 + 6000),
-              "a file-backed range can be agreed to");
+                                   VMA_FILE, &s_file, 0, 0x400000 + 6000)
+              && s_i_holds == 1,
+              "a file-backed range can be agreed to, and holds the file");
 
         CHECK(addrspace_fault(p, 0x400000, false, false), "the first page arrives");
         const uint8_t *page0 = pmm_phys_to_virt(vmm_translate(p->pml4, 0x400000));
         CHECK(memcmp(page0, fake_image, 4096) == 0,
-              "holding the bytes that were in the image");
+              "holding the bytes that were in the file");
 
         CHECK(addrspace_fault(p, 0x401000, false, false), "and so does the second");
         const uint8_t *page1 = pmm_phys_to_virt(vmm_translate(p->pml4, 0x401000));
@@ -569,8 +605,52 @@ int main(void)
               "and zeroes past where the file stopped, one page being both "
               "is exactly what the end of a segment looks like");
 
+        /*
+         * given back, a page comes back as it first came, out of the
+         * file again; and a file that cannot be read is a fault the
+         * program gets, not a page of whatever was in the frame
+         */
+        CHECK(addrspace_discard(p, 0x400000, 4096)
+              && addrspace_fault(p, 0x400000, false, false)
+              && memcmp(pmm_phys_to_virt(vmm_translate(p->pml4, 0x400000)),
+                        fake_image, 4096) == 0,
+              "a page given back is read out of the file again");
+        s_b_file_fails = true;
+        CHECK(addrspace_discard(p, 0x400000, 4096)
+              && !addrspace_fault(p, 0x400000, false, false),
+              "and one the file cannot give is a real fault");
+        s_b_file_fails = false;
+
+        /*
+         * the holds: a fork's regions hold the file too, a region cut
+         * in two holds it twice, and every one is let go of
+         */
+        struct addrspace *p_kid = addrspace_fork(p, kernel_space);
+        CHECK(p_kid != NULL && s_i_holds == 2, "a fork's region holds it");
+        CHECK(addrspace_unmap(p_kid, 0x400000, 4096) && s_i_holds == 2
+              && addrspace_unmap(p_kid, 0x401000, 4096) && s_i_holds == 1,
+              "and lets go of it when the last of the region goes");
+        addrspace_put(p_kid);
+        CHECK(addrspace_protect(p, 0x401000, 4096, PTE_USER | PTE_NX)
+              && s_i_holds == 2, "a region cut in two holds it twice");
+
+        /* and a file mapped where mmap puts things, read from an offset */
+        s_u_file_size = 4096 + 100;
+        uint64_t u_at = addrspace_map_file(p, 0, 2 * 4096, PTE_USER, false,
+                                           &s_file, 4096);
+        CHECK(u_at != 0 && s_i_holds == 3
+              && addrspace_fault(p, u_at, false, false)
+              && memcmp(pmm_phys_to_virt(vmm_translate(p->pml4, u_at)),
+                        fake_image + 4096, 100) == 0
+              && ((uint8_t *)pmm_phys_to_virt(
+                      vmm_translate(p->pml4, u_at)))[100] == 0,
+              "a file mapped from an offset reads from there, and zeroes "
+              "past its end");
+        s_u_file_size = 8192;
+
         addrspace_put(p);
-        CHECK(outstanding == level, "with nothing left over");
+        CHECK(outstanding == level && s_i_holds == 0,
+              "with nothing left over, the file let go of");
     }
 
 

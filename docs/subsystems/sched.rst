@@ -982,8 +982,9 @@ something.
     starts, or minus an errno with nothing changed at all
 
 spawn and exec share everything up to the program being ready to run:
-the image read and described or loaded, a fresh address space, a stack
-and the arguments on it. what differs is what goes around it. spawn
+the file opened and its headers read, a fresh address space with a
+region of the file for each segment, none of it read yet, a stack and
+the arguments on it. what differs is what goes around it. spawn
 makes a new process and a thread for it. exec swaps the new address
 space in for the caller's and destroys the old one, and only after
 everything that can fail has already succeeded, so a failed exec leaves

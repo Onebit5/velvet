@@ -5,7 +5,7 @@
  * just enough elf64 to load a static executable.
  */
 
-/* the design notes for elf.h are in docs/subsystems/mm.rst */
+/* the design notes for elf.h are in docs/subsystems/fs.rst */
 
 #ifndef VELVET_ELF_H
 #define VELVET_ELF_H
@@ -14,61 +14,57 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-struct elf_load_result {
-    uint64_t entry;         /* where to start executing */
-    uint64_t brk;           /* first address past everything the kernel mapped */
-    bool     ok;
-    const char *error;      /* why not, when ok is false */
-};
+/* how big the header at the start of every elf file is */
+#define ELF_HEADER_SIZE 64
 
-bool elf_is_loadable(const void *image, uint64_t size, const char **why);
+/* how big one program header is */
+#define ELF_PHDR_SIZE 56
 
 /*
- * map every PT_LOAD segment into the given address space with user
- * permissions, copying from the image. frames come from the pmm.
- *
- * the space does not have to be the live one: the copy goes through the
- * direct map, which is mapped identically everywhere
+ * the most program headers the kernel reads. a program has a dozen, and
+ * a file claiming thousands is asking for that much of the kernel's heap
  */
-struct elf_load_result elf_load(const void *image, uint64_t size,
-                                uint64_t pml4);
-
-/*
- * for an image that will still be in memory when the program runs, the
- * loader has nothing to do at load time: the segments can be *recorded*
- * and each page fetched from the image the first time it is touched. a
- * program starts without a single byte of it having been read.
- *
- * "will still be in memory" is the whole condition, and it is why this
- * is a separate call rather than the only one. the ramdisk is a tar
- * the loader handed over and never moves; a program read off the disk is
- * a copy on the heap that somebody has to free.
- */
+#define ELF_PHDRS_MAX 64
 
 #define ELF_SEGMENTS_MAX 8
 
+/*
+ * a segment as the pages it covers, each of which is read out of the
+ * file the first time it is touched
+ */
 struct elf_segment {
     uint64_t vaddr;         /* page aligned down */
     uint64_t end;           /* past the last byte, page aligned up */
     uint64_t file_end;      /* past the last byte with a *file* byte behind
                              * it. between here and `end` is bss */
-    uint64_t offset;        /* offset in the image of `vaddr` */
+    uint64_t offset;        /* offset in the file of `vaddr` */
     uint64_t flags;         /* the PTE flags a page here should have */
 };
 
-bool elf_describe(const void *image, uint64_t size,
-                  struct elf_segment *out, size_t max, size_t *count,
-                  uint64_t *entry, uint64_t *brk, const char **why);
+/* a program as its headers describe it, at the addresses it was linked at */
+struct elf_image {
+    uint64_t u_entry;           /* where it starts */
+    uint64_t u_phdr;            /* where its headers are in memory, or 0 */
+    uint64_t u_phnum;
+    uint64_t u_high;            /* past the last page of any segment */
+    size_t sz_segs;
+    struct elf_segment arr_segs[ELF_SEGMENTS_MAX];
+};
 
 /*
- * where the program headers are once the image is in memory, and how
- * many, which a libc reads its thread-local template out of: the address
- * is 0 when no segment holds them
+ * the header, the first ELF_HEADER_SIZE bytes of a file u_size bytes
+ * long: whether it is a program this kernel can load, and if it is,
+ * where in the file its program headers are and how many bytes they take
  */
-bool elf_headers_at(const void *p_image, uint64_t u_size, uint64_t *p_addr,
-                    uint64_t *p_count);
+bool elf_check(const void *p_header, uint64_t u_size, uint64_t *p_phoff,
+               size_t *p_phlen, const char **pp_why);
 
-/* how big one program header is */
-#define ELF_PHDR_SIZE 56
+/*
+ * the program the header and the program headers elf_check pointed at
+ * describe, without anything mapped. false, with why, for one that
+ * cannot be described
+ */
+bool elf_describe(const void *p_header, const void *p_phdrs, uint64_t u_size,
+                  struct elf_image *p_out, const char **pp_why);
 
 #endif

@@ -47,7 +47,11 @@ ones taken from then on. a mount hangs over a directory that is there,
 which goes out of sight until the mount comes down. it comes down only
 when nothing stands on it, no file is open on it and no working
 directory is in it, and a call in the middle of a name under one counts
-it, so it cannot go out from under that call on another core. ``statfs``
+it, so it cannot go out from under that call on another core. a file
+is open by a descriptor or by the memory of a program reading its pages
+out of it, and the files open on each filesystem are counted as they
+are opened and let go of, since the second kind has no descriptor to be
+found by. ``statfs``
 says what kind of filesystem a name is on, by the number every program
 knows that kind by, and how full it is.
 
@@ -487,6 +491,14 @@ a count or minus an errno.
 ``struct file *vfs_open_file(const struct vfs_file *p_node, uint32_t u_mode);``
     a file on a filesystem, at its start. reads carry on from where the last
     stopped and a regular file is read to its end; ``seek`` stays within it
+
+``int64_t vfs_read_file(p_file, u_offset, p_buf, sz_len)``
+    bytes of an open file from anywhere in it, its position left where it
+    was: what a region of a program's memory reads a page with
+
+``bool vfs_mappable(const struct file *p_file)``
+    whether a file's pages can be read into a program's memory: one kept
+    on a filesystem, not a device, a pipe, or a file in /proc
 
 pipes and redirection
 ---------------------
@@ -953,17 +965,21 @@ the elf interface
 
 loading a program. the file is checked before anything is mapped: an image
 this machine cannot run is refused with a reason rather than half-loaded, and
-then its segments are described so the loader knows where to put each one and
-where to start executing.
+then its segments are described so exec knows where to put each one and
+where to start executing. nothing here reads a file: exec reads the header
+and the program headers, and the rest is read a page at a time by the
+regions the segments become, as the program touches them.
 
-``struct elf_load_result { uint64_t entry;         /* where to start executing */``
-    just enough elf64 to load a static executable.
+``bool elf_check(p_header, u_size, p_phoff, p_phlen, pp_why)``
+    the header, checked against the size of the file it came from: where
+    the program headers are and how many bytes they take, or why it is
+    not a program this kernel loads. no more than ``ELF_PHDRS_MAX`` of
+    them, since they are read into the heap before any is looked at.
 
-``bool elf_is_loadable(const void *image, uint64_t size, const char **why);``
-    check the header without loading anything.
-
-``bool elf_describe(const void *image, uint64_t size, struct elf_segment *out, size_t max, size_t *count, uint64_t *entry, uint64_t *brk, const char **why);``
-    describe the segments without mapping anything.
+``bool elf_describe(p_header, p_phdrs, u_size, p_out, pp_why)``
+    the segments as whole pages, where each starts in the file and where
+    its bytes stop, the entry point, the end of the last segment, and
+    where the program headers are in memory for a libc to read.
 
 
 the jbd2 interface

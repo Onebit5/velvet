@@ -427,16 +427,6 @@ bool disk_rename(size_t w, const char *from, const char *to)
     (void)from; (void)to; last_mount = w; renames++; return disk_ready(w);
 }
 
-/* nobody has anything open, unless the test says somebody does */
-static bool s_b_open;
-bool process_any_file(bool (*p_test)(const struct file *p_file,
-                                      const void *p_ctx),
-                      const void *p_ctx)
-{
-    (void)p_test;
-    (void)p_ctx;
-    return s_b_open;
-}
 bool process_any_cwd(bool (*p_test)(const char *str_cwd, const void *p_ctx),
                      const void *p_ctx)
 {
@@ -922,10 +912,12 @@ int main(void)
         CHECK(vfs_mount_remove("/mnt/deep/sub", &e_kind, &sz_slot) == 0
               && e_kind == VFS_RAMFS && sz_slot == (size_t)i_inner
               && ramfs_free(sz_slot), "until that one is");
-        s_b_open = true;
-        CHECK(vfs_mount_remove("/mnt/deep", &e_kind, &sz_slot) == -EBUSY,
+        struct file *p_held = vfs_open("/mnt/deep/made", &q)
+                              ? vfs_open_file(&q, FILE_READ) : NULL;
+        CHECK(p_held != NULL
+              && vfs_mount_remove("/mnt/deep", &e_kind, &sz_slot) == -EBUSY,
               "nor with a file open on it");
-        s_b_open = false;
+        file_put(p_held);
         CHECK(vfs_mount_remove("/mnt/deep", &e_kind, &sz_slot) == 0
               && e_kind == VFS_RAMFS && sz_slot == (size_t)i_fs
               && ramfs_free(sz_slot),
@@ -1014,19 +1006,33 @@ int main(void)
               "and every mount on it, and nothing more");
     }
 
-    const void *data;
-    uint64_t size;
-    bool owned;
-
-    CHECK(vfs_slurp("bin/hello", &data, &size, &owned), "a program slurps");
-    CHECK(owned && size == 8 && memcmp(data, "ELF-ish\n", 8) == 0,
-          "copied out of memory, the whole of it");
-    vfs_release(data, owned);
-    CHECK(vfs_slurp("/mnt/notes.txt", &data, &size, &owned) && owned
-          && size == strlen(disk_notes)
-          && memcmp(data, disk_notes, size) == 0,
-          "and one off the disk the same way");
-    vfs_release(data, owned);
+    /*
+     * a file read where it is asked, the way a program's pages are read
+     * out of it, without its position moving
+     */
+    {
+        struct vfs_file node;
+        char arr_got[16];
+        struct file *p_prog = vfs_open("bin/hello", &node)
+                              ? vfs_open_file(&node, FILE_READ) : NULL;
+        CHECK(p_prog != NULL && vfs_mappable(p_prog)
+              && vfs_read_file(p_prog, 4, arr_got, sizeof arr_got) == 4
+              && memcmp(arr_got, "ish\n", 4) == 0 && p_prog->u_pos == 0,
+              "a program reads from where it is asked, in memory");
+        file_put(p_prog);
+        struct file *p_notes = vfs_open("/mnt/notes.txt", &node)
+                               ? vfs_open_file(&node, FILE_READ) : NULL;
+        CHECK(p_notes != NULL
+              && vfs_read_file(p_notes, 0, arr_got, 5) == 5
+              && memcmp(arr_got, disk_notes, 5) == 0,
+              "and one off the disk the same way");
+        file_put(p_notes);
+        struct file *p_dev = vfs_open("/dev/null", &node)
+                             ? vfs_open_file(&node, FILE_READ) : NULL;
+        CHECK(p_dev == NULL || !vfs_mappable(p_dev),
+              "a device is no file to read pages out of");
+        file_put(p_dev);
+    }
 
     /*
      * a file opened from a node: one position, moved by reads and by

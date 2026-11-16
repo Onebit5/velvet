@@ -113,11 +113,16 @@ static int s_i_my_tid = 7;
 
 static struct process s_init;
 static struct process s_worker;
+
+/* the file worker's program was read out of, held by plenty */
+static struct file s_exe = {
+    .u_refs = 1000, .arr_path = "/bin/worker", .node = { .u_ino = 1234 },
+};
 static struct addrspace s_space = {
     .u_brk_start = 0x402000, .u_brk = 0x404000,
     .u_arg_start = ARG_START, .u_arg_end = ENV_START,
     .u_env_start = ENV_START, .u_env_end = ENV_END,
-    .u_stack_start = STACK_AT, .u_faults = 42,
+    .u_stack_start = STACK_AT, .u_faults = 42, .p_exe = &s_exe,
 };
 
 int current_pid(void)
@@ -312,8 +317,8 @@ void addrspace_sizes(struct addrspace *p_as, struct addrspace_sizes *p_out)
 
 /* code, data, a heap and the stack */
 static const struct vma s_arr_regions[] = {
-    { VMA_FILE, 0x400000, 0x401000, PTE_USER, NULL, 0, 0 },
-    { VMA_FILE, 0x401000, 0x402000, PTE_USER | PTE_WRITE | PTE_NX, NULL,
+    { VMA_FILE, 0x400000, 0x401000, PTE_USER, &s_exe, 0, 0 },
+    { VMA_FILE, 0x401000, 0x402000, PTE_USER | PTE_WRITE | PTE_NX, &s_exe,
       0x1000, 0 },
     { VMA_ANON, 0x402000, 0x404000, PTE_USER | PTE_WRITE | PTE_NX, NULL,
       0, 0 },
@@ -326,9 +331,20 @@ size_t addrspace_regions(struct addrspace *p_as, struct vma *p_out,
 {
     (void)p_as;
     size_t sz_count = sizeof s_arr_regions / sizeof s_arr_regions[0];
-    memcpy(p_out, s_arr_regions,
-           ((sz_count < sz_max) ? sz_count : sz_max) * sizeof *p_out);
+    size_t sz_have = (sz_count < sz_max) ? sz_count : sz_max;
+    memcpy(p_out, s_arr_regions, sz_have * sizeof *p_out);
+    for (size_t sz_at = 0; sz_at < sz_have; sz_at++) {
+        if (p_out[sz_at].p_file != NULL) {
+            file_get(p_out[sz_at].p_file);
+        }
+    }
     return sz_count;
+}
+void addrspace_regions_put(struct vma *p_regions, size_t sz_count)
+{
+    for (size_t sz_at = 0; sz_at < sz_count; sz_at++) {
+        file_put(p_regions[sz_at].p_file);
+    }
 }
 
 /* the arguments and the environment, where exec put them */
@@ -845,6 +861,8 @@ static void check_files(void)
              "", "", "", "");
     CHECK(i_len > 0 && strcmp(arr_text, arr_want) == 0,
           "maps is the regions, and what is in each, from column 73");
+    CHECK(s_exe.u_refs == 1000,
+          "and every file it named is let go of again");
     if (i_len > 0 && strcmp(arr_text, arr_want) != 0) {
         printf("  got:\n%s  want:\n%s", arr_text, arr_want);
     }

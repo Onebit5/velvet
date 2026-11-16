@@ -45,7 +45,7 @@ int main(int i_argc, char **pp_argv)
 {
     (void)i_argc;
     ksft_print_header();
-    ksft_set_plan(11);
+    ksft_set_plan(14);
 
     char *p_map = mmap(NULL, 4 * PAGE, PROT_READ | PROT_WRITE,
                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -104,6 +104,41 @@ int main(int i_argc, char **pp_argv)
                           i_fd, 0) == MAP_FAILED && errno == EACCES,
                      "while a shared one is not written through a "
                      "descriptor opened only for reading\n");
+
+    /*
+     * a private copy is the program's to write, the file never hearing
+     * of it, and a page given back comes back as the file has it
+     */
+    char *p_copy = mmap(NULL, PAGE, PROT_READ | PROT_WRITE, MAP_PRIVATE,
+                        i_fd, 0);
+    char arr_head[4] = { 0 };
+    bool b_wrote = p_copy != MAP_FAILED && (p_copy[0] = 'X') == 'X'
+                   && pread(i_fd, arr_head, 4, 0) == 4
+                   && memcmp(arr_head, "\x7f" "ELF", 4) == 0;
+    ksft_test_result(b_wrote, "a private copy is written without the file "
+                     "hearing of it\n");
+    ksft_test_result(b_wrote && madvise(p_copy, PAGE, MADV_DONTNEED) == 0
+                     && memcmp(p_copy, "\x7f" "ELF", 4) == 0,
+                     "and a page of it given back comes back as the file "
+                     "has it\n");
+
+    /* maps says which file it is, by the name it was opened by */
+    char arr_maps[16384];
+    char arr_start[32];
+    int64_t i_len = ksft_read_file("/proc/self/maps", arr_maps,
+                                   sizeof arr_maps - 1);
+    arr_maps[(i_len > 0) ? i_len : 0] = '\0';
+    snprintf(arr_start, sizeof arr_start, "%lx-", (unsigned long)p_copy);
+    const char *p_line = strstr(arr_maps, arr_start);
+    const char *p_name = strrchr(pp_argv[0], '/');
+    size_t sz_line = (p_line != NULL) ? strcspn(p_line, "\n") : 0;
+    bool b_named = p_line != NULL && p_name != NULL
+                   && sz_line > strlen(p_name)
+                   && memcmp(p_line + sz_line - strlen(p_name), p_name,
+                             strlen(p_name)) == 0;
+    ksft_test_result(b_named, "and maps names the file it is read out "
+                     "of\n");
+    munmap(p_copy, PAGE);
     close(i_fd);
     ksft_finished();
 }

@@ -284,6 +284,58 @@ struct user_image {
     uint64_t u_stack_top;
 };
 
+/*
+ * the program a path names, opened, and what its headers say it is: the
+ * file comes back held, for the regions it is read into to hold in turn
+ */
+static int64_t program_open(const char *str_path, struct file **pp_file,
+                            struct elf_image *p_image,
+                            const char **pp_error)
+{
+    struct vfs_file node;
+    if (!vfs_open(str_path, &node) || node.is_dir) {
+        *pp_error = "no such file";
+        return -ENOENT;
+    }
+    struct file *p_file = vfs_open_file(&node, FILE_READ);
+    if (p_file == NULL || !vfs_mappable(p_file)) {
+        file_put(p_file);
+        *pp_error = "not a file a program can be read out of";
+        return -EACCES;
+    }
+    strncpy(p_file->arr_path, str_path, sizeof p_file->arr_path - 1);
+
+    uint8_t arr_header[ELF_HEADER_SIZE];
+    uint64_t u_phoff = 0;
+    size_t sz_phlen = 0;
+    *pp_error = "too small to be an elf at all";
+    if (vfs_read_file(p_file, 0, arr_header, sizeof arr_header)
+            != (int64_t)sizeof arr_header
+        || !elf_check(arr_header, node.size, &u_phoff, &sz_phlen,
+                      pp_error)) {
+        file_put(p_file);
+        return -ENOEXEC;
+    }
+    void *p_phdrs = kmalloc(sz_phlen);
+    if (p_phdrs == NULL) {
+        file_put(p_file);
+        *pp_error = "no memory for its headers";
+        return -ENOMEM;
+    }
+    *pp_error = "its program headers cannot be read";
+    bool b_ok = vfs_read_file(p_file, u_phoff, p_phdrs, sz_phlen)
+                    == (int64_t)sz_phlen
+                && elf_describe(arr_header, p_phdrs, node.size, p_image,
+                                pp_error);
+    kfree(p_phdrs);
+    if (!b_ok) {
+        file_put(p_file);
+        return -ENOEXEC;
+    }
+    *pp_file = p_file;
+    return 0;
+}
+
 static int64_t image_build(const char *str_path,
                            const struct exec_args *p_args, int i_uid,
                            int i_gid, struct user_image *p_out,
@@ -304,28 +356,16 @@ static int64_t image_build(const char *str_path,
         return -E2BIG;
     }
 
-    /*
-     * a program off the ramdisk is already in memory and is used where
-     * it lies; one off the disk has to be read in first, and `owned`
-     * says which happened so it can be let go of afterwards
-     */
-    const void *image = NULL;
-    uint64_t image_size = 0;
-    bool owned = false;
-    if (!vfs_slurp(str_path, &image, &image_size, &owned)) {
-        *pp_error = "no such file";
-        return -ENOENT;
+    struct file *p_file = NULL;
+    struct elf_image prog;
+    int64_t i_why = program_open(str_path, &p_file, &prog, pp_error);
+    if (i_why < 0) {
+        return i_why;
     }
-
-    const char *bad = NULL;
-    if (!elf_is_loadable(image, image_size, &bad)) {
-        vfs_release(image, owned);
-        *pp_error = bad;
-        return -ENOEXEC;
-    }
-
-    struct aux_facts facts = { .i_uid = i_uid, .i_gid = i_gid };
-    elf_headers_at(image, image_size, &facts.u_phdr, &facts.u_phnum);
+    struct aux_facts facts = {
+        .u_entry = prog.u_entry, .u_phdr = prog.u_phdr,
+        .u_phnum = prog.u_phnum, .i_uid = i_uid, .i_gid = i_gid,
+    };
 
     /*
      * its own memory. two programs can now link to the same addresses
@@ -333,86 +373,35 @@ static int64_t image_build(const char *str_path,
      */
     struct addrspace *space = addrspace_create(vmm_kernel_pml4());
     if (space == NULL) {
-        vfs_release(image, owned);
+        file_put(p_file);
         *pp_error = "no memory for an address space";
         return -ENOMEM;
     }
 
     /*
-     * two ways in, and which one depends on a single question: will
-     * this image still be here when the program runs?
-     *
-     * a program off the ramdisk is a stretch of a tar the loader handed
-     * over at boot. it never moves and is never freed, so the segments
-     * can simply be *described* and each page fetched the first time it
-     * is touched, the program starts without a byte of it having been
-     * read.
-     *
-     * one off the disk is a copy on the heap that somebody has to free.
-     * making it outlive the program, and every fork of the program,
-     * needs a lifetime scheme that demand paging does not need in order
-     * to be worth having. so that one is loaded the old way, and every
-     * program in /boot/bin, which is all of them, gets the new one
+     * every segment is a region of the file, a page of which is read out
+     * of it the first time the page is touched, so a program starts
+     * without a byte of it having been read and what is never touched
+     * never is. the regions hold the file open for as long as they are
+     * there, on whatever filesystem it is on, and the space holds it as
+     * the program it is
      */
-    struct elf_load_result loaded = { 0, 0, false, NULL };
-    struct elf_segment segs[ELF_SEGMENTS_MAX];
-    size_t seg_count = 0;
-    const char *why = NULL;
-    bool lazy = !owned;
-
-    if (!elf_describe(image, image_size, segs, ELF_SEGMENTS_MAX, &seg_count,
-                      &loaded.entry, &loaded.brk, &why)) {
-        vfs_release(image, owned);
+    bool b_placed = true;
+    for (size_t sz_at = 0; sz_at < prog.sz_segs && b_placed; sz_at++) {
+        const struct elf_segment *p_seg = &prog.arr_segs[sz_at];
+        b_placed = addrspace_add_region(space, p_seg->vaddr, p_seg->end,
+                                        p_seg->flags, VMA_FILE, p_file,
+                                        p_seg->offset, p_seg->file_end);
+    }
+    space->p_exe = p_file;
+    if (!b_placed) {
         addrspace_put(space);
-        *pp_error = why;
-        return -ENOEXEC;
+        *pp_error = "no room to describe the program";
+        return -ENOMEM;
     }
-
-    /*
-     * every segment is a region of the image either way, since a region
-     * is what says what a page there may be: what a fault makes, and
-     * whether a page shared after a fork may be copied to be written, and
-     * what the program is made of, for whoever asks. one read in now has
-     * its pages made already, and no image behind it to make more from
-     */
-    for (size_t sz_at = 0; sz_at < seg_count; sz_at++) {
-        if (!addrspace_add_region(space, segs[sz_at].vaddr, segs[sz_at].end,
-                                  segs[sz_at].flags, VMA_FILE,
-                                  lazy ? (const uint8_t *)image : NULL,
-                                  segs[sz_at].offset,
-                                  lazy ? segs[sz_at].file_end : 0)) {
-            vfs_release(image, owned);
-            addrspace_put(space);
-            *pp_error = "no room to describe the program";
-            return -ENOMEM;
-        }
-    }
-
-    if (lazy) {
-        loaded.ok = true;
-    } else {
-        loaded = elf_load(image, image_size, space->pml4);
-    }
-
-    /*
-     * whatever the kernel read the program out of is nobody's business now,
-     * unless it is being read from as the program runs, which is
-     * exactly what `lazy` means
-     */
-    if (!lazy) {
-        vfs_release(image, owned);
-    }
-
-    if (!loaded.ok) {
-        addrspace_put(space);
-        *pp_error = (loaded.error != NULL) ? loaded.error : why;
-        return -ENOEXEC;
-    }
-    facts.u_entry = loaded.entry;
 
     /* the break starts on the page after the last segment, and grows up */
-    space->u_brk_start = (loaded.brk + PAGE_SIZE - 1)
-                         & ~(uint64_t)(PAGE_SIZE - 1);
+    space->u_brk_start = prog.u_high;
     space->u_brk = space->u_brk_start;
 
     /* a stack for ring 3: writable, never executable, mapped user. */
@@ -449,7 +438,7 @@ static int64_t image_build(const char *str_path,
                                      space);
     space->u_stack_start = p_out->u_stack_top;
     p_out->p_space = space;
-    p_out->u_entry = loaded.entry;
+    p_out->u_entry = prog.u_entry;
     return 0;
 }
 

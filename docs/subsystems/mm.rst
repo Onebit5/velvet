@@ -159,10 +159,16 @@ dereferencing nonsense are told apart.
   region leaves two, and ``addrspace_brk()`` grows and shrinks the heap
   above the program's last segment. anonymous neighbours with the same
   flags merge, so a heap grown a page at a time is still one region.
-- every segment of a program is a region, whether its pages arrive as
-  they are touched or were read in at exec, because the region is what
-  says what a page there may be. a page still shared after a fork is
-  copied to be written only when its region allows writing.
+- every segment of a program is a region of the file it was read out
+  of, and so is a file ``mmap`` was asked to copy. a page of one is read
+  out of the file the first time it is touched, under the space's lock,
+  which ranks below every filesystem's for that reason, and is the
+  space's own from then on: a program starts without a byte of it read.
+  the region holds the file open, the way a descriptor does, for as long
+  as it is there, which is what keeps the filesystem from being unmounted
+  under it and an unlinked program's file from going while it runs. a
+  page still shared after a fork is copied to be written only when its
+  region allows writing.
 - ``addrspace_fault()`` either makes a private copy of a
   copy-on-write page, or populates a page inside an agreed region, or
   reports that the fault was real.
@@ -280,10 +286,11 @@ program going wrong.
     how many regions one space may hold. a program that wants more has to be
     told no rather than quietly given a smaller machine.
 
-``bool addrspace_add_region(as, start, end, flags, kind, image, image_offset, file_end)``
+``addrspace_add_region(as, start, end, flags, kind, p_file, offset, file_end)``
     agree to a range without mapping any of it. the pages arrive on first
     touch, which is what makes a large stack or a large allocation cost
-    nothing until it is used.
+    nothing until it is used. a region of a file takes a hold of its own
+    on it.
 
 ``uint64_t addrspace_map_anon(as, hint, len, flags, fixed)``
     somewhere `len` bytes of memory with no file behind it will fit,
@@ -291,9 +298,13 @@ program going wrong.
     whatever was there when fixed. nothing is mapped below 64 KiB, where
     NULL points.
 
+``uint64_t addrspace_map_file(as, hint, len, flags, fixed, p_file, offset)``
+    the same for a file from ``offset``: each page read in the first time
+    it is touched, and the space's own after, which is a private ``mmap``.
+
 ``bool addrspace_discard(struct addrspace *as, uint64_t start, uint64_t len)``
     every page made in a range given back, the regions kept: the next
-    touch makes each again, as zeroes or from the image, the way it was
+    touch makes each again, as zeroes or from the file, the way it was
     made the first time. false when part of the range is in no region.
 
 ``bool addrspace_unmap(struct addrspace *as, uint64_t start, uint64_t len)``
@@ -341,19 +352,25 @@ program going wrong.
 
 ``void addrspace_sizes(p_as, p_out)``
     what the space holds, in pages: all its regions allow, what is
-    there, what of that is the image's, the image's code, the rest it
+    there, what of that is read out of files, their code, the rest it
     may write, the stack, and the tables. what ``status`` and ``statm``
     say.
 
 ``size_t addrspace_regions(p_as, p_out, sz_max)``
-    the regions copied out lowest first, for ``maps``.
+    the regions copied out lowest first, for ``maps``, each holding its
+    file until ``addrspace_regions_put()``, so a region unmapped while
+    the reader is naming it does not take the name with it.
 
-``const uint8_t *image``, ``uint64_t image_offset``, ``uint64_t file_end``
-    for a region of the program's image: where the bytes come from, where
-    in the file this region starts, and where the file stops. past that
-    end the pages are zero rather than read, which is what a stack's guard
-    or an over-sized mapping gets, and a program read in whole at exec has
-    no image behind its regions, its pages made already.
+``struct file *p_file``, ``uint64_t image_offset``, ``uint64_t file_end``
+    for a region of a file: the file the bytes come from, held, where in
+    it this region starts, and where its bytes stop. past that end the
+    pages are zero rather than read, which is a segment's bss, and past
+    the end of the file they are zero too.
+
+``struct file *p_exe``
+    the file exec read the program out of, held for as long as the space
+    is, which is how ``stat`` tells the program's code from the code of
+    whatever else it maps.
 
 ``uint64_t pages_in_use``
     how many pages the program has actually been given, as opposed to how

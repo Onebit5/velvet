@@ -14,6 +14,8 @@
 #include <stdbool.h>
 #include <velvet/spinlock.h>
 
+struct file;
+
 /*
  * a private view of memory: the lower half belongs to the program, the
  * upper half, where the kernel and the direct map live, is shared by
@@ -33,8 +35,9 @@ enum vma_kind {
     VMA_NONE = 0,
     VMA_ANON,       /* zeroes. a stack, or something mmap handed out */
     /*
-     * the program's image: bytes out of it as each page is touched, when
-     * it is in memory to be read from, or zeroes past what was read in
+     * a file's bytes, read in as each page is touched and the space's own
+     * from then on: what a program is made of, or what mmap was asked to
+     * copy. zeroes past file_end
      */
     VMA_FILE,
 };
@@ -44,8 +47,13 @@ struct vma {
     uint64_t start, end;        /* [start, end), page aligned */
     uint64_t flags;             /* what a page here is allowed to be */
 
-    const uint8_t *image;
-    uint64_t image_offset;      /* offset in the image of `start` */
+    /*
+     * the file a VMA_FILE region reads its pages out of, held open by the
+     * region for as long as the region is there, the way a descriptor
+     * holds one
+     */
+    struct file *p_file;
+    uint64_t image_offset;      /* offset in the file of `start` */
     uint64_t file_end;          /* last address with a byte behind it */
 };
 
@@ -79,15 +87,23 @@ struct addrspace {
     uint64_t u_env_end;
     uint64_t u_stack_start;     /* and where its stack pointer started */
 
+    /* the file exec read the program out of, held for as long as it is */
+    struct file *p_exe;
+
     /* the faults it has answered: pages made, copied, or already there */
     uint64_t u_faults;
 
     struct vma vmas[VMA_MAX];
 };
 
+/*
+ * a region at [start, end), which takes a reference of its own on p_file
+ * when it has one. false when it would overlap another, or there is no
+ * room to remember it
+ */
 bool addrspace_add_region(struct addrspace *as, uint64_t start, uint64_t end,
                           uint64_t flags, enum vma_kind kind,
-                          const uint8_t *image, uint64_t image_offset,
+                          struct file *p_file, uint64_t image_offset,
                           uint64_t file_end);
 
 /*
@@ -98,6 +114,16 @@ bool addrspace_add_region(struct addrspace *as, uint64_t start, uint64_t end,
  */
 uint64_t addrspace_map_anon(struct addrspace *p_as, uint64_t u_hint,
                             uint64_t u_len, uint64_t u_flags, bool b_fixed);
+
+/*
+ * p_file from u_offset, u_len rounded up to pages, put where
+ * addrspace_map_anon would put memory: each page read in the first time
+ * it is touched, and the space's own after, which no write to the file
+ * reaches and no write to it reaches the file. where it went, or 0
+ */
+uint64_t addrspace_map_file(struct addrspace *p_as, uint64_t u_hint,
+                            uint64_t u_len, uint64_t u_flags, bool b_fixed,
+                            struct file *p_file, uint64_t u_offset);
 
 /*
  * nothing at [u_start, u_start + u_len) any more, whatever regions it cut
@@ -117,7 +143,7 @@ bool addrspace_protect(struct addrspace *p_as, uint64_t u_start,
 
 /*
  * every page made in [u_start, u_start + u_len) given back, the regions
- * kept: the next touch makes each again, as zeroes or from the image, the
+ * kept: the next touch makes each again, as zeroes or from the file, the
  * way it was made the first time. false when part of the range is in no
  * region, with nothing changed
  */
@@ -190,8 +216,8 @@ size_t addrspace_read(struct addrspace *p_as, uint64_t u_virt, void *p_out,
 struct addrspace_sizes {
     uint64_t u_size;            /* every page its regions allow */
     uint64_t u_resident;        /* the pages it has */
-    uint64_t u_file;            /* of those, the ones in an image's regions */
-    uint64_t u_exe;             /* the image's executable regions */
+    uint64_t u_file;            /* of those, the ones in a file's regions */
+    uint64_t u_exe;             /* the files' executable regions */
     uint64_t u_data;            /* the rest it may write, but the stack */
     uint64_t u_stack;
     uint64_t u_tables;          /* and the tables saying where they are */
@@ -201,9 +227,13 @@ void addrspace_sizes(struct addrspace *p_as, struct addrspace_sizes *p_out);
 
 /*
  * up to sz_max of its regions into p_out, lowest first: how many it has,
- * which may be more than fit
+ * which may be more than fit. each copied holds its file, for as long as
+ * the reader needs to name it, until addrspace_regions_put
  */
 size_t addrspace_regions(struct addrspace *p_as, struct vma *p_out,
                          size_t sz_max);
+
+/* the files of sz_count regions addrspace_regions copied out, let go of */
+void addrspace_regions_put(struct vma *p_regions, size_t sz_count);
 
 #endif

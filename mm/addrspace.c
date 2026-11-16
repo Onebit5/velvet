@@ -6,6 +6,7 @@
  */
 
 #include <velvet/addrspace.h>
+#include <velvet/file.h>
 #include <velvet/pmm.h>
 #include <velvet/pressure.h>
 #include <velvet/vmm.h>
@@ -194,6 +195,9 @@ struct addrspace *addrspace_fork(struct addrspace *from,
      */
     for (size_t i = 0; i < VMA_MAX; i++) {
         as->vmas[i] = from->vmas[i];
+        if (as->vmas[i].kind != VMA_NONE && as->vmas[i].p_file != NULL) {
+            file_get(as->vmas[i].p_file);
+        }
     }
     as->u_brk_start = from->u_brk_start;
     as->u_brk = from->u_brk;
@@ -202,6 +206,10 @@ struct addrspace *addrspace_fork(struct addrspace *from,
     as->u_env_start = from->u_env_start;
     as->u_env_end = from->u_env_end;
     as->u_stack_start = from->u_stack_start;
+    as->p_exe = from->p_exe;
+    if (as->p_exe != NULL) {
+        file_get(as->p_exe);
+    }
 
     /*
      * and this core's own memory of the parent's entries, when the parent
@@ -288,7 +296,7 @@ static struct vma *region_for(struct addrspace *as, uint64_t virt)
 /* the lock is held */
 static bool add_region(struct addrspace *as, uint64_t u_start, uint64_t u_end,
                        uint64_t u_flags, enum vma_kind e_kind,
-                       const uint8_t *p_image, uint64_t u_image_offset,
+                       struct file *p_file, uint64_t u_image_offset,
                        uint64_t u_file_end)
 {
     if (u_end <= u_start) {
@@ -322,22 +330,25 @@ static bool add_region(struct addrspace *as, uint64_t u_start, uint64_t u_end,
     p_slot->start = u_start;
     p_slot->end = u_end;
     p_slot->flags = u_flags;
-    p_slot->image = p_image;
+    p_slot->p_file = p_file;
     p_slot->image_offset = u_image_offset;
     p_slot->file_end = u_file_end;
+    if (p_file != NULL) {
+        file_get(p_file);
+    }
     return true;
 }
 
 bool addrspace_add_region(struct addrspace *as, uint64_t start, uint64_t end,
                           uint64_t flags, enum vma_kind kind,
-                          const uint8_t *image, uint64_t image_offset,
+                          struct file *p_file, uint64_t image_offset,
                           uint64_t file_end)
 {
     if (as == NULL) {
         return false;
     }
     uint64_t u_flags = spin_lock_irq(&as->lock);
-    bool b_added = add_region(as, start, end, flags, kind, image,
+    bool b_added = add_region(as, start, end, flags, kind, p_file,
                               image_offset, file_end);
     spin_unlock_irq(&as->lock, u_flags);
     return b_added;
@@ -418,6 +429,9 @@ static void split_at(struct vma *p_vma, struct vma *p_slot, uint64_t u_at)
     if (p_vma->kind == VMA_FILE) {
         p_slot->image_offset += u_at - p_vma->start;
     }
+    if (p_slot->p_file != NULL) {
+        file_get(p_slot->p_file);
+    }
     p_vma->end = u_at;
 }
 
@@ -464,7 +478,9 @@ static void cut_at_edges(struct addrspace *p_as, uint64_t u_start,
  * another thread of the space may still be holding a translation to one,
  * and a frame given back to the allocator while it is would be some
  * other program's memory written through it, so each is let go of only
- * once every core has thrown its translations away
+ * once every core has thrown its translations away. and the files of the
+ * regions that went with them, which are let go of only once the lock is,
+ * since letting go of the last hold on a file may reach the filesystem
  */
 #define DROPPED_MAX 64
 
@@ -472,10 +488,13 @@ struct dropped {
     size_t sz_count;
     uint64_t arr_phys[DROPPED_MAX];
     bool b_changed;             /* an entry some core may hold changed */
+    size_t sz_files;
+    struct file *arr_files[VMA_MAX];
 };
 
 /* every core's translations thrown away, and then the frames let go of */
-static void let_go(const struct addrspace *p_as, struct dropped *p_drop)
+static void let_go_frames(const struct addrspace *p_as,
+                          struct dropped *p_drop)
 {
     if (p_drop->b_changed) {
         shoot(p_as);
@@ -485,6 +504,26 @@ static void let_go(const struct addrspace *p_as, struct dropped *p_drop)
     }
     p_drop->sz_count = 0;
     p_drop->b_changed = false;
+}
+
+/* and the files, which is everything: the lock is not held any more */
+static void let_go(const struct addrspace *p_as, struct dropped *p_drop)
+{
+    let_go_frames(p_as, p_drop);
+    for (size_t sz_at = 0; sz_at < p_drop->sz_files; sz_at++) {
+        file_put(p_drop->arr_files[sz_at]);
+    }
+    p_drop->sz_files = 0;
+}
+
+/* a region gone, its file into p_drop. a space has VMA_MAX of them */
+static void drop_region(struct vma *p_vma, struct dropped *p_drop)
+{
+    if (p_vma->p_file != NULL) {
+        p_drop->arr_files[p_drop->sz_files++] = p_vma->p_file;
+        p_vma->p_file = NULL;
+    }
+    p_vma->kind = VMA_NONE;
 }
 
 /*
@@ -503,7 +542,7 @@ static void drop_pages(struct addrspace *p_as, uint64_t u_start,
             continue;
         }
         if (p_drop->sz_count == DROPPED_MAX) {
-            let_go(p_as, p_drop);
+            let_go_frames(p_as, p_drop);
         }
         p_drop->arr_phys[p_drop->sz_count++] = *p_pte & PTE_ADDR_MASK;
         p_drop->b_changed = true;
@@ -553,7 +592,7 @@ static bool unmap(struct addrspace *p_as, uint64_t u_start, uint64_t u_len,
             }
             p_vma->start = u_end;
         } else {
-            p_vma->kind = VMA_NONE;
+            drop_region(p_vma, p_drop);
         }
     }
     drop_pages(p_as, u_start, u_end, p_drop);
@@ -720,6 +759,31 @@ static uint64_t find_room(const struct addrspace *p_as, uint64_t u_len)
     return u_at;
 }
 
+/*
+ * where a mapping of u_len, already whole pages, goes: at u_hint and
+ * nowhere else, over whatever was there, when b_fixed; at u_hint when it
+ * is free; anywhere free otherwise. 0 for nowhere. the lock is held
+ */
+static uint64_t place(struct addrspace *p_as, uint64_t u_hint,
+                      uint64_t u_len, bool b_fixed, struct dropped *p_drop)
+{
+    if (b_fixed) {
+        if ((u_hint & (PAGE_SIZE - 1)) != 0 || u_hint < MAP_MIN
+            || u_hint + u_len < u_hint || u_hint + u_len > USER_TOP
+            || !unmap(p_as, u_hint, u_len, p_drop)) {
+            return 0;
+        }
+        return u_hint;
+    }
+
+    /* a hint is taken when it is free, and is only a hint when it is not */
+    u_hint = PAGE_UP(u_hint);
+    bool b_hint = u_hint >= MAP_MIN && u_hint + u_len > u_hint
+                  && u_hint + u_len <= USER_TOP
+                  && range_free(p_as, u_hint, u_hint + u_len);
+    return b_hint ? u_hint : find_room(p_as, u_len);
+}
+
 /* the lock is held */
 static uint64_t map_anon(struct addrspace *p_as, uint64_t u_hint,
                          uint64_t u_len, uint64_t u_flags, bool b_fixed,
@@ -729,22 +793,7 @@ static uint64_t map_anon(struct addrspace *p_as, uint64_t u_hint,
         return 0;
     }
     u_len = PAGE_UP(u_len);
-
-    if (b_fixed) {
-        if ((u_hint & (PAGE_SIZE - 1)) != 0 || u_hint < MAP_MIN
-            || u_hint + u_len < u_hint || u_hint + u_len > USER_TOP
-            || !unmap(p_as, u_hint, u_len, p_drop)) {
-            return 0;
-        }
-        return add_anon(p_as, u_hint, u_hint + u_len, u_flags) ? u_hint : 0;
-    }
-
-    /* a hint is taken when it is free, and is only a hint when it is not */
-    u_hint = PAGE_UP(u_hint);
-    bool b_hint = u_hint >= MAP_MIN && u_hint + u_len > u_hint
-                  && u_hint + u_len <= USER_TOP
-                  && range_free(p_as, u_hint, u_hint + u_len);
-    uint64_t u_at = b_hint ? u_hint : find_room(p_as, u_len);
+    uint64_t u_at = place(p_as, u_hint, u_len, b_fixed, p_drop);
     if (u_at == 0) {
         return 0;
     }
@@ -760,6 +809,28 @@ uint64_t addrspace_map_anon(struct addrspace *p_as, uint64_t u_hint,
     struct dropped drop = { 0 };
     uint64_t u_lock = spin_lock_irq(&p_as->lock);
     uint64_t u_at = map_anon(p_as, u_hint, u_len, u_flags, b_fixed, &drop);
+    spin_unlock_irq(&p_as->lock, u_lock);
+    let_go(p_as, &drop);
+    return u_at;
+}
+
+uint64_t addrspace_map_file(struct addrspace *p_as, uint64_t u_hint,
+                            uint64_t u_len, uint64_t u_flags, bool b_fixed,
+                            struct file *p_file, uint64_t u_offset)
+{
+    if (p_as == NULL || p_file == NULL || u_len == 0
+        || PAGE_UP(u_len) < u_len) {
+        return 0;
+    }
+    u_len = PAGE_UP(u_len);
+    struct dropped drop = { 0 };
+    uint64_t u_lock = spin_lock_irq(&p_as->lock);
+    uint64_t u_at = place(p_as, u_hint, u_len, b_fixed, &drop);
+    if (u_at != 0
+        && !add_region(p_as, u_at, u_at + u_len, u_flags, VMA_FILE, p_file,
+                       u_offset, u_at + u_len)) {
+        u_at = 0;
+    }
     spin_unlock_irq(&p_as->lock, u_lock);
     let_go(p_as, &drop);
     return u_at;
@@ -823,14 +894,25 @@ static bool populate(struct addrspace *as, struct vma *v, uint64_t virt)
     }
     uint8_t *mem = pmm_phys_to_virt(phys);
 
-    if (v->kind == VMA_FILE && v->image != NULL && page < v->file_end) {
-        /* the bytes that exist, then zeroes. */
+    if (v->kind == VMA_FILE && v->p_file != NULL && page < v->file_end) {
+        /*
+         * the bytes the file has, then zeroes: past file_end, which is
+         * where a segment's bss starts, and past the end of the file.
+         * read with the lock held, which is the one place a read may be
+         * made from, the lock ranking below every filesystem's
+         */
         uint64_t have = v->file_end - page;
         if (have > PAGE_SIZE) {
             have = PAGE_SIZE;
         }
-        memcpy(mem, v->image + v->image_offset + (page - v->start), have);
-        memset(mem + have, 0, PAGE_SIZE - have);
+        int64_t i_got = vfs_read_file(v->p_file,
+                                      v->image_offset + (page - v->start),
+                                      mem, (size_t)have);
+        if (i_got < 0) {
+            pmm_free_pages(phys, 1);
+            return false;
+        }
+        memset(mem + i_got, 0, PAGE_SIZE - (uint64_t)i_got);
     } else {
         /*
          * anonymous memory is zeroes, and has to be: handing a program
@@ -1028,6 +1110,12 @@ static void destroy(struct addrspace *as)
     shoot(as);
 
     free_level(as->pml4, 4);
+    file_put(as->p_exe);
+    for (size_t sz_at = 0; sz_at < VMA_MAX; sz_at++) {
+        if (as->vmas[sz_at].kind != VMA_NONE) {
+            file_put(as->vmas[sz_at].p_file);
+        }
+    }
     slab_free(as);
 }
 
@@ -1212,10 +1300,21 @@ size_t addrspace_regions(struct addrspace *p_as, struct vma *p_out,
         }
         if (sz_count < sz_max) {
             p_out[sz_count] = *p_next;
+            if (p_next->p_file != NULL) {
+                file_get(p_next->p_file);
+            }
         }
         sz_count++;
         u_above = p_next->end;
     }
     spin_unlock_irq(&p_as->lock, u_flags);
     return sz_count;
+}
+
+void addrspace_regions_put(struct vma *p_regions, size_t sz_count)
+{
+    for (size_t sz_at = 0; sz_at < sz_count; sz_at++) {
+        file_put(p_regions[sz_at].p_file);
+        p_regions[sz_at].p_file = NULL;
+    }
 }

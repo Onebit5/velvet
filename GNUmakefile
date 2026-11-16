@@ -820,7 +820,8 @@ test: checkfmt checkarch portable-check $(BINDIR)/$(KERNEL) $(BOOTIMG) \
 	@fail=0; \
 	for t in $(TEST_BINS); do \
 		printf '  %-10s ' "$$(basename $$t)"; \
-		case $$t in *fat32) arg=$(T)/fat32.img;; *) arg=;; esac; \
+		case $$t in *fat32) arg=$(T)/fat32.img;; \
+			*elf) arg=$(SELFTEST_INIT);; *) arg=;; esac; \
 		if out=$$(./$$t $$arg 2>&1); then \
 			echo 'ok'; \
 		else \

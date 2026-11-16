@@ -9,7 +9,6 @@
 #include <velvet/errno.h>
 #include <velvet/addrspace.h>
 #include <velvet/file.h>
-#include <velvet/kmalloc.h>
 #include <velvet/pmm.h>
 #include <velvet/process.h>
 #include <velvet/sched.h>
@@ -54,40 +53,6 @@ static uint64_t flags_for(int i_prot)
     return u_flags;
 }
 
-/*
- * a file's bytes from i_offset, into the u_len just mapped at u_at, and
- * zeroes past its end. read now rather than as each page is touched:
- * the copy is private, so the one difference is when the cost is paid
- */
-static int64_t fill_from(struct file *p_file, uint64_t u_at, uint64_t u_len,
-                         int64_t i_offset)
-{
-    char *p_buf = kmalloc(PAGE_SIZE);
-    if (p_buf == NULL) {
-        return -ENOMEM;
-    }
-    uint64_t u_was = p_file->u_pos;
-    p_file->u_pos = (uint64_t)i_offset;
-    int64_t i_result = 0;
-    for (uint64_t u_done = 0; u_done < u_len; u_done += PAGE_SIZE) {
-        int64_t i_got = p_file->p_ops->read(p_file, p_buf, PAGE_SIZE);
-        if (i_got < 0) {
-            i_result = i_got;
-            break;
-        }
-        if (i_got == 0) {
-            break;
-        }
-        if (copy_to_user(u_at + u_done, p_buf, (size_t)i_got) != 0) {
-            i_result = -EFAULT;
-            break;
-        }
-    }
-    p_file->u_pos = u_was;
-    kfree(p_buf);
-    return i_result;
-}
-
 int64_t sys_mmap(uint64_t u_addr, uint64_t u_len, int i_prot, int i_flags,
                  int i_fd, int64_t i_offset)
 {
@@ -120,8 +85,7 @@ int64_t sys_mmap(uint64_t u_addr, uint64_t u_len, int i_prot, int i_flags,
             return -EBADF;
         }
         int64_t i_why = 0;
-        if (p_file->e_type != FILE_TYPE_REGULAR
-            || p_file->p_ops->read == NULL) {
+        if (!vfs_mappable(p_file)) {
             i_why = -ENODEV;
         } else if (!(p_file->u_mode & FILE_READ)
                    || (b_shared && (i_prot & PROT_WRITE)
@@ -146,38 +110,24 @@ int64_t sys_mmap(uint64_t u_addr, uint64_t u_len, int i_prot, int i_flags,
     }
 
     /*
-     * a file's bytes are put in through a writable mapping, and the
-     * protection asked for comes after
+     * a file's pages are read in as they are touched, by the region, which
+     * holds the file open from here on whatever becomes of the descriptor
      */
     uint64_t u_flags = flags_for(i_prot);
-    uint64_t u_first = (p_file != NULL) ? (PTE_USER | PTE_WRITE | vmm_nx())
-                                        : u_flags;
-    uint64_t u_at;
-    if (i_flags & MAP_FIXED_NOREPLACE) {
-        u_at = addrspace_map_anon(p_as, u_addr, u_len, u_first, false);
-        if (u_at != 0 && u_at != u_addr) {
-            addrspace_unmap(p_as, u_at, u_len);
-            file_put(p_file);
-            return -EEXIST;
-        }
-    } else {
-        u_at = addrspace_map_anon(p_as, u_addr, u_len, u_first, b_fixed);
+    bool b_noreplace = (i_flags & MAP_FIXED_NOREPLACE) != 0;
+    bool b_over = b_fixed && !b_noreplace;
+    uint64_t u_at = (p_file != NULL)
+                    ? addrspace_map_file(p_as, u_addr, u_len, u_flags,
+                                         b_over, p_file, (uint64_t)i_offset)
+                    : addrspace_map_anon(p_as, u_addr, u_len, u_flags,
+                                         b_over);
+    file_put(p_file);
+    if (b_noreplace && u_at != 0 && u_at != u_addr) {
+        addrspace_unmap(p_as, u_at, u_len);
+        return -EEXIST;
     }
     if (u_at == 0) {
-        file_put(p_file);
         return b_fixed ? -EINVAL : -ENOMEM;
-    }
-    if (p_file != NULL) {
-        int64_t i_why = fill_from(p_file, u_at, u_len, i_offset);
-        file_put(p_file);
-        if (i_why == 0 && u_flags != u_first
-            && !addrspace_protect(p_as, u_at, u_len, u_flags)) {
-            i_why = -ENOMEM;
-        }
-        if (i_why < 0) {
-            addrspace_unmap(p_as, u_at, u_len);
-            return i_why;
-        }
     }
     return (int64_t)u_at;
 }

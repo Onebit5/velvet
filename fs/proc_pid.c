@@ -172,10 +172,11 @@ static void bounds_of(struct addrspace *p_space, struct image_bounds *p_out)
         return;
     }
     size_t sz_count = addrspace_regions(p_space, p_regions, VMA_MAX);
-    for (size_t sz_at = 0; sz_at < sz_count && sz_at < VMA_MAX; sz_at++) {
+    size_t sz_have = (sz_count < VMA_MAX) ? sz_count : VMA_MAX;
+    for (size_t sz_at = 0; sz_at < sz_have; sz_at++) {
         const struct vma *v = &p_regions[sz_at];
         bool b_exec = (v->flags & PTE_USER) && !(v->flags & PTE_NX);
-        if (v->kind != VMA_FILE) {
+        if (v->kind != VMA_FILE || v->p_file != p_space->p_exe) {
             continue;
         }
         uint64_t *p_start = b_exec ? &p_out->u_code_start
@@ -188,6 +189,7 @@ static void bounds_of(struct addrspace *p_space, struct image_bounds *p_out)
             *p_end = v->end;
         }
     }
+    addrspace_regions_put(p_regions, sz_have);
     kfree(p_regions);
 }
 
@@ -460,26 +462,24 @@ static int digits(uint64_t u_number, unsigned u_base, int i_least)
     return (i_count > i_least) ? i_count : i_least;
 }
 
-/* the program's image, as maps names it and numbers the file */
+/* the file a region is read out of, as maps names it and numbers it */
 struct image_file {
     char arr_name[PATH_MAX];
     uint64_t u_dev;
     uint64_t u_ino;
 };
 
-static void image_of(int i_pid, struct image_file *p_out)
+static void file_of(const struct file *p_file, struct image_file *p_out)
 {
-    char arr_exe[PATH_MAX];
-    struct vfs_file node;
     memset(p_out, 0, sizeof *p_out);
-    if (!process_paths(i_pid, NULL, NULL, arr_exe) || arr_exe[0] == '\0') {
+    if (p_file == NULL) {
         return;
     }
-    path_seen_from(process_root(current_pid()), arr_exe, p_out->arr_name);
-    if (vfs_open(arr_exe, &node)) {
-        p_out->u_dev = node_dev(&node);
-        p_out->u_ino = (node.u_ino != 0) ? node.u_ino : path_ino(arr_exe);
-    }
+    path_seen_from(process_root(current_pid()), p_file->arr_path,
+                   p_out->arr_name);
+    p_out->u_dev = node_dev(&p_file->node);
+    p_out->u_ino = (p_file->node.u_ino != 0) ? p_file->node.u_ino
+                                             : path_ino(p_file->arr_path);
 }
 
 /* one line of maps: a region, what it allows, and what is in it */
@@ -515,7 +515,7 @@ static void show_region(const struct vma *v, const struct addrspace *p_space,
 
 /*
  * maps: a line for each region of the space, lowest first, and what is
- * in it: the program's image, the heap, the stack, or nothing named
+ * in it: the file it is read out of, the heap, the stack, or nothing named
  */
 static void show_maps(const struct proc_ref *p_ref)
 {
@@ -525,12 +525,13 @@ static void show_maps(const struct proc_ref *p_ref)
     struct image_file *p_image = (p_regions != NULL)
                                  ? kmalloc(sizeof *p_image) : NULL;
     if (p_image != NULL) {
-        image_of(p_ref->i_pid, p_image);
         size_t sz_count = addrspace_regions(p_space, p_regions, VMA_MAX);
-        for (size_t sz_at = 0; sz_at < sz_count && sz_at < VMA_MAX;
-             sz_at++) {
+        size_t sz_have = (sz_count < VMA_MAX) ? sz_count : VMA_MAX;
+        for (size_t sz_at = 0; sz_at < sz_have; sz_at++) {
+            file_of(p_regions[sz_at].p_file, p_image);
             show_region(&p_regions[sz_at], p_space, p_image);
         }
+        addrspace_regions_put(p_regions, sz_have);
     }
     kfree(p_image);
     kfree(p_regions);

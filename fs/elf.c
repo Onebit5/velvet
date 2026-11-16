@@ -2,7 +2,7 @@
 /*
  * fs/elf.c
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * loading an elf64 executable.
+ * reading what an elf64 executable says about itself.
  */
 
 #include <velvet/elf.h>
@@ -11,7 +11,6 @@
 /* what a segment turns into, in page table terms. */
 #include <velvet/vmm.h>
 
-/* elf_load gets this from pmm.h, which needs a real machine. */
 #ifndef PAGE_SIZE
 #define PAGE_SIZE 4096
 #endif
@@ -52,84 +51,125 @@ struct elf64_phdr {
     uint64_t align;
 } __attribute__((packed));
 
+_Static_assert(sizeof(struct elf64_header) == ELF_HEADER_SIZE,
+               "the header is 64 bytes, at the start of every file");
 _Static_assert(sizeof(struct elf64_phdr) == ELF_PHDR_SIZE,
                "a program header is 56 bytes, as AT_PHENT says");
 
-bool elf_is_loadable(const void *image, uint64_t size, const char **why)
+bool elf_check(const void *p_header, uint64_t u_size, uint64_t *p_phoff,
+               size_t *p_phlen, const char **pp_why)
 {
-    const char *ignored;
-    if (why == NULL) {
-        why = &ignored;
+    const char *str_ignored;
+    if (pp_why == NULL) {
+        pp_why = &str_ignored;
     }
 
-    if (image == NULL || size < sizeof(struct elf64_header)) {
-        *why = "too small to be an elf at all";
+    if (p_header == NULL || u_size < sizeof(struct elf64_header)) {
+        *pp_why = "too small to be an elf at all";
         return false;
     }
 
-    const struct elf64_header *h = image;
+    const struct elf64_header *h = p_header;
     if (h->ident[0] != 0x7f || h->ident[1] != 'E'
         || h->ident[2] != 'L' || h->ident[3] != 'F') {
-        *why = "no elf magic";
+        *pp_why = "no elf magic";
         return false;
     }
     if (h->ident[4] != 2) {
-        *why = "not 64-bit";
+        *pp_why = "not 64-bit";
         return false;
     }
     if (h->ident[5] != 1) {
-        *why = "not little endian";
+        *pp_why = "not little endian";
         return false;
     }
     if (h->machine != 0x3e) {
-        *why = "not x86-64";
+        *pp_why = "not x86-64";
         return false;
     }
     if (h->type != ET_EXEC) {
-        *why = "not a static executable (the kernel cannot relocate)";
+        *pp_why = "not a static executable (the kernel cannot relocate)";
         return false;
     }
     if (h->phnum == 0) {
-        *why = "no program headers, so nothing to load";
+        *pp_why = "no program headers, so nothing to load";
         return false;
     }
     if (h->phentsize != sizeof(struct elf64_phdr)) {
-        *why = "program headers are the wrong size";
+        *pp_why = "program headers are the wrong size";
         return false;
     }
-    if (h->phoff + (uint64_t)h->phnum * h->phentsize > size) {
-        *why = "program headers run past the end of the file";
+    if (h->phnum > ELF_PHDRS_MAX) {
+        *pp_why = "more program headers than the kernel reads";
+        return false;
+    }
+    if (h->phoff > u_size
+        || (uint64_t)h->phnum * h->phentsize > u_size - h->phoff) {
+        *pp_why = "program headers run past the end of the file";
         return false;
     }
     if (h->entry == 0) {
-        *why = "no entry point";
+        *pp_why = "no entry point";
         return false;
     }
+    *p_phoff = h->phoff;
+    *p_phlen = (size_t)h->phnum * sizeof(struct elf64_phdr);
     return true;
 }
 
-bool elf_describe(const void *image, uint64_t size,
-                  struct elf_segment *out, size_t max, size_t *count,
-                  uint64_t *entry, uint64_t *brk, const char **why)
+/*
+ * where the program headers are once the program is in memory, which a
+ * libc reads its thread-local template out of: where PT_PHDR says, or
+ * wherever the segment holding them in the file puts them, or nowhere
+ */
+static uint64_t headers_at(const struct elf64_header *h,
+                           const struct elf64_phdr *ph)
 {
-    if (!elf_is_loadable(image, size, why)) {
+    uint64_t u_bytes = (uint64_t)h->phnum * sizeof *ph;
+    for (uint16_t i = 0; i < h->phnum; i++) {
+        if (ph[i].type == PT_PHDR) {
+            return ph[i].vaddr;
+        }
+    }
+    for (uint16_t i = 0; i < h->phnum; i++) {
+        if (ph[i].type == PT_LOAD && ph[i].offset <= h->phoff
+            && h->phoff + u_bytes <= ph[i].offset + ph[i].filesz) {
+            return ph[i].vaddr + (h->phoff - ph[i].offset);
+        }
+    }
+    return 0;
+}
+
+bool elf_describe(const void *p_header, const void *p_phdrs, uint64_t u_size,
+                  struct elf_image *p_out, const char **pp_why)
+{
+    const char *str_ignored;
+    if (pp_why == NULL) {
+        pp_why = &str_ignored;
+    }
+    uint64_t u_phoff;
+    size_t sz_phlen;
+    if (!elf_check(p_header, u_size, &u_phoff, &sz_phlen, pp_why)) {
         return false;
     }
 
-    const struct elf64_header *h = image;
-    const struct elf64_phdr *ph =
-        (const struct elf64_phdr *)((const uint8_t *)image + h->phoff);
-
-    *count = 0;
-    *entry = h->entry;
-    *brk = 0;
+    const struct elf64_header *h = p_header;
+    const struct elf64_phdr *ph = p_phdrs;
+    memset(p_out, 0, sizeof *p_out);
+    p_out->u_entry = h->entry;
+    p_out->u_phnum = h->phnum;
+    p_out->u_phdr = headers_at(h, ph);
 
     for (uint16_t i = 0; i < h->phnum; i++) {
         if (ph[i].type != PT_LOAD || ph[i].memsz == 0) {
             continue;
         }
-        if (ph[i].offset + ph[i].filesz > size) {
-            *why = "a segment reaches past the end of the file";
+        if (ph[i].offset > u_size || ph[i].filesz > u_size - ph[i].offset) {
+            *pp_why = "a segment reaches past the end of the file";
+            return false;
+        }
+        if (ph[i].filesz > ph[i].memsz) {
+            *pp_why = "a segment holds more of the file than it has room for";
             return false;
         }
         /*
@@ -143,18 +183,29 @@ bool elf_describe(const void *image, uint64_t size,
          * purpose rather than leaving it at zero.
          */
         /* the higher half is the kernel's. */
-        if (ph[i].vaddr >= 0xffff800000000000ull) {
-            *why = "a segment wants to live in kernel space";
+        if (ph[i].vaddr >= 0xffff800000000000ull
+            || ph[i].memsz > 0xffff800000000000ull - ph[i].vaddr) {
+            *pp_why = "a segment wants to live in kernel space";
             return false;
         }
-        if (*count == max) {
-            *why = "more segments than the kernel can describe";
+        if (p_out->sz_segs == ELF_SEGMENTS_MAX) {
+            *pp_why = "more segments than the kernel can describe";
             return false;
         }
 
-        uint64_t start = ph[i].vaddr & ~(PAGE_SIZE - 1);
+        uint64_t start = ph[i].vaddr & ~(uint64_t)(PAGE_SIZE - 1);
         uint64_t end = (ph[i].vaddr + ph[i].memsz + PAGE_SIZE - 1)
-                     & ~(PAGE_SIZE - 1);
+                     & ~(uint64_t)(PAGE_SIZE - 1);
+
+        /*
+         * the page a segment starts on is read from the file from that
+         * page's start, so the segment cannot begin further into its
+         * page than into the file
+         */
+        if (ph[i].offset < ph[i].vaddr - start) {
+            *pp_why = "a segment starts before the file does";
+            return false;
+        }
 
         /*
          * two segments sharing a page cannot both be described: one
@@ -163,13 +214,18 @@ bool elf_describe(const void *image, uint64_t size,
          * linker puts each on its own page, so this is a check rather
          * than a case
          */
-        for (size_t j = 0; j < *count; j++) {
-            if (start < out[j].end && end > out[j].vaddr) {
-                *why = "two segments share a page";
+        for (size_t j = 0; j < p_out->sz_segs; j++) {
+            if (start < p_out->arr_segs[j].end
+                && end > p_out->arr_segs[j].vaddr) {
+                *pp_why = "two segments share a page";
                 return false;
             }
         }
 
+        /*
+         * W^X holds in ring 3 too: writable segments are never
+         * executable, and the rest are read-only
+         */
         uint64_t flags = PTE_USER;
         if (ph[i].flags & PF_W) {
             flags |= PTE_WRITE | vmm_nx();
@@ -177,144 +233,21 @@ bool elf_describe(const void *image, uint64_t size,
             flags |= vmm_nx();
         }
 
-        out[*count].vaddr = start;
-        out[*count].end = end;
-        out[*count].file_end = ph[i].vaddr + ph[i].filesz;
-        /*
-         * the offset of `start` rather than of vaddr, since the record
-         * describes whole pages and the segment may begin partway into
-         * one, though with a page-aligned linker script it never
-         * does, and the arithmetic is the same either way
-         */
-        out[*count].offset = ph[i].offset - (ph[i].vaddr - start);
-        out[*count].flags = flags;
-        (*count)++;
+        struct elf_segment *p_seg = &p_out->arr_segs[p_out->sz_segs++];
+        p_seg->vaddr = start;
+        p_seg->end = end;
+        p_seg->file_end = ph[i].vaddr + ph[i].filesz;
+        p_seg->offset = ph[i].offset - (ph[i].vaddr - start);
+        p_seg->flags = flags;
 
-        if (end > *brk) {
-            *brk = end;
+        if (end > p_out->u_high) {
+            p_out->u_high = end;
         }
     }
 
-    if (*count == 0) {
-        *why = "nothing to load";
+    if (p_out->sz_segs == 0) {
+        *pp_why = "nothing to load";
         return false;
     }
     return true;
 }
-
-bool elf_headers_at(const void *p_image, uint64_t u_size, uint64_t *p_addr,
-                    uint64_t *p_count)
-{
-    if (!elf_is_loadable(p_image, u_size, NULL)) {
-        return false;
-    }
-    const struct elf64_header *h = p_image;
-    const struct elf64_phdr *ph =
-        (const struct elf64_phdr *)((const uint8_t *)p_image + h->phoff);
-    uint64_t u_bytes = (uint64_t)h->phnum * sizeof *ph;
-
-    *p_count = h->phnum;
-    *p_addr = 0;
-    for (uint16_t i = 0; i < h->phnum; i++) {
-        if (ph[i].type == PT_PHDR) {
-            *p_addr = ph[i].vaddr;
-            return true;
-        }
-    }
-    /* no PT_PHDR: wherever the segment the headers are part of puts them */
-    for (uint16_t i = 0; i < h->phnum; i++) {
-        if (ph[i].type == PT_LOAD && ph[i].offset <= h->phoff
-            && h->phoff + u_bytes <= ph[i].offset + ph[i].filesz) {
-            *p_addr = ph[i].vaddr + (h->phoff - ph[i].offset);
-            return true;
-        }
-    }
-    return true;
-}
-
-#ifndef VELVET_HOSTED
-
-#include <velvet/pmm.h>
-
-struct elf_load_result elf_load(const void *image, uint64_t size,
-                                uint64_t pml4)
-{
-    struct elf_load_result r = { 0, 0, false, NULL };
-
-    if (!elf_is_loadable(image, size, &r.error)) {
-        return r;
-    }
-
-    const struct elf64_header *h = image;
-    const struct elf64_phdr *ph =
-        (const struct elf64_phdr *)((const uint8_t *)image + h->phoff);
-
-    for (uint16_t i = 0; i < h->phnum; i++) {
-        if (ph[i].type != PT_LOAD || ph[i].memsz == 0) {
-            continue;
-        }
-        if (ph[i].offset + ph[i].filesz > size) {
-            r.error = "a segment reaches past the end of the file";
-            return r;
-        }
-        /* the higher half is the kernel's. */
-        if (ph[i].vaddr >= 0xffff800000000000ull) {
-            r.error = "a segment wants to live in kernel space";
-            return r;
-        }
-
-        uint64_t start = ph[i].vaddr & ~(PAGE_SIZE - 1);
-        uint64_t end   = (ph[i].vaddr + ph[i].memsz + PAGE_SIZE - 1)
-                       & ~(PAGE_SIZE - 1);
-
-        for (uint64_t v = start; v < end; v += PAGE_SIZE) {
-            uint64_t phys = pmm_alloc_pages(1);
-            if (phys == 0) {
-                r.error = "out of memory";
-                return r;
-            }
-            memset(pmm_phys_to_virt(phys), 0, PAGE_SIZE);
-
-            /*
-             * W^X holds in ring 3 too: writable segments are never
-             * executable, and the rest are read-only
-             */
-            uint64_t flags = PTE_USER;
-            if (ph[i].flags & PF_W) {
-                flags |= PTE_WRITE | vmm_nx();
-            } else if (!(ph[i].flags & PF_X)) {
-                flags |= vmm_nx();
-            }
-
-            if (!vmm_map_range(pml4, v, phys, PAGE_SIZE, flags)) {
-                r.error = "could not map a segment";
-                return r;
-            }
-        }
-
-        /*
-         * copy the file's bytes in through the direct map rather than
-         * the new mapping, which may well be read-only by now
-         */
-        const uint8_t *src = (const uint8_t *)image + ph[i].offset;
-        for (uint64_t b = 0; b < ph[i].filesz; b++) {
-            uint64_t va = ph[i].vaddr + b;
-            uint64_t pa = vmm_translate(pml4, va);
-            if (pa == VMM_NO_MAPPING) {
-                r.error = "a segment byte landed nowhere";
-                return r;
-            }
-            *(uint8_t *)pmm_phys_to_virt(pa) = src[b];
-        }
-
-        if (end > r.brk) {
-            r.brk = end;
-        }
-    }
-
-    r.entry = h->entry;
-    r.ok = true;
-    return r;
-}
-
-#endif /* VELVET_HOSTED */
