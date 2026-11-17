@@ -27,6 +27,8 @@
 #include <velvet/random.h>
 #include <velvet/errno.h>
 #include <velvet/futex.h>
+#include <velvet/namei.h>
+#include <uapi/velvet/fcntl.h>
 #include <asm/irq.h>
 #include <asm/uaccess.h>
 #include <uapi/velvet/auxvec.h>
@@ -151,6 +153,7 @@ struct aux_facts {
     uint64_t u_entry;
     uint64_t u_phdr;
     uint64_t u_phnum;
+    uint64_t u_base;            /* how far its loader was moved, or 0 */
     int i_uid;
     int i_gid;
 };
@@ -226,7 +229,7 @@ static uint64_t build_stack(uint8_t *p_top_k, const struct exec_args *p_args,
         AT_PHENT,  ELF_PHDR_SIZE,
         AT_PHNUM,  p_facts->u_phnum,
         AT_PAGESZ, PAGE_SIZE,
-        AT_BASE,   0,
+        AT_BASE,   p_facts->u_base,
         AT_FLAGS,  0,
         AT_ENTRY,  p_facts->u_entry,
         AT_UID,    (uint64_t)p_facts->i_uid,
@@ -336,6 +339,70 @@ static int64_t program_open(const char *str_path, struct file **pp_file,
     return 0;
 }
 
+/*
+ * the loader the program in p_file names, found the way the program was,
+ * from the caller's root and working directory with the last link
+ * followed, and opened the way it was. a name with no end is no
+ * program's, ENOEXEC; nothing at it is ENOENT, though the program is
+ * there; one the caller may not run is EACCES; one too short to hold a
+ * header is EIO, since its header cannot be read; one that is no
+ * program, or none this kernel loads, is ELIBBAD, a library that is not
+ * one
+ */
+static int64_t loader_open(struct file *p_file,
+                           const struct elf_image *p_prog,
+                           struct file **pp_loader,
+                           struct elf_image *p_loader,
+                           const char **pp_error)
+{
+    char *str_name = kmalloc(p_prog->sz_interp);
+    if (str_name == NULL) {
+        *pp_error = "no memory for the name of its loader";
+        return -ENOMEM;
+    }
+    char arr_path[PATH_MAX];
+    int64_t i_why = -ENOEXEC;
+    *pp_error = "the name of its loader does not end";
+    if (vfs_read_file(p_file, p_prog->u_interp_offset, str_name,
+                      p_prog->sz_interp) == (int64_t)p_prog->sz_interp
+        && str_name[p_prog->sz_interp - 1] == '\0') {
+        *pp_error = "the loader it names is not there to run";
+        i_why = path_from(AT_FDCWD, str_name, arr_path);
+    }
+    kfree(str_name);
+    struct vfs_file node;
+    if (i_why == 0) {
+        i_why = path_lookup(arr_path, true, &node);
+    }
+    if (i_why == 0 && (node.is_dir || !may_access(&node, X_OK))) {
+        i_why = -EACCES;
+    }
+    if (i_why == 0 && node.size < ELF_HEADER_SIZE) {
+        *pp_error = "the loader it names is too short to be one";
+        i_why = -EIO;
+    }
+    if (i_why < 0) {
+        return i_why;
+    }
+    i_why = program_open(arr_path, pp_loader, p_loader, pp_error);
+    return (i_why == -ENOEXEC) ? -ELIBBAD : i_why;
+}
+
+/* every segment of p_image a region of p_file in p_space, or false */
+static bool segments_add(struct addrspace *p_space,
+                         const struct elf_image *p_image,
+                         struct file *p_file)
+{
+    bool b_placed = true;
+    for (size_t sz_at = 0; sz_at < p_image->sz_segs && b_placed; sz_at++) {
+        const struct elf_segment *p_seg = &p_image->arr_segs[sz_at];
+        b_placed = addrspace_add_region(p_space, p_seg->vaddr, p_seg->end,
+                                        p_seg->flags, VMA_FILE, p_file,
+                                        p_seg->offset, p_seg->file_end);
+    }
+    return b_placed;
+}
+
 static int64_t image_build(const char *str_path,
                            const struct exec_args *p_args, int i_uid,
                            int i_gid, struct user_image *p_out,
@@ -369,9 +436,31 @@ static int64_t image_build(const char *str_path,
     if (prog.b_anywhere) {
         elf_move(&prog, USER_PROGRAM_BASE - prog.u_low);
     }
+
+    /*
+     * one that names a loader is started by it, and the loader is told
+     * by the auxiliary vector where the program is and where it was put
+     * itself: where mmap puts the first thing it is asked for, out of
+     * the way of the program and of its break
+     */
+    struct file *p_loader = NULL;
+    struct elf_image loader = { 0 };
+    uint64_t u_base = 0;
+    if (prog.sz_interp != 0) {
+        i_why = loader_open(p_file, &prog, &p_loader, &loader, pp_error);
+        if (i_why < 0) {
+            file_put(p_file);
+            return i_why;
+        }
+        if (loader.b_anywhere) {
+            u_base = MMAP_BASE - loader.u_low;
+            elf_move(&loader, u_base);
+        }
+    }
     struct aux_facts facts = {
         .u_entry = prog.u_entry, .u_phdr = prog.u_phdr,
-        .u_phnum = prog.u_phnum, .i_uid = i_uid, .i_gid = i_gid,
+        .u_phnum = prog.u_phnum, .u_base = u_base, .i_uid = i_uid,
+        .i_gid = i_gid,
     };
 
     /*
@@ -381,6 +470,7 @@ static int64_t image_build(const char *str_path,
     struct addrspace *space = addrspace_create(vmm_kernel_pml4());
     if (space == NULL) {
         file_put(p_file);
+        file_put(p_loader);
         *pp_error = "no memory for an address space";
         return -ENOMEM;
     }
@@ -391,16 +481,13 @@ static int64_t image_build(const char *str_path,
      * without a byte of it having been read and what is never touched
      * never is. the regions hold the file open for as long as they are
      * there, on whatever filesystem it is on, and the space holds it as
-     * the program it is
+     * the program it is. the loader's are the same, held by its regions
+     * alone
      */
-    bool b_placed = true;
-    for (size_t sz_at = 0; sz_at < prog.sz_segs && b_placed; sz_at++) {
-        const struct elf_segment *p_seg = &prog.arr_segs[sz_at];
-        b_placed = addrspace_add_region(space, p_seg->vaddr, p_seg->end,
-                                        p_seg->flags, VMA_FILE, p_file,
-                                        p_seg->offset, p_seg->file_end);
-    }
+    bool b_placed = segments_add(space, &prog, p_file)
+                    && segments_add(space, &loader, p_loader);
     space->p_exe = p_file;
+    file_put(p_loader);
     if (!b_placed) {
         addrspace_put(space);
         *pp_error = "no room to describe the program";
@@ -445,7 +532,7 @@ static int64_t image_build(const char *str_path,
                                      space);
     space->u_stack_start = p_out->u_stack_top;
     p_out->p_space = space;
-    p_out->u_entry = prog.u_entry;
+    p_out->u_entry = (prog.sz_interp != 0) ? loader.u_entry : prog.u_entry;
     return 0;
 }
 

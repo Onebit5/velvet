@@ -220,16 +220,36 @@ int main(int i_argc, char **pp_argv)
               && !image.b_anywhere, "one built for its place is not");
 
         /*
-         * a program naming a loader is not started without it: at its own
-         * entry it would run with nothing it was linked against there
+         * a program naming a loader is described with where the name is,
+         * for exec to read and start what it names: the first one named,
+         * and only a name with room for a path and its end
          */
         uint8_t *p_interp = img + 64 + 2 * 56;
-        *(uint16_t *)(img + 56) = 3;
-        *(uint32_t *)p_interp = 3;      /* PT_INTERP */
+        *(uint16_t *)(img + 56) = 4;
+        *(uint32_t *)p_interp = 3;                  /* PT_INTERP */
+        *(uint64_t *)(p_interp + 8) = 0x200;
+        *(uint64_t *)(p_interp + 32) = 25;
+        *(uint32_t *)(p_interp + 56) = 3;           /* and another */
+        *(uint64_t *)(p_interp + 56 + 8) = 0x300;
+        *(uint64_t *)(p_interp + 56 + 32) = 1;
+        CHECK(elf_describe(img, img + 64, sizeof img, &image, &why)
+              && image.u_interp_offset == 0x200 && image.sz_interp == 25,
+              "a program naming a loader says where in it the name is, "
+              "the first it names");
+        *(uint64_t *)(p_interp + 32) = 1;
         CHECK(!elf_describe(img, img + 64, sizeof img, &image, &why),
-              "a program naming a loader is refused");
-        memset(p_interp, 0, 56);
+              "and a name with no room for a path is refused");
+        *(uint64_t *)(p_interp + 32) = ELF_INTERP_MAX + 1;
+        CHECK(!elf_describe(img, img + 64, sizeof img, &image, &why),
+              "as is one longer than any path");
+        *(uint64_t *)(p_interp + 32) = 25;
+        *(uint64_t *)(p_interp + 8) = sizeof img - 8;
+        CHECK(!elf_describe(img, img + 64, sizeof img, &image, &why),
+              "and one that runs past the end of the file");
+        memset(p_interp, 0, 2 * 56);
         *(uint16_t *)(img + 56) = 2;
+        CHECK(elf_describe(img, img + 64, sizeof img, &image, &why)
+              && image.sz_interp == 0, "one naming none says so");
 
         /* the headers in the first segment are where it puts them */
         segment(0, 0, 0x400000, 0x1000, 0x1000, 5);

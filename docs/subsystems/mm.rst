@@ -286,6 +286,11 @@ program going wrong.
     how many regions one space may hold. a program that wants more has to be
     told no rather than quietly given a smaller machine.
 
+``#define MMAP_BASE  0x0000600000000000ull``
+    where mmap hands things out, up to ``MMAP_LIMIT``: above everything a
+    program links to and a long way below the stack. exec puts a
+    program's loader at the bottom of it, the first thing there.
+
 ``addrspace_add_region(as, start, end, flags, kind, p_file, offset, file_end)``
     agree to a range without mapping any of it. the pages arrive on first
     touch, which is what makes a large stack or a large allocation cost

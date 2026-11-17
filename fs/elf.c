@@ -170,13 +170,24 @@ bool elf_describe(const void *p_header, const void *p_phdrs, uint64_t u_size,
 
     for (uint16_t i = 0; i < h->phnum; i++) {
         /*
-         * a program that names a loader is the loader's to start, and
-         * started at its own entry it runs without the libc it was
-         * linked against having been loaded at all
+         * a program that names a loader is the loader's to start, since
+         * at its own entry it runs without the libc it was linked
+         * against. the first loader named is the one, and the name is
+         * a path, so it has room for a byte of one and its end
          */
-        if (ph[i].type == PT_INTERP) {
-            *pp_why = "it names a loader, which this kernel does not start";
-            return false;
+        if (ph[i].type == PT_INTERP && p_out->sz_interp == 0) {
+            if (ph[i].offset > u_size
+                || ph[i].filesz > u_size - ph[i].offset) {
+                *pp_why = "the loader's name runs past the end of the file";
+                return false;
+            }
+            if (ph[i].filesz < 2 || ph[i].filesz > ELF_INTERP_MAX) {
+                *pp_why = "the loader's name is no path";
+                return false;
+            }
+            p_out->u_interp_offset = ph[i].offset;
+            p_out->sz_interp = (size_t)ph[i].filesz;
+            continue;
         }
         if (ph[i].type != PT_LOAD || ph[i].memsz == 0) {
             continue;

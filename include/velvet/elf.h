@@ -29,6 +29,13 @@
 #define ELF_SEGMENTS_MAX 8
 
 /*
+ * the longest name of a loader a program may give, its NUL included: as
+ * long as a path may be on any machine with this interface, whatever
+ * this kernel holds its own paths to
+ */
+#define ELF_INTERP_MAX 4096
+
+/*
  * a segment as the pages it covers, each of which is read out of the
  * file the first time it is touched
  */
@@ -52,6 +59,8 @@ struct elf_image {
     uint64_t u_low;             /* the first page of any segment */
     uint64_t u_high;            /* past the last page of any segment */
     bool b_anywhere;            /* built to be loaded at any address */
+    uint64_t u_interp_offset;   /* where in the file its loader's name is */
+    size_t sz_interp;           /* and how long, its NUL included, or 0 */
     size_t sz_segs;
     struct elf_segment arr_segs[ELF_SEGMENTS_MAX];
 };
@@ -66,8 +75,9 @@ bool elf_check(const void *p_header, uint64_t u_size, uint64_t *p_phoff,
 
 /*
  * the program the header and the program headers elf_check pointed at
- * describe, without anything mapped. false, with why, for one that
- * cannot be described
+ * describe, without anything mapped, and where the name of the loader
+ * it names is, which is in the file and not in the headers. false, with
+ * why, for one that cannot be described
  */
 bool elf_describe(const void *p_header, const void *p_phdrs, uint64_t u_size,
                   struct elf_image *p_out, const char **pp_why);

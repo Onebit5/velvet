@@ -25,6 +25,12 @@
 int64_t path_at(int i_dirfd, uint64_t u_path, char *str_out);
 
 /*
+ * the same for a path the kernel already holds, as the calling process
+ * would name it: what a program names a file it is made of by
+ */
+int64_t path_from(int i_dirfd, const char *str_raw, char *str_out);
+
+/*
  * a path in the namespace as a process whose "/" is str_root sees it,
  * into PATH_MAX of str_out: what is under the root without it, and "/"
  * for anything that is not, which it has no name for

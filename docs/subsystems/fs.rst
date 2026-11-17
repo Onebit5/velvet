@@ -975,8 +975,10 @@ a libc's loader is and most programs are. the second kind is described at
 the addresses it was linked at, which start near zero, and moved whole to
 wherever exec puts it: every address in it is relative to every other, so
 the one number it is moved by is the only thing that changes. one that
-names a loader in its headers is refused, since started at its own entry
-it would run without the libc it was linked against.
+names a loader in its headers is started by the loader, since at its own
+entry it would run without the libc it was linked against. the name is
+in the file rather than in the headers, so what is described is where it
+is, and exec reads it.
 
 ``bool elf_check(p_header, u_size, p_phoff, p_phlen, pp_why)``
     the header, checked against the size of the file it came from: where
@@ -988,7 +990,8 @@ it would run without the libc it was linked against.
     the segments as whole pages, where each starts in the file and where
     its bytes stop, the entry point, the first and the end of the last
     segment, where the program headers are in memory for a libc to read,
-    and whether it was built to be loaded anywhere.
+    whether it was built to be loaded anywhere, and where in the file the
+    name of its loader is, the first it names, when it names one.
 
 ``void elf_move(p_image, u_by)``
     a program built to be loaded anywhere put ``u_by`` above where it was

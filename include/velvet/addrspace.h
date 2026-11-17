@@ -31,6 +31,14 @@ struct file;
  */
 #define VMA_MAX 64
 
+/*
+ * where mmap hands things out: above everything a program links to and
+ * a long way below the stack, so the two can never meet. a program's
+ * loader is the first thing put there
+ */
+#define MMAP_BASE  0x0000600000000000ull
+#define MMAP_LIMIT 0x00006fff00000000ull
+
 enum vma_kind {
     VMA_NONE = 0,
     VMA_ANON,       /* zeroes. a stack, or something mmap handed out */

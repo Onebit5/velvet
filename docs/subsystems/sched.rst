@@ -989,11 +989,13 @@ something.
 spawn and exec share everything up to the program being ready to run:
 the file opened and its headers read, a fresh address space with a
 region of the file for each segment, where it was linked or, for a
-program built to be loaded anywhere, from ``USER_PROGRAM_BASE``, none of
-it read yet, a stack and the arguments on it. what differs is what goes
-around it. spawn makes a new process and a thread for it. exec swaps the
-new address space in for the caller's and destroys the old one, and
-only after everything that can fail has already succeeded, so a failed
-exec leaves the caller running exactly what it was. the ``execve`` call
-then rewrites the frame the syscall exit path restores, so the return
-from the call is the new program's first instruction.
+program built to be loaded anywhere, from ``USER_PROGRAM_BASE``, and the
+same of its loader's from ``MMAP_BASE`` when it names one, which is
+where it starts, none of it read yet, a stack and the arguments on it.
+what differs is what goes around it. spawn makes a new process and a
+thread for it. exec swaps the new address space in for the caller's and
+destroys the old one, and only after everything that can fail has
+already succeeded, so a failed exec leaves the caller running exactly
+what it was. the ``execve`` call then rewrites the frame the syscall
+exit path restores, so the return from the call is the new program's
+first instruction.

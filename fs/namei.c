@@ -117,17 +117,20 @@ static int64_t under_root(const char *str_root, const char *str_base,
 int64_t path_at(int i_dirfd, uint64_t u_path, char *str_out)
 {
     char arr_raw[PATH_MAX];
-    char arr_base[PATH_MAX];
     int64_t i_len = strncpy_from_user(arr_raw, u_path, sizeof arr_raw);
 
-    if (i_len < 0) {
-        return i_len;
-    }
-    if (i_len == 0) {
+    return (i_len < 0) ? i_len : path_from(i_dirfd, arr_raw, str_out);
+}
+
+int64_t path_from(int i_dirfd, const char *str_raw, char *str_out)
+{
+    char arr_base[PATH_MAX];
+
+    if (str_raw[0] == '\0') {
         return -ENOENT;
     }
     const char *str_base = "/";
-    if (arr_raw[0] != '/') {
+    if (str_raw[0] != '/') {
         if (i_dirfd == AT_FDCWD) {
             str_base = process_cwd(current_pid());
         } else {
@@ -146,7 +149,7 @@ int64_t path_at(int i_dirfd, uint64_t u_path, char *str_out)
         }
     }
     int64_t i_why = under_root(process_root(current_pid()), str_base,
-                               arr_raw, str_out);
+                               str_raw, str_out);
     return (i_why < 0) ? i_why : vfs_expand(str_out, false);
 }
 

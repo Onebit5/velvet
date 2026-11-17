@@ -274,6 +274,21 @@ pairs ending in ``AT_NULL``: ``AT_PHDR``, ``AT_PHENT``, ``AT_PHNUM``,
 the kernel's generator) and ``AT_EXECFN``. every other register is zero.
 the arguments and the environment together may be 128 KiB.
 
+a program built to be loaded anywhere is put at ``0x555555554000``. one
+that names a loader, as one linked against a shared libc does, is
+started by the loader, found by the name the program gives as the
+program was, from the caller's root and working directory, and put
+where mmap puts the first thing it maps. the auxiliary vector still
+describes the program: ``AT_PHDR`` and ``AT_ENTRY`` are where its
+headers and its entry are, and ``AT_BASE`` is how far the loader was
+moved, 0 for a program that names none. execve fails with ``-ENOENT``
+when nothing is at the loader's name, though the program is there,
+``-EACCES`` when the caller may not run it, ``-EIO`` when it is too
+short to hold an elf header, ``-ELIBBAD`` when it is no program this
+kernel loads, and ``-ENOEXEC`` when the name has no end. all of that is
+found out before the caller's memory is let go of, so a loader that
+will not do leaves the caller running what it was.
+
 the environment is the program's and nowhere else: the kernel copies it
 across an exec and keeps nothing, and ``/proc/<pid>/environ`` is read out
 of the program's own stack, where exec laid it.
