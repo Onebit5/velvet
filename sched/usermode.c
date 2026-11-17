@@ -362,6 +362,13 @@ static int64_t image_build(const char *str_path,
     if (i_why < 0) {
         return i_why;
     }
+    /*
+     * one built to be loaded anywhere goes where every such program goes,
+     * and all its headers said moves with it
+     */
+    if (prog.b_anywhere) {
+        elf_move(&prog, USER_PROGRAM_BASE - prog.u_low);
+    }
     struct aux_facts facts = {
         .u_entry = prog.u_entry, .u_phdr = prog.u_phdr,
         .u_phnum = prog.u_phnum, .i_uid = i_uid, .i_gid = i_gid,

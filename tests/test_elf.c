@@ -98,7 +98,7 @@ int main(int i_argc, char **pp_argv)
     reset(); img[4] = 1;                        refuses("is 32-bit");
     reset(); img[5] = 2;                        refuses("is big endian");
     reset(); *(uint16_t *)(img + 18) = 0x28;    refuses("is arm");
-    reset(); *(uint16_t *)(img + 16) = 3;       refuses("is a shared object");
+    reset(); *(uint16_t *)(img + 16) = 4;       refuses("is a core");
     reset(); *(uint16_t *)(img + 16) = 1;       refuses("is a relocatable object");
     reset(); *(uint16_t *)(img + 56) = 0;       refuses("has no program headers");
     reset(); *(uint16_t *)(img + 54) = 32;      refuses("has odd-sized phdrs");
@@ -189,6 +189,47 @@ int main(int i_argc, char **pp_argv)
         CHECK(segs[1].offset == 0x2000, "reading from the right place");
 
         CHECK(image.u_high == 0x403000, "and the break is past all of it");
+
+        /*
+         * one built to be loaded anywhere is linked at 0 and put
+         * somewhere else, and everything its headers say moves with it
+         */
+        *(uint16_t *)(img + 16) = 3;
+        *(uint64_t *)(img + 24) = 0x1234;
+        segment(0, 0x1000, 0x1000, 0x1000, 0x1000, 5);
+        segment(1, 0x2000, 0x2000, 0x400, 0x4c8, 6);
+        CHECK(elf_describe(img, img + 64, sizeof img, &image, &why)
+              && image.b_anywhere && image.u_low == 0x1000
+              && image.u_high == 0x3000,
+              "a program built to be loaded anywhere is described where "
+              "it was linked");
+        elf_move(&image, 0x555555554000ull);
+        CHECK(image.u_entry == 0x555555555234ull
+              && image.u_low == 0x555555555000ull
+              && image.u_high == 0x555555557000ull
+              && segs[1].vaddr == 0x555555556000ull
+              && segs[1].file_end == 0x555555556400ull
+              && segs[1].offset == 0x2000 && image.u_phdr == 0,
+              "and moved, its entry and its segments move with it, and "
+              "where in the file each is does not");
+        *(uint16_t *)(img + 16) = 2;
+        *(uint64_t *)(img + 24) = 0x400000;
+        segment(0, 0x1000, 0x400000, 0x1000, 0x1000, 5);
+        segment(1, 0x2000, 0x402000, 0x400, 0x4c8, 6);
+        CHECK(elf_describe(img, img + 64, sizeof img, &image, &why)
+              && !image.b_anywhere, "one built for its place is not");
+
+        /*
+         * a program naming a loader is not started without it: at its own
+         * entry it would run with nothing it was linked against there
+         */
+        uint8_t *p_interp = img + 64 + 2 * 56;
+        *(uint16_t *)(img + 56) = 3;
+        *(uint32_t *)p_interp = 3;      /* PT_INTERP */
+        CHECK(!elf_describe(img, img + 64, sizeof img, &image, &why),
+              "a program naming a loader is refused");
+        memset(p_interp, 0, 56);
+        *(uint16_t *)(img + 56) = 2;
 
         /* the headers in the first segment are where it puts them */
         segment(0, 0, 0x400000, 0x1000, 0x1000, 5);

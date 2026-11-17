@@ -123,11 +123,13 @@ inputs and outputs
 ------------------
 
 ``base/diskroot/`` is an *input*, copied onto the data disk by ``make
-run``. the boot tar the loader hands the kernel has no input directory: it
-is ``/init`` and the selftests under ``selftests/``, built from
-``tools/testing/selftests/``, and nothing else. it is the smallest medium
-the kernel can be booted and tested on, and a system built on the kernel
-packs its own.
+run``, with a program linked against musl's shared libc in ``bin/`` and
+musl's loader in ``lib/`` put beside it. the boot tar the loader hands
+the kernel has no input directory: it is ``/init``, the selftests under
+``selftests/`` and the checker in ``bin/``, built from
+``tools/testing/selftests/`` and ``tools/``, and nothing else. it is the
+smallest medium the kernel can be booted and tested on, and a system
+built on the kernel packs its own.
 
 everything under ``bin/`` and ``obj/`` is generated and comes back out with
 ``make clean``, the clone of philemon in ``obj/philemon/`` included. the

@@ -184,7 +184,11 @@ contributing new tests (details)
   ``bin/selftests/<subsystem>/<test>``, and packs it on the medium as
   ``selftests/<subsystem>/<test>``. a new directory is a new target.
   ``init.c``, above the directories, is not a test but the ``/init`` that
-  runs them, built the same way.
+  runs them, built the same way. ``dynamic.c`` is not one either: it is
+  linked against musl's shared libc and built to be loaded anywhere, and
+  goes on the disk, the root ``/init`` moves into, as ``/bin/dynamic``,
+  with musl's loader at ``/lib/ld-musl-x86_64.so.1``, the path it names
+  it by, for ``sched/loader`` to start.
 - a test defines ``main`` and includes ``../kselftest.h``. it ends with
   ``ksft_finished()``, which exits with the right status.
 - it is linked static against musl, so the whole of a libc is there. its

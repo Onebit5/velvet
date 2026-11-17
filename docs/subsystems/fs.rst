@@ -970,6 +970,14 @@ where to start executing. nothing here reads a file: exec reads the header
 and the program headers, and the rest is read a page at a time by the
 regions the segments become, as the program touches them.
 
+a program is built for one place, or built to be loaded anywhere, the way
+a libc's loader is and most programs are. the second kind is described at
+the addresses it was linked at, which start near zero, and moved whole to
+wherever exec puts it: every address in it is relative to every other, so
+the one number it is moved by is the only thing that changes. one that
+names a loader in its headers is refused, since started at its own entry
+it would run without the libc it was linked against.
+
 ``bool elf_check(p_header, u_size, p_phoff, p_phlen, pp_why)``
     the header, checked against the size of the file it came from: where
     the program headers are and how many bytes they take, or why it is
@@ -978,8 +986,14 @@ regions the segments become, as the program touches them.
 
 ``bool elf_describe(p_header, p_phdrs, u_size, p_out, pp_why)``
     the segments as whole pages, where each starts in the file and where
-    its bytes stop, the entry point, the end of the last segment, and
-    where the program headers are in memory for a libc to read.
+    its bytes stop, the entry point, the first and the end of the last
+    segment, where the program headers are in memory for a libc to read,
+    and whether it was built to be loaded anywhere.
+
+``void elf_move(p_image, u_by)``
+    a program built to be loaded anywhere put ``u_by`` above where it was
+    linked: its entry, its program headers and every segment moved with
+    it.
 
 
 the jbd2 interface

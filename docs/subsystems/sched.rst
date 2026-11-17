@@ -961,6 +961,11 @@ something.
 ``#define USER_STACK_TOP 0x0000700000000000ull``
     where user stacks go.
 
+``#define USER_PROGRAM_BASE 0x0000555555554000ull``
+    where a program built to be loaded anywhere is put: far above where
+    one built for one place is linked, and far below where mmap puts
+    things, its break growing up in between.
+
 ``#define EXEC_ARGS_MAX (128 * 1024)``
     how many bytes of arguments and environment, strings and pointers
     together, a program may be handed.
@@ -983,11 +988,12 @@ something.
 
 spawn and exec share everything up to the program being ready to run:
 the file opened and its headers read, a fresh address space with a
-region of the file for each segment, none of it read yet, a stack and
-the arguments on it. what differs is what goes around it. spawn
-makes a new process and a thread for it. exec swaps the new address
-space in for the caller's and destroys the old one, and only after
-everything that can fail has already succeeded, so a failed exec leaves
-the caller running exactly what it was. the ``execve`` call then
-rewrites the frame the syscall exit path restores, so the return from
-the call is the new program's first instruction.
+region of the file for each segment, where it was linked or, for a
+program built to be loaded anywhere, from ``USER_PROGRAM_BASE``, none of
+it read yet, a stack and the arguments on it. what differs is what goes
+around it. spawn makes a new process and a thread for it. exec swaps the
+new address space in for the caller's and destroys the old one, and
+only after everything that can fail has already succeeded, so a failed
+exec leaves the caller running exactly what it was. the ``execve`` call
+then rewrites the frame the syscall exit path restores, so the return
+from the call is the new program's first instruction.

@@ -16,7 +16,9 @@
 #endif
 
 #define ET_EXEC 2
+#define ET_DYN  3
 #define PT_LOAD 1
+#define PT_INTERP 3
 #define PT_PHDR 6
 
 #define PF_X 1
@@ -87,8 +89,12 @@ bool elf_check(const void *p_header, uint64_t u_size, uint64_t *p_phoff,
         *pp_why = "not x86-64";
         return false;
     }
-    if (h->type != ET_EXEC) {
-        *pp_why = "not a static executable (the kernel cannot relocate)";
+    /*
+     * a program built for one place, or one built to be loaded anywhere,
+     * which a shared library is too, a libc's loader among them
+     */
+    if (h->type != ET_EXEC && h->type != ET_DYN) {
+        *pp_why = "not a program: an object file, or a core";
         return false;
     }
     if (h->phnum == 0) {
@@ -159,8 +165,19 @@ bool elf_describe(const void *p_header, const void *p_phdrs, uint64_t u_size,
     p_out->u_entry = h->entry;
     p_out->u_phnum = h->phnum;
     p_out->u_phdr = headers_at(h, ph);
+    p_out->b_anywhere = h->type == ET_DYN;
+    p_out->u_low = ~0ull;
 
     for (uint16_t i = 0; i < h->phnum; i++) {
+        /*
+         * a program that names a loader is the loader's to start, and
+         * started at its own entry it runs without the libc it was
+         * linked against having been loaded at all
+         */
+        if (ph[i].type == PT_INTERP) {
+            *pp_why = "it names a loader, which this kernel does not start";
+            return false;
+        }
         if (ph[i].type != PT_LOAD || ph[i].memsz == 0) {
             continue;
         }
@@ -243,6 +260,9 @@ bool elf_describe(const void *p_header, const void *p_phdrs, uint64_t u_size,
         if (end > p_out->u_high) {
             p_out->u_high = end;
         }
+        if (start < p_out->u_low) {
+            p_out->u_low = start;
+        }
     }
 
     if (p_out->sz_segs == 0) {
@@ -250,4 +270,19 @@ bool elf_describe(const void *p_header, const void *p_phdrs, uint64_t u_size,
         return false;
     }
     return true;
+}
+
+void elf_move(struct elf_image *p_image, uint64_t u_by)
+{
+    p_image->u_entry += u_by;
+    if (p_image->u_phdr != 0) {
+        p_image->u_phdr += u_by;
+    }
+    p_image->u_low += u_by;
+    p_image->u_high += u_by;
+    for (size_t sz_at = 0; sz_at < p_image->sz_segs; sz_at++) {
+        p_image->arr_segs[sz_at].vaddr += u_by;
+        p_image->arr_segs[sz_at].end += u_by;
+        p_image->arr_segs[sz_at].file_end += u_by;
+    }
 }

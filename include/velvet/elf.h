@@ -2,7 +2,7 @@
 /*
  * include/velvet/elf.h
  * Jose A. Perez de Azpillaga <azpijr@gmail.com>, 2026
- * just enough elf64 to load a static executable.
+ * just enough elf64 to load a program, built for one place or for any.
  */
 
 /* the design notes for elf.h are in docs/subsystems/fs.rst */
@@ -41,12 +41,17 @@ struct elf_segment {
     uint64_t flags;         /* the PTE flags a page here should have */
 };
 
-/* a program as its headers describe it, at the addresses it was linked at */
+/*
+ * a program as its headers describe it, at the addresses it was linked
+ * at, until elf_move puts it somewhere else
+ */
 struct elf_image {
     uint64_t u_entry;           /* where it starts */
     uint64_t u_phdr;            /* where its headers are in memory, or 0 */
     uint64_t u_phnum;
+    uint64_t u_low;             /* the first page of any segment */
     uint64_t u_high;            /* past the last page of any segment */
+    bool b_anywhere;            /* built to be loaded at any address */
     size_t sz_segs;
     struct elf_segment arr_segs[ELF_SEGMENTS_MAX];
 };
@@ -66,5 +71,11 @@ bool elf_check(const void *p_header, uint64_t u_size, uint64_t *p_phoff,
  */
 bool elf_describe(const void *p_header, const void *p_phdrs, uint64_t u_size,
                   struct elf_image *p_out, const char **pp_why);
+
+/*
+ * a program built to be loaded anywhere put u_by further up than it was
+ * linked: every address its headers gave, moved with it
+ */
+void elf_move(struct elf_image *p_image, uint64_t u_by);
 
 #endif

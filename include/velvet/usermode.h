@@ -21,6 +21,13 @@
 #define USER_STACK_TOP 0x0000700000000000ull
 
 /*
+ * where a program built to be loaded anywhere is put: far above where a
+ * program built for one place is linked, and far below where mmap puts
+ * things, its break growing up in between
+ */
+#define USER_PROGRAM_BASE 0x0000555555554000ull
+
+/*
  * the most a program may be started with, its arguments and environment
  * together, strings and the pointers to them, as they will lie on its
  * stack

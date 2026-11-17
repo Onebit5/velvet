@@ -296,6 +296,14 @@ SELFTEST_INIT := $(BINDIR)/init
 # sits in bin/ on the medium, where /init does not look for tests
 MACHINE_FSCK := $(BINDIR)/bin/fsckext4
 
+# and a program linked against musl's shared library, built to be loaded
+# anywhere, with the loader it names, musl's own: the way most programs
+# are made, and started from sched/loader. they go on the disk, the root
+# /init moves into, at the paths a system keeps them at, since the
+# loader is named by its whole path from the root
+MACHINE_LOADER := $(BINDIR)/lib/ld-musl-x86_64.so.1
+MACHINE_DYNAMIC := $(BINDIR)/bin/dynamic
+
 # what goes on the medium: init, the checker, those tests and the
 # directories they are in, named one by one rather than the whole of
 # bin/selftests/, so a binary left behind by a test that has since gone
@@ -349,6 +357,23 @@ $(MACHINE_FSCK): tools/fsckext4.c tools/fsck.c tools/fsck.h \
 	$(MUSL_GCC) -std=gnu11 -Wall -Wextra -O1 -g $(MACHINE_CPU) \
 		-DVELVET_HOSTED -Iinclude $(SELFTEST_LDFLAGS) \
 		tools/fsckext4.c tools/fsck.c -o $@
+
+# where musl's own files are, read out of the link musl-gcc would make,
+# which names its startfiles: gcc's -print-file-name answers with the
+# host libc's. its loader is its shared library, under the name every
+# program linked against it names
+MUSL_LIB = $(patsubst %/Scrt1.o,%,$(filter %/Scrt1.o,$(subst ",, \
+             $(shell $(MUSL_GCC) -\#\#\# -x c /dev/null -o /dev/null 2>&1))))
+
+$(MACHINE_LOADER): GNUmakefile
+	@mkdir -p $(@D)
+	cp -L $(MUSL_LIB)/libc.so $@
+
+$(MACHINE_DYNAMIC): $(SELFTEST_DIR)/dynamic.c $(SELFTEST_DIR)/kselftest.h
+	@mkdir -p $(@D)
+	$(MUSL_GCC) $(filter-out -fno-pie,$(SELFTEST_CFLAGS)) -fpie -pie \
+		-Wl,--dynamic-linker=/lib/ld-musl-x86_64.so.1 \
+		-Wl,--build-id=none $< -o $@
 
 # the makefile too, since what the archive is made from is written here,
 # and a change to that is a change make cannot otherwise see
@@ -431,11 +456,12 @@ run: $(BOOTIMG) $(DISK)
 		$(QEMU_EXTRA)
 
 # the disk, which is a real filesystem rather than an archive: built out
-# of whatever is in base/diskroot/, and attached to qemu as a second
-# drive. it is deliberately NOT rebuilt by `make run` once it exists:
-# the whole point is that what you write to it stays written, and
-# regenerating it every boot would quietly undo that. `make disk` starts
-# over when you want a clean one.
+# of whatever is in base/diskroot/, with the program linked against
+# musl's shared library and its loader beside it, and attached to qemu
+# as a second drive. it is deliberately NOT rebuilt by `make run` once
+# it exists: the whole point is that what you write to it stays written,
+# and regenerating it every boot would quietly undo that. `make disk`
+# starts over when you want a clean one.
 #
 # three partitions: the system, somewhere to *work* that is not the
 # system, and a fat32 one, so the partition scan has something of another
@@ -445,10 +471,16 @@ run: $(BOOTIMG) $(DISK)
 # 8 MiB of filesystem inside 24 MiB of partition is exactly the situation
 # the resize call exists for, so `make run` boots a machine with
 # something to grow
-$(DISK): $(T)/mkext4 tools/mkfat.py tools/mkdisk.py $(shell find base/diskroot -type f 2>/dev/null)
+$(DISK): $(T)/mkext4 tools/mkfat.py tools/mkdisk.py $(MACHINE_LOADER) \
+         $(MACHINE_DYNAMIC) $(shell find base/diskroot -type f 2>/dev/null)
+	@rm -rf $(BINDIR)/diskroot
+	@cp -r base/diskroot $(BINDIR)/diskroot
+	@mkdir -p $(BINDIR)/diskroot/bin $(BINDIR)/diskroot/lib
+	@install -m 0755 $(MACHINE_DYNAMIC) $(BINDIR)/diskroot/bin/
+	@install -m 0755 $(MACHINE_LOADER) $(BINDIR)/diskroot/lib/
 	@mkdir -p $(BINDIR)/workroot
 	@echo 'somewhere to work that is not the system' > $(BINDIR)/workroot/readme.txt
-	@$(T)/mkext4 $(BINDIR)/diskroot.img base/diskroot 32 >/dev/null
+	@$(T)/mkext4 $(BINDIR)/diskroot.img $(BINDIR)/diskroot 32 >/dev/null
 	@$(T)/mkext4 $(BINDIR)/work.img $(BINDIR)/workroot 8 work >/dev/null
 	@dd if=/dev/zero of=$(BINDIR)/work.img bs=1M count=0 seek=24 2>/dev/null
 	@python3 tools/mkfat.py  $(BINDIR)/compendium.img base/diskroot 24 >/dev/null
