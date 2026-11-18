@@ -289,6 +289,17 @@ kernel loads, and ``-ENOEXEC`` when the name has no end. all of that is
 found out before the caller's memory is let go of, so a loader that
 will not do leaves the caller running what it was.
 
+a file whose first line starts with ``#!`` is a script, run by the
+program the line names, found the way a loader is. the program is
+handed the name, the one argument the line may give after a blank,
+blanks inside it kept, then the script's name as the caller gave it and
+the rest of the caller's arguments, its first one dropped. a script may
+name a script, five deep, and the sixth is ``-ELOOP``. a line naming
+nothing, or one whose name runs past the first 256 bytes, is
+``-ENOEXEC``; an argument running past them is cut there. the process
+is named for the script, ``/proc/<pid>/exe`` is the program at the end,
+and ``AT_EXECFN``, for any program, is the name the caller gave.
+
 the environment is the program's and nowhere else: the kernel copies it
 across an exec and keeps nothing, and ``/proc/<pid>/environ`` is read out
 of the program's own stack, where exec laid it.

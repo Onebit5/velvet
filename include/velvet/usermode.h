@@ -61,10 +61,13 @@ struct user_entry {
 /*
  * the calling process becomes the program at `str_path`, keeping its
  * pid, descriptors, working directory and uid, with its caught signals
- * back to their defaults. 0 with `p_out` saying where the new program
- * starts, or minus an errno with nothing changed at all
+ * back to their defaults. `str_name` is what it was asked for by, which
+ * it is named for, and which a script's program is handed. 0 with
+ * `p_out` saying where the new program starts, or minus an errno with
+ * nothing changed at all
  */
-int64_t user_exec(const char *str_path, const struct exec_args *p_args,
+int64_t user_exec(const char *str_path, const char *str_name,
+                  const struct exec_args *p_args,
                   struct user_entry *p_out);
 
 /*

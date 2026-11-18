@@ -8,7 +8,7 @@
  * of its own here, and it loads the other, which says what it found.
  * then the program is started by its own name, which the kernel starts
  * the loader it names for, and copies of it name other loaders, there
- * and not, runnable and not, programs and not.
+ * and not, runnable and not, programs and not. last, it runs a script.
  */
 
 #include "../kselftest.h"
@@ -21,6 +21,9 @@
 /* a copy of the program naming another loader: one as long as LOADER */
 #define RENAMED   "/tmp/loader-renamed"
 #define ELSEWHERE "/tmp/ld-musl-x86_64.so.1"
+
+/* and a script the program runs */
+#define SCRIPT "/tmp/loader-script"
 
 /* room for the whole of the loader, the larger of the two */
 static char s_arr_file[2 << 20];
@@ -152,7 +155,7 @@ int main(void)
     static char s_arr_out[8192];
 
     ksft_print_header();
-    ksft_set_plan(15);
+    ksft_set_plan(16);
 
     char *arr_alone[] = { LOADER, NULL };
     int i_status = run(LOADER, arr_alone, s_arr_out, sizeof s_arr_out);
@@ -239,7 +242,22 @@ int main(void)
     ksft_test_result(b_ok && refused(i_status, s_arr_out, ENOEXEC),
                      "and a name that does not end is no program's, "
                      "ENOEXEC\n");
+
+    snprintf(s_arr_file, sizeof s_arr_file, "#!" PROGRAM " one\n");
+    b_ok = put(SCRIPT, strlen(s_arr_file), 0755);
+    char *arr_script[] = { SCRIPT, "two", NULL };
+    i_status = run(SCRIPT, arr_script, s_arr_out, sizeof s_arr_out);
+    b_ok = b_ok && ksft_exited(i_status, 0)
+           && says(s_arr_out, "arg " PROGRAM) && says(s_arr_out, "arg one")
+           && says(s_arr_out, "arg " SCRIPT) && says(s_arr_out, "arg two")
+           && ends(s_arr_out, "loader", LOADER);
+    if (!b_ok) {
+        tell(i_status, s_arr_out);
+    }
+    ksft_test_result(b_ok, "a script whose program names a loader is run "
+                     "by the two of them\n");
     unlink(RENAMED);
     unlink(ELSEWHERE);
+    unlink(SCRIPT);
     ksft_finished();
 }

@@ -285,6 +285,7 @@ struct user_image {
     struct addrspace *p_space;
     uint64_t u_entry;
     uint64_t u_stack_top;
+    const char *str_exe;        /* the program's path, held by the space */
 };
 
 /*
@@ -340,14 +341,40 @@ static int64_t program_open(const char *str_path, struct file **pp_file,
 }
 
 /*
- * the loader the program in p_file names, found the way the program was,
- * from the caller's root and working directory with the last link
- * followed, and opened the way it was. a name with no end is no
+ * a program another names, the loader a program names or the program a
+ * script names, found the way the first was: from the caller's root and
+ * working directory, the last link followed, into PATH_MAX of str_path.
+ * 0, or ENOENT when nothing is there, EACCES when the caller may not run
+ * it, or what else the lookup says
+ */
+static int64_t program_find(const char *str_name, char *str_path,
+                            struct vfs_file *p_node)
+{
+    /*
+     * an empty name, which a script's line or a program's headers can
+     * give and no path from ring 3 can, names where the caller stands: a
+     * directory, so nothing to run
+     */
+    if (str_name[0] == '\0') {
+        return -EACCES;
+    }
+    int64_t i_why = path_from(AT_FDCWD, str_name, str_path);
+    if (i_why == 0) {
+        i_why = path_lookup(str_path, true, p_node);
+    }
+    if (i_why == 0 && (p_node->is_dir || !may_access(p_node, X_OK))) {
+        i_why = -EACCES;
+    }
+    return i_why;
+}
+
+/*
+ * the loader the program in p_file names, found as program_find finds
+ * one and opened the way the program was. a name with no end is no
  * program's, ENOEXEC; nothing at it is ENOENT, though the program is
- * there; one the caller may not run is EACCES; one too short to hold a
- * header is EIO, since its header cannot be read; one that is no
- * program, or none this kernel loads, is ELIBBAD, a library that is not
- * one
+ * there; one too short to hold a header is EIO, since its header cannot
+ * be read; one that is no program, or none this kernel loads, is
+ * ELIBBAD, a library that is not one
  */
 static int64_t loader_open(struct file *p_file,
                            const struct elf_image *p_prog,
@@ -361,22 +388,16 @@ static int64_t loader_open(struct file *p_file,
         return -ENOMEM;
     }
     char arr_path[PATH_MAX];
+    struct vfs_file node;
     int64_t i_why = -ENOEXEC;
     *pp_error = "the name of its loader does not end";
     if (vfs_read_file(p_file, p_prog->u_interp_offset, str_name,
                       p_prog->sz_interp) == (int64_t)p_prog->sz_interp
         && str_name[p_prog->sz_interp - 1] == '\0') {
         *pp_error = "the loader it names is not there to run";
-        i_why = path_from(AT_FDCWD, str_name, arr_path);
+        i_why = program_find(str_name, arr_path, &node);
     }
     kfree(str_name);
-    struct vfs_file node;
-    if (i_why == 0) {
-        i_why = path_lookup(arr_path, true, &node);
-    }
-    if (i_why == 0 && (node.is_dir || !may_access(&node, X_OK))) {
-        i_why = -EACCES;
-    }
     if (i_why == 0 && node.size < ELF_HEADER_SIZE) {
         *pp_error = "the loader it names is too short to be one";
         i_why = -EIO;
@@ -386,6 +407,176 @@ static int64_t loader_open(struct file *p_file,
     }
     i_why = program_open(arr_path, pp_loader, p_loader, pp_error);
     return (i_why == -ENOEXEC) ? -ELIBBAD : i_why;
+}
+
+/* how much of a file exec reads to know whether it is a script */
+#define SCRIPT_HEAD 256
+
+/* how many scripts may name the next before the last is refused */
+#define SCRIPT_DEPTH 5
+
+static bool blank(char c_at)
+{
+    return c_at == ' ' || c_at == '\t';
+}
+
+/*
+ * the first line of the file at str_path into p_line, SCRIPT_HEAD + 1
+ * bytes, when it starts with "#!": the program it names, and the one
+ * argument it may give after a blank, everything to the end of the line
+ * with the blanks around it dropped. 1 for a script, 0 for a file that
+ * is not one, which is left for the program reader to say what it is,
+ * and ENOEXEC for a line naming nothing, or one whose name runs past the
+ * bytes read, which would name something else cut short. an argument
+ * running past them is cut there, since its program can read the line
+ * again for itself. a line that does not end before the file does names
+ * what is up to the file's end, which for "#!" alone is the empty name
+ */
+static int64_t script_line(const char *str_path, char *p_line,
+                           const char **pp_prog, const char **pp_arg)
+{
+    struct vfs_file node;
+    struct file *p_file = (vfs_open(str_path, &node) && !node.is_dir)
+                          ? vfs_open_file(&node, FILE_READ) : NULL;
+    int64_t i_len = (p_file != NULL)
+                    ? vfs_read_file(p_file, 0, p_line, SCRIPT_HEAD) : 0;
+    file_put(p_file);
+    if (i_len < 2 || p_line[0] != '#' || p_line[1] != '!') {
+        return 0;
+    }
+    memset(p_line + i_len, 0, SCRIPT_HEAD + 1 - (size_t)i_len);
+
+    char *p_last = p_line + SCRIPT_HEAD - 1;
+    char *p_end = memchr(p_line, '\n', SCRIPT_HEAD);
+    if (p_end == NULL) {
+        char *p_at = p_line + 2;
+        while (p_at < p_last && blank(*p_at)) {
+            p_at++;
+        }
+        while (p_at < p_last && !blank(*p_at) && *p_at != '\0') {
+            p_at++;
+        }
+        if (p_at == p_last) {
+            return -ENOEXEC;
+        }
+        p_end = p_last;
+    }
+    while (blank(p_end[-1])) {
+        p_end--;
+    }
+    *p_end = '\0';
+
+    char *p_prog = p_line + 2;
+    while (blank(*p_prog)) {
+        p_prog++;
+    }
+    if (p_prog == p_end) {
+        return -ENOEXEC;
+    }
+    char *p_sep = p_prog;
+    while (*p_sep != '\0' && !blank(*p_sep)) {
+        p_sep++;
+    }
+    *pp_prog = p_prog;
+    *pp_arg = NULL;
+    if (*p_sep != '\0') {
+        *p_sep++ = '\0';
+        while (blank(*p_sep)) {
+            p_sep++;
+        }
+        *pp_arg = (*p_sep != '\0') ? p_sep : NULL;
+    }
+    return 1;
+}
+
+/*
+ * the scripts an exec goes through on the way to a program, and what
+ * that program is started with: each script's line, and the arguments
+ */
+struct script_chain {
+    char arr_lines[SCRIPT_DEPTH + 1][SCRIPT_HEAD + 1];
+    const char *arr_progs[SCRIPT_DEPTH + 1];
+    const char *arr_args[SCRIPT_DEPTH + 1];
+    size_t sz_scripts;
+    char arr_path[PATH_MAX];        /* the program, at last */
+    struct exec_args args;
+};
+
+/*
+ * the program str_path comes to, once every script on the way has named
+ * the next, into p_chain: its path in arr_path, and its arguments in
+ * args. a script is run by the program its line names, which is handed
+ * the line's name and argument, the name the script was asked for by,
+ * str_name for the first and the line before's name after that, and the
+ * rest of the arguments, so each line goes before the one that named
+ * it. 0, or why not: what finding a program says, ELOOP for a script
+ * one deeper than SCRIPT_DEPTH, ENOEXEC for a line naming nothing
+ */
+static int64_t script_follow(const char *str_path, const char *str_name,
+                             const struct exec_args *p_args,
+                             struct script_chain *p_chain,
+                             const char **pp_error)
+{
+    strncpy(p_chain->arr_path, str_path, PATH_MAX - 1);
+    p_chain->arr_path[PATH_MAX - 1] = '\0';
+    p_chain->sz_scripts = 0;
+    p_chain->args = *p_args;
+    for (;;) {
+        size_t sz_at = p_chain->sz_scripts;
+        int64_t i_is = script_line(p_chain->arr_path,
+                                   p_chain->arr_lines[sz_at],
+                                   &p_chain->arr_progs[sz_at],
+                                   &p_chain->arr_args[sz_at]);
+        if (i_is < 0) {
+            *pp_error = "a script that names no program";
+            return i_is;
+        }
+        if (i_is == 0) {
+            break;
+        }
+        struct vfs_file node;
+        *pp_error = "the program a script names is not there to run";
+        int64_t i_why = program_find(p_chain->arr_progs[sz_at],
+                                     p_chain->arr_path, &node);
+        if (i_why < 0) {
+            return i_why;
+        }
+        if (++p_chain->sz_scripts > SCRIPT_DEPTH) {
+            *pp_error = "scripts naming scripts, too deep";
+            return -ELOOP;
+        }
+    }
+    if (p_chain->sz_scripts == 0) {
+        return 0;
+    }
+
+    /* the first argument, the script's own name, gives way to the line */
+    size_t sz_skip = (p_args->sz_argc > 0) ? 1 : 0;
+    size_t sz_argc = p_args->sz_argc - sz_skip + 1;
+    for (size_t sz_at = 0; sz_at < p_chain->sz_scripts; sz_at++) {
+        sz_argc += (p_chain->arr_args[sz_at] != NULL) ? 2 : 1;
+    }
+    const char **pp_argv = kmalloc((sz_argc + 1) * sizeof *pp_argv);
+    if (pp_argv == NULL) {
+        *pp_error = "no memory for a script's arguments";
+        return -ENOMEM;
+    }
+    size_t sz_out = 0;
+    for (size_t sz_at = p_chain->sz_scripts; sz_at-- > 0; ) {
+        pp_argv[sz_out++] = p_chain->arr_progs[sz_at];
+        if (p_chain->arr_args[sz_at] != NULL) {
+            pp_argv[sz_out++] = p_chain->arr_args[sz_at];
+        }
+    }
+    pp_argv[sz_out++] = str_name;
+    for (size_t sz_at = sz_skip; sz_at < p_args->sz_argc; sz_at++) {
+        pp_argv[sz_out++] = p_args->pp_argv[sz_at];
+    }
+    pp_argv[sz_out] = NULL;
+    p_chain->args.pp_argv = pp_argv;
+    p_chain->args.sz_argc = sz_argc;
+    p_chain->args.p_strings = NULL;
+    return 0;
 }
 
 /* every segment of p_image a region of p_file in p_space, or false */
@@ -403,17 +594,21 @@ static bool segments_add(struct addrspace *p_space,
     return b_placed;
 }
 
-static int64_t image_build(const char *str_path,
-                           const struct exec_args *p_args, int i_uid,
-                           int i_gid, struct user_image *p_out,
-                           const char **pp_error)
+/*
+ * the program at str_path made ready to run, started with p_args by
+ * whoever asked for it by str_name, which is what AT_EXECFN says
+ */
+static int64_t image_load(const char *str_path, const char *str_name,
+                          const struct exec_args *p_args, int i_uid,
+                          int i_gid, struct user_image *p_out,
+                          const char **pp_error)
 {
     /*
      * the stack has to hold all of it before the program has run an
      * instruction, so what does not fit is refused before anything is
      * read
      */
-    size_t sz_need = stack_need(p_args, str_path);
+    size_t sz_need = stack_need(p_args, str_name);
     size_t sz_eager = (sz_need + PAGE_SIZE - 1) / PAGE_SIZE + 1;
     if (sz_eager < USER_STACK_EAGER) {
         sz_eager = USER_STACK_EAGER;
@@ -528,12 +723,41 @@ static int64_t image_build(const char *str_path,
 
     uint8_t *p_top_k = (uint8_t *)pmm_phys_to_virt(stack_phys)
                        + sz_eager * PAGE_SIZE;
-    p_out->u_stack_top = build_stack(p_top_k, p_args, str_path, &facts,
+    p_out->u_stack_top = build_stack(p_top_k, p_args, str_name, &facts,
                                      space);
     space->u_stack_start = p_out->u_stack_top;
     p_out->p_space = space;
     p_out->u_entry = (prog.sz_interp != 0) ? loader.u_entry : prog.u_entry;
+    p_out->str_exe = p_file->arr_path;
     return 0;
+}
+
+/*
+ * the program at str_path, or the one it comes to through the scripts on
+ * the way, made ready to run, with the arguments the scripts make of
+ * p_args. str_name is what it was asked for by
+ */
+static int64_t image_build(const char *str_path, const char *str_name,
+                           const struct exec_args *p_args, int i_uid,
+                           int i_gid, struct user_image *p_out,
+                           const char **pp_error)
+{
+    struct script_chain *p_chain = kmalloc(sizeof *p_chain);
+    if (p_chain == NULL) {
+        *pp_error = "no memory to read the program's first line";
+        return -ENOMEM;
+    }
+    int64_t i_why = script_follow(str_path, str_name, p_args, p_chain,
+                                  pp_error);
+    if (i_why == 0) {
+        i_why = image_load(p_chain->arr_path, str_name, &p_chain->args,
+                           i_uid, i_gid, p_out, pp_error);
+    }
+    if (p_chain->args.pp_argv != p_args->pp_argv) {
+        kfree((void *)p_chain->args.pp_argv);
+    }
+    kfree(p_chain);
+    return i_why;
 }
 
 /*
@@ -554,7 +778,7 @@ int user_spawn(const char *path, const struct exec_args *p_args,
                const char **error)
 {
     struct user_image img;
-    if (image_build(path, p_args, uid, uid, &img, error) < 0) {
+    if (image_build(path, path, p_args, uid, uid, &img, error) < 0) {
         return 0;
     }
     struct addrspace *space = img.p_space;
@@ -581,7 +805,7 @@ int user_spawn(const char *path, const struct exec_args *p_args,
         process_set_cwd(pid, cwd);
     }
     if (pid != 0) {
-        process_set_exe(pid, path);
+        process_set_exe(pid, img.str_exe);
     }
     struct file *p_console = (pid != 0) ? tty_open(0, FILE_READ | FILE_WRITE)
                                         : NULL;
@@ -685,8 +909,8 @@ static void forget_clear_tid(int i_tid)
     }
 }
 
-int64_t user_exec(const char *str_path, const struct exec_args *p_args,
-                  struct user_entry *p_out)
+int64_t user_exec(const char *str_path, const char *str_name,
+                  const struct exec_args *p_args, struct user_entry *p_out)
 {
     struct thread *p_me = sched_current();
     if (p_me == NULL || p_me->pid == 0 || p_me->space == NULL) {
@@ -699,8 +923,8 @@ int64_t user_exec(const char *str_path, const struct exec_args *p_args,
     /* everything that can fail, done while the old program is still whole */
     struct user_image img;
     const char *str_why = NULL;
-    int64_t i_why = image_build(str_path, p_args, i_uid, i_gid, &img,
-                                &str_why);
+    int64_t i_why = image_build(str_path, str_name, p_args, i_uid, i_gid,
+                                &img, &str_why);
     if (i_why < 0) {
         return i_why;
     }
@@ -724,9 +948,9 @@ int64_t user_exec(const char *str_path, const struct exec_args *p_args,
                 process_thread_signals(p_me->i_tid));
     process_vfork_done(p_me->pid);
 
-    process_set_name(p_me->pid, last_part(str_path));
-    thread_set_name(p_me, last_part(str_path));
-    process_set_exe(p_me->pid, str_path);
+    process_set_name(p_me->pid, last_part(str_name));
+    thread_set_name(p_me, last_part(str_name));
+    process_set_exe(p_me->pid, img.str_exe);
 
     p_out->u_entry = img.u_entry;
     p_out->u_stack_top = img.u_stack_top;

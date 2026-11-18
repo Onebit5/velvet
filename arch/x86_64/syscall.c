@@ -680,13 +680,18 @@ static int64_t do_clone(struct pt_regs *p_regs)
 /*
  * the caller becomes another program. what it asked for is copied in
  * before anything else happens, since the memory it is in is about to
- * stop existing
+ * stop existing, and the name it asked by is kept as well as where it
+ * leads: the program is named for it, and a script hands it on
  */
 static int64_t do_execve(struct pt_regs *p_regs)
 {
+    char arr_name[PATH_MAX];
     char arr_path[PATH_MAX];
     struct vfs_file node;
-    int64_t i_why = path_at(AT_FDCWD, A0, arr_path);
+    int64_t i_why = strncpy_from_user(arr_name, A0, sizeof arr_name);
+    if (i_why >= 0) {
+        i_why = path_from(AT_FDCWD, arr_name, arr_path);
+    }
     if (i_why == 0) {
         i_why = path_lookup(arr_path, true, &node);
     }
@@ -703,7 +708,7 @@ static int64_t do_execve(struct pt_regs *p_regs)
         return i_why;
     }
     struct user_entry e;
-    i_why = user_exec(arr_path, &args, &e);
+    i_why = user_exec(arr_path, arr_name, &args, &e);
     exec_args_free(&args);
     if (i_why < 0) {
         return i_why;

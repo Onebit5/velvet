@@ -980,15 +980,18 @@ something.
     0, 1 and 2, and return its pid, or 0 with ``*error`` set. the kernel
     starts ``/init`` this way, and nothing else.
 
-``int64_t user_exec(const char *str_path, const struct exec_args *p_args, struct user_entry *p_out);``
+``int64_t user_exec(str_path, str_name, p_args, p_out)``
     the calling process becomes the program at ``str_path``, keeping its
     pid, descriptors, working directory and uid, with its caught signals
-    back to their defaults. 0 with ``p_out`` saying where the new program
-    starts, or minus an errno with nothing changed at all
+    back to their defaults. ``str_name`` is what it was asked for by,
+    which it is named for and a script's program is handed. 0 with
+    ``p_out`` saying where the new program starts, or minus an errno with
+    nothing changed at all
 
 spawn and exec share everything up to the program being ready to run:
-the file opened and its headers read, a fresh address space with a
-region of the file for each segment, where it was linked or, for a
+the scripts on the way followed, each to the program its first line
+names, the file opened and its headers read, a fresh address space with
+a region of the file for each segment, where it was linked or, for a
 program built to be loaded anywhere, from ``USER_PROGRAM_BASE``, and the
 same of its loader's from ``MMAP_BASE`` when it names one, which is
 where it starts, none of it read yet, a stack and the arguments on it.
