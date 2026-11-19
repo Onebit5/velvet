@@ -206,7 +206,9 @@ number  name               where                  notes
 269     faccessat          fs/open.c
 270     pselect6           fs/select.c            under its own mask
 271     ppoll              fs/select.c            under its own mask
-273     set_robust_list    sched/sys.c            accepted, and not walked
+273     set_robust_list    sched/sys.c            walked as a thread ends
+274     get_robust_list    sched/sys.c            the caller's own threads, or
+                                                  any for root
 288     accept4            net/sockets.c
 292     dup3               fs/fcntl.c
 293     pipe2              fs/fcntl.c
@@ -339,12 +341,10 @@ these answer, but less than they will:
   ``CLONE_DETACHED`` are taken and mean nothing.
 - futex waits and wakes, requeues, and does both with a bitset.
   ``FUTEX_WAKE_OP`` and the priority inheriting calls are ``-ENOSYS``,
-  since nothing here keeps a priority. every word is known by its
-  address in the space that waits on it, so ``FUTEX_PRIVATE_FLAG``
-  changes nothing, and a word in memory mapped shared is no different: a
-  wake from another process mapping it does not reach the waiter. a wait
-  with a time limit that a signal ends with no handler is made again
-  with the whole of its timespec.
+  since nothing here keeps a priority, and a robust list's priority
+  inheriting mutexes are marked as their owner gone but nobody is woken
+  for them. a wait with a time limit that a signal ends with no handler
+  is made again with the whole of its timespec.
 - a file on a filesystem with no inodes, fat32, has no pages to share,
   since nothing says two opens of it are one file. mapped shared it is
   mapped as a copy through a descriptor that may not write it, which

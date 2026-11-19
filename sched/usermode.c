@@ -939,6 +939,7 @@ int64_t user_exec(const char *str_path, const char *str_name,
         addrspace_put(img.p_space);
         return -EINTR;
     }
+    futex_robust_release();
     forget_clear_tid(p_me->i_tid);
 
     struct addrspace *p_old = sched_swap_space(p_me, img.p_space);

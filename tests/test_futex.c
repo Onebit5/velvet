@@ -26,6 +26,9 @@ void panic(const char *fmt, ...)
 }
 
 #include <velvet/futex.h>
+#include <velvet/addrspace.h>
+#include <velvet/process.h>
+#include <velvet/shared.h>
 #include <velvet/syscalls.h>
 #include <velvet/sched.h>
 #include <velvet/thread.h>
@@ -130,6 +133,46 @@ static uint32_t s_u_other;
 
 #define ADDR(x) ((uint64_t)(uintptr_t)&(x))
 
+/*
+ * memory mapped shared, as the test has it: s_arr_shared is one set of
+ * shared pages, which space one sees where it is and space two
+ * SHARED_IN_TWO further up, a word in it being one word to both
+ */
+static uint32_t s_arr_shared[4];
+static const int s_i_set = 0;
+#define SHARED_IN_TWO 0x10000
+
+void addrspace_futex_key(struct addrspace *p_as, uint64_t u_addr,
+                         const void **pp_object, uint64_t *p_offset,
+                         struct shared_pages **pp_held)
+{
+    uint64_t u_base = ADDR(s_arr_shared)
+                      + ((p_as == s_p_two) ? SHARED_IN_TWO : 0);
+    *pp_object = p_as;
+    *p_offset = u_addr;
+    *pp_held = NULL;
+    if (u_addr >= u_base && u_addr < u_base + sizeof s_arr_shared) {
+        *pp_object = &s_i_set;
+        *p_offset = u_addr - u_base;
+    }
+}
+void shared_put(struct shared_pages *p_set)
+{
+    (void)p_set;
+}
+
+/* the one thread's half of its process, which keeps its robust list */
+static struct task s_task = { .i_tid = 9 };
+struct task *process_lock_task(int i_tid, uint64_t *p_flags)
+{
+    *p_flags = 0;
+    return (i_tid == s_task.i_tid) ? &s_task : NULL;
+}
+void process_unlock_slot(uint64_t u_flags)
+{
+    (void)u_flags;
+}
+
 static int64_t futex(uint64_t u_addr, int i_op, uint32_t u_val,
                      uint64_t u_timeout, uint64_t u_addr2, uint32_t u_val3)
 {
@@ -164,6 +207,38 @@ static void wake_by_none(void)
 static void signal_comes(void)
 {
     s_b_signal = true;
+}
+
+static void wake_shared_from_two(void)
+{
+    s_me.space = s_p_two;
+    s_i_then = futex(ADDR(s_arr_shared[1]) + SHARED_IN_TWO, FUTEX_WAKE, 1,
+                     0, 0, 0);
+    s_me.space = s_p_one;
+}
+
+static void wake_shared_privately(void)
+{
+    s_me.space = s_p_two;
+    s_i_then = futex(ADDR(s_arr_shared[1]) + SHARED_IN_TWO,
+                     FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, 0, 0, 0);
+    s_me.space = s_p_one;
+}
+
+/* a robust list as a libc keeps one: each entry's word 8 bytes into it */
+struct entry {
+    uint64_t u_next;
+    uint32_t u_word;
+    uint32_t u_pad;
+};
+static struct entry s_held;
+static struct entry s_theirs;
+static struct entry s_taking;
+static uint64_t s_arr_head[3];
+
+static void owner_ends(void)
+{
+    futex_robust_release();
 }
 
 /*
@@ -317,7 +392,41 @@ int main(void)
           "and what this is not is said");
     CHECK(futex(ADDR(s_u_word), FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, 0, 0,
                 0) == 0,
-          "while a word marked as the process's own is every word");
+          "while a word marked as the process's own is woken the same");
+
+    s_i_wakes = 0;
+    s_arr_shared[1] = 3;
+    s_p_asleep = wake_shared_from_two;
+    CHECK(futex(ADDR(s_arr_shared[1]), FUTEX_WAIT, 3, 0, 0, 0) == 0
+          && s_i_then == 1 && s_i_wakes == 1,
+          "a word in memory mapped shared is one word to every space "
+          "mapping it, wherever each has it");
+    s_i_wakes = 0;
+    s_p_asleep = wake_shared_privately;
+    CHECK(futex(ADDR(s_arr_shared[1]), FUTEX_WAIT, 3, 0, 0, 0) == 0
+          && s_i_then == 0 && s_i_wakes == 0,
+          "but a wake marked as the process's own stays in its space");
+
+    s_arr_head[0] = ADDR(s_held);
+    s_arr_head[1] = 8;
+    s_arr_head[2] = ADDR(s_taking);
+    s_held.u_next = ADDR(s_theirs);
+    s_held.u_word = 9 | FUTEX_WAITERS;
+    s_theirs.u_next = ADDR(s_arr_head);
+    s_theirs.u_word = 7 | FUTEX_WAITERS;
+    s_taking.u_word = 9;
+    s_task.u_robust = ADDR(s_arr_head);
+    s_i_wakes = 0;
+    s_p_asleep = owner_ends;
+    CHECK(futex(ADDR(s_held.u_word), FUTEX_WAIT, 9 | FUTEX_WAITERS, 0, 0, 0)
+          == 0 && s_i_wakes == 1
+          && s_held.u_word == (FUTEX_WAITERS | FUTEX_OWNER_DIED),
+          "a thread ending holding a robust mutex leaves it marked as its "
+          "owner gone, and one waiting for it woken");
+    CHECK(s_theirs.u_word == (7 | FUTEX_WAITERS)
+          && s_taking.u_word == FUTEX_OWNER_DIED && s_task.u_robust == 0,
+          "one another thread holds is left be, the one it was taking is "
+          "let go of too, and the list is forgotten");
 
     if (failures == 0) {
         printf("all good\n");

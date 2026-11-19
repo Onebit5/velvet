@@ -125,6 +125,7 @@ struct task {
     bool     b_interrupted;     /* a signal it has to look at */
     bool     b_doomed;          /* to end at its next way back to ring 3 */
     uint64_t u_clear_tid;       /* where its end writes 0, set_tid_address's */
+    uint64_t u_robust;          /* its robust mutexes' list, or 0 */
     struct signal_thread sig;
 };
 

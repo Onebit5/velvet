@@ -17,4 +17,11 @@
  */
 int64_t futex_wake(uint64_t u_addr, int i_count);
 
+/*
+ * the robust mutexes the running thread holds, as it ends or runs
+ * another program: each marked as its owner gone, with one waiter woken
+ * to take it and be told, and the list forgotten
+ */
+void futex_robust_release(void);
+
 #endif

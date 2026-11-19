@@ -36,6 +36,7 @@ static void clear_child_tid(void)
 /* the one thread, and its process with it when it was the last */
 int64_t sys_exit(int i_code)
 {
+    futex_robust_release();
     clear_child_tid();
     thread_exit(W_EXITCODE(i_code, 0));
 }
@@ -48,6 +49,7 @@ int64_t sys_exit(int i_code)
 int64_t sys_exit_group(int i_code)
 {
     process_doom_others(current_tid(), W_EXITCODE(i_code, 0), false);
+    futex_robust_release();
     clear_child_tid();
     thread_exit(W_EXITCODE(i_code, 0));
 }

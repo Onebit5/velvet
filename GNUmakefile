@@ -282,8 +282,8 @@ SELFTEST_ROOT := fs/blockdev fs/fsck fs/install fs/mknod fs/mount fs/root \
 # well, and each saying ok there is the check that what they ask is
 # answered the same on both
 SELFTEST_BOTH := fs/procself fs/procstat fs/ps mm/meminfo mm/shared \
-                 sched/futex sched/pthread sched/script sched/spawn \
-                 sched/usage
+                 sched/futex sched/pthread sched/robust sched/script \
+                 sched/spawn sched/usage
 
 # the image's /init: asks which tests to run, runs each as a guest and
 # powers the machine off. built the way a test is, since it is a program

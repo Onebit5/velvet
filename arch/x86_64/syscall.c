@@ -18,6 +18,7 @@
 #include <velvet/kmalloc.h>
 #include <velvet/kprintf.h>
 #include <velvet/namei.h>
+#include <velvet/futex.h>
 #include <velvet/pit.h>
 #include <velvet/process.h>
 #include <velvet/sched.h>
@@ -235,6 +236,7 @@ CALL4(fchmodat, int, u64, u32, int)
 CALL6(pselect6, int, u64, u64, u64, u64, u64)
 CALL5(ppoll, u64, u64, u64, u64, u64)
 CALL2(set_robust_list, u64, u64)
+CALL3(get_robust_list, int, u64, u64)
 CALL4(accept4, int, u64, u64, int)
 CALL3(dup3, int, int, int)
 CALL2(pipe2, u64, int)
@@ -1026,7 +1028,8 @@ static const syscall_fn s_arr_table[NR_SYSCALLS] = {
     ENTRY(newfstatat), ENTRY(mknod),
     ENTRY(unlinkat), ENTRY(renameat), ENTRY(linkat), ENTRY(symlinkat),
     ENTRY(readlinkat), ENTRY(fchmodat), ENTRY(faccessat), ENTRY(pselect6),
-    ENTRY(ppoll), ENTRY(set_robust_list), ENTRY(accept4), ENTRY(dup3),
+    ENTRY(ppoll), ENTRY(set_robust_list), ENTRY(get_robust_list),
+    ENTRY(accept4), ENTRY(dup3),
     ENTRY(pipe2), ENTRY(prlimit64), ENTRY(syncfs), ENTRY(renameat2),
     ENTRY(getrandom), ENTRY(faccessat2),
 };
@@ -1063,9 +1066,12 @@ static void deliver_signals(struct pt_regs *p_regs, bool b_call)
     /*
      * a thread doomed by another, ending its process or running another
      * program in it, ends here, before anything else is made of a call
-     * its waking cut short
+     * its waking cut short. every way a thread ends here lets go of the
+     * robust mutexes it held first, in its own memory, which is still
+     * there
      */
     if (process_doomed(i_tid)) {
+        futex_robust_release();
         thread_exit(PROCESS_KILLED);
     }
     bool b_restart = b_call && restartable((int64_t)p_regs->rax);
@@ -1118,6 +1124,7 @@ static void deliver_signals(struct pt_regs *p_regs, bool b_call)
              */
             if (i_sig == SIGSEGV) {
                 process_doom_others(i_tid, SIGSEGV, false);
+                futex_robust_release();
                 thread_exit(SIGSEGV);
             }
             process_force_signal(i_tid, SIGSEGV, &origin);
@@ -1126,6 +1133,7 @@ static void deliver_signals(struct pt_regs *p_regs, bool b_call)
         case SIGNAL_ACTION_TERMINATE:
             /* the wait status of a signal's death, the whole process's */
             process_doom_others(i_tid, i_sig, false);
+            futex_robust_release();
             thread_exit(i_sig);
         }
         break;

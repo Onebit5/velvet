@@ -20,7 +20,7 @@
 #define FUTEX_WAIT_BITSET       9
 #define FUTEX_WAKE_BITSET       10
 
-/* the word is no other process's, which here is every word */
+/* the word is no other process's, even in memory mapped shared */
 #define FUTEX_PRIVATE_FLAG      128
 /* a WAIT_BITSET's deadline is on the wall clock rather than the uptime */
 #define FUTEX_CLOCK_REALTIME    256
@@ -28,5 +28,16 @@
 
 /* what a plain WAIT and WAKE are: any waiter matches any waker */
 #define FUTEX_BITSET_MATCH_ANY  0xffffffffu
+
+/*
+ * a robust mutex's word: the thread holding it, whether anybody waits
+ * for it, and whether its holder ended holding it
+ */
+#define FUTEX_WAITERS           0x80000000u
+#define FUTEX_OWNER_DIED        0x40000000u
+#define FUTEX_TID_MASK          0x3fffffffu
+
+/* the most entries of a robust list the kernel follows */
+#define ROBUST_LIST_LIMIT       2048
 
 #endif

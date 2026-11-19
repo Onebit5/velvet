@@ -64,10 +64,25 @@ uaccess_strncpy:
     mov rax, -1
     ret
 
+; int64_t uaccess_cmpxchg32(uint32_t *at, uint32_t old, uint32_t new)
+; the word made new when it held old, in one locked instruction, which a
+; program's own atomics on it in another process cannot come between:
+; what it held, or -1 for a fault
+global uaccess_cmpxchg32
+uaccess_cmpxchg32:
+    mov eax, esi
+.swap:
+    lock cmpxchg [rdi], edx
+    ret
+.fault:
+    mov rax, -1
+    ret
+
 ; the instruction that may fault, and where it goes when it does
 section __ex_table progbits alloc noexec nowrite align=8
     dq uaccess_copy.move, uaccess_copy.fault
     dq uaccess_clear.store, uaccess_clear.fault
     dq uaccess_strncpy.load, uaccess_strncpy.fault
+    dq uaccess_cmpxchg32.swap, uaccess_cmpxchg32.fault
 
 section .note.GNU-stack noalloc noexec nowrite progbits

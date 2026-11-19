@@ -354,9 +354,13 @@ own atomic instructions take and give back, and a futex is the call for
 when the word says somebody has to wait. a mutex nobody else wants never
 makes a call at all. so the kernel keeps no futexes, only the waiting:
 each waiter on its own stack for as long as it waits, filed under the
-word, which is named by the address space it is in and its address.
-every page here is a process's own, its threads' or a fork's copy of it,
-so the same address in two spaces is two words.
+word. a word in memory mapped shared is named by its set of shared pages
+and its place in the set, which is the same in every process mapping
+it, wherever each has it, so a wake in one reaches a waiter in another.
+any other word is named by the address space it is in and its address,
+and the same address in two spaces is two words. ``FUTEX_PRIVATE_FLAG``
+says a word is the process's own, and names it by its space whatever
+memory it is in, so its wakes stay in the process.
 
 the one thing a futex has to get right is a wake that comes between a
 waiter reading the word and going to sleep. a waiter holds the futex lock
@@ -367,6 +371,18 @@ wake, by its time limit, by a signal, or for nothing at all, which every
 caller of a futex allows. a thread's end clears the word
 ``set_tid_address`` or ``CLONE_CHILD_CLEARTID`` named and wakes one
 waiter on it, which is how a thread is joined.
+
+a robust mutex is one whose holder may end holding it, and a libc keeps
+the ones a thread holds on a list in the thread's memory, which
+``set_robust_list`` names. however a thread ends, by its own exit, its
+process's, a signal or another thread's exec, and when it runs another
+program, the kernel walks the list in the thread's own memory: each
+mutex whose word still names the thread is marked as its owner gone,
+``FUTEX_OWNER_DIED``, keeping its waiters' bit, and one waiter is woken
+to take it and be told. a word is changed with one locked compare and
+swap on the program's memory, since another process may be taking its
+waiters' bit at the same moment. a list that does not end is followed
+for ``ROBUST_LIST_LIMIT`` entries.
 
 a job is a process group, and a shell makes one with ``setpgid``: itself
 or a child of its own, into a group named after it or one that already

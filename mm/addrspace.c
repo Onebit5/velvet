@@ -966,6 +966,24 @@ int64_t addrspace_sync(struct addrspace *p_as, uint64_t u_start,
     return i_why;
 }
 
+void addrspace_futex_key(struct addrspace *p_as, uint64_t u_addr,
+                         const void **pp_object, uint64_t *p_offset,
+                         struct shared_pages **pp_held)
+{
+    *pp_object = p_as;
+    *p_offset = u_addr;
+    *pp_held = NULL;
+    uint64_t u_lock = spin_lock_irq(&p_as->lock);
+    const struct vma *p_vma = region_for(p_as, u_addr);
+    if (p_vma != NULL && p_vma->kind == VMA_SHARED) {
+        shared_get(p_vma->p_shared);
+        *pp_object = p_vma->p_shared;
+        *p_offset = p_vma->image_offset + (u_addr - p_vma->start);
+        *pp_held = p_vma->p_shared;
+    }
+    spin_unlock_irq(&p_as->lock, u_lock);
+}
+
 /* the lock is held */
 static uint64_t brk(struct addrspace *p_as, uint64_t u_want,
                     uint64_t u_flags, struct dropped *p_drop)

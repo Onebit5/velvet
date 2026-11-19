@@ -41,6 +41,13 @@ int64_t clear_user(uint64_t u_to, size_t sz_len);
  */
 int64_t strncpy_from_user(char *str_to, uint64_t u_from, size_t sz_max);
 
+/*
+ * the aligned word at u_at made u_new when it holds u_old, at once, and
+ * what it held in *p_was either way: 0, or -EFAULT
+ */
+int64_t cmpxchg_user_u32(uint64_t u_at, uint32_t u_old, uint32_t u_new,
+                         uint32_t *p_was);
+
 /* the one value, for the commonest case of all */
 ARCH_INLINE int64_t get_user_u64(uint64_t *p_to, uint64_t u_from)
 {

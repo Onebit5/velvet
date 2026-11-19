@@ -8,6 +8,7 @@
 #include <velvet/syscalls.h>
 #include <velvet/errno.h>
 #include <velvet/process.h>
+#include <velvet/namei.h>
 #include <velvet/sched.h>
 #include <velvet/thread.h>
 #include <velvet/init.h>
@@ -604,15 +605,48 @@ int64_t sys_sched_getaffinity(int i_tid, uint64_t u_len, uint64_t u_mask)
 
 /*
  * where a thread keeps the robust mutexes it holds, for the kernel to
- * release if it dies holding one. a thread here ends by its own exit,
- * which a libc's thread exit comes to only having let go of its robust
- * mutexes itself, or with the whole of its process, which takes every
- * other user of such a mutex with it, every page being the process's
- * own. so there is nobody left to release one for: the list is taken
- * as given
+ * let go of if it ends holding one: a mutex in memory processes share
+ * has users the thread's own process does not take with it, and a
+ * thread killed never comes to its libc's own letting go. the head is
+ * three words, the list, where in an entry its word is, and the one
+ * being taken or let go of
  */
 int64_t sys_set_robust_list(uint64_t u_head, uint64_t u_len)
 {
-    (void)u_head;
-    return (u_len == 24) ? 0 : -EINVAL;
+    if (u_len != 24) {
+        return -EINVAL;
+    }
+    uint64_t u_flags;
+    struct task *t = process_lock_task(current_tid(), &u_flags);
+    if (t != NULL) {
+        t->u_robust = u_head;
+    }
+    process_unlock_slot(u_flags);
+    return 0;
+}
+
+/*
+ * where a thread said its robust list is, which a libc asks of itself to
+ * learn whether the kernel walks the lists at all: a thread of the
+ * caller's own process, 0 for the caller, or for root any thread
+ */
+int64_t sys_get_robust_list(int i_tid, uint64_t u_head, uint64_t u_len)
+{
+    int i_pid = current_pid();
+    bool b_root = current_uid() == 0;
+    uint64_t u_flags;
+    struct task *t = process_lock_task((i_tid != 0) ? i_tid : current_tid(),
+                                       &u_flags);
+    bool b_found = t != NULL;
+    bool b_may = b_found && (b_root || t->i_pid == i_pid);
+    uint64_t u_list = b_may ? t->u_robust : 0;
+    process_unlock_slot(u_flags);
+    if (!b_found) {
+        return -ESRCH;
+    }
+    if (!b_may) {
+        return -EPERM;
+    }
+    return (put_user_u64(u_head, u_list) == 0
+            && put_user_u64(u_len, 24) == 0) ? 0 : -EFAULT;
 }

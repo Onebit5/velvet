@@ -184,6 +184,16 @@ int64_t addrspace_sync(struct addrspace *p_as, uint64_t u_start,
                        uint64_t u_len);
 
 /*
+ * what the futex word at u_addr is known by to every process that may
+ * wait on it: in memory mapped shared, its set and where in it, the set
+ * held for the caller in *pp_held; anywhere else, the space and the
+ * address, *pp_held NULL
+ */
+void addrspace_futex_key(struct addrspace *p_as, uint64_t u_addr,
+                         const void **pp_object, uint64_t *p_offset,
+                         struct shared_pages **pp_held);
+
+/*
  * nothing at [u_start, u_start + u_len) any more, whatever regions it cut
  * through, which keep what is either side of it. false only when one
  * region would have to become two and there is no room for the second,

@@ -49,6 +49,14 @@ static int64_t uaccess_strncpy(char *str_to, const char *str_from,
     return (int64_t)u_max;
 }
 
+static int64_t uaccess_cmpxchg32(uint32_t *p_at, uint32_t u_old,
+                                 uint32_t u_new)
+{
+    __atomic_compare_exchange_n(p_at, &u_old, u_new, false,
+                                __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+    return u_old;
+}
+
 uint64_t uaccess_fixup(uint64_t u_rip)
 {
     (void)u_rip;
@@ -63,6 +71,7 @@ uint64_t uaccess_fixup(uint64_t u_rip)
 uint64_t uaccess_copy(void *p_to, const void *p_from, uint64_t u_len);
 uint64_t uaccess_clear(void *p_to, uint64_t u_len);
 int64_t uaccess_strncpy(char *str_to, const char *str_from, uint64_t u_max);
+int64_t uaccess_cmpxchg32(uint32_t *p_at, uint32_t u_old, uint32_t u_new);
 
 /* one pair per instruction in uaccess.asm that may fault */
 struct ex_entry {
@@ -101,6 +110,21 @@ int64_t copy_to_user(uint64_t u_to, const void *p_from, size_t sz_len)
         return -EFAULT;
     }
     return uaccess_copy((void *)u_to, p_from, sz_len) == 0 ? 0 : -EFAULT;
+}
+
+int64_t cmpxchg_user_u32(uint64_t u_at, uint32_t u_old, uint32_t u_new,
+                         uint32_t *p_was)
+{
+    if ((u_at & 3) != 0 || !access_ok(u_at, sizeof(uint32_t))
+        || !reachable(u_at, sizeof(uint32_t), true)) {
+        return -EFAULT;
+    }
+    int64_t i_was = uaccess_cmpxchg32((uint32_t *)u_at, u_old, u_new);
+    if (i_was < 0) {
+        return -EFAULT;
+    }
+    *p_was = (uint32_t)i_was;
+    return 0;
 }
 
 int64_t clear_user(uint64_t u_to, size_t sz_len)
