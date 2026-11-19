@@ -11,9 +11,10 @@ against another kernel's answer.
 it speaks linux's interface to programs, all the same: since 0.4.5 its system calls,
 its signals and the layouts it hands back are the ones a static program built for linux
 on x86_64 already expects, since 0.4.7 its terminals answer the way they expect too, and
-since 0.4.8 a program's threads are the ones its thread library makes, and since 0.4.9
-its `/proc` is laid out the way programs read it. not linux's insides: no modules, no
-driver api. what is left, a loader and somebody else's programs running unmodified, is
+since 0.4.8 a program's threads are the ones its thread library makes, since 0.4.9
+its `/proc` is laid out the way programs read it, and since 0.4.10 a program linked
+against a shared libc is started by the loader it names. not linux's insides: no
+modules, no driver api. what is left, somebody else's programs running unmodified, is
 the rest of the 0.4.x series of [ROADMAP.md](ROADMAP.md), and the non-goals are at the
 top of it.
 
@@ -21,15 +22,16 @@ it is a kernel and nothing more: what runs in ring 0. the loader that runs befor
 [philemon](https://github.com/Onebit5/philemon), a project of his own, and the programs, a
 libc and a toolchain belong to whatever system is built on a release of it.
 
-what is in here: the boot protocol, which says what a loader leaves the kernel; physical and
-virtual memory, with demand paging and copy on write; threads, processes, signals and
-an init; smp with a scheduler on every core; a root in memory made of the archive the
-loader hands over, and mounts on it, moved and pivoted; fat32, and ext4 with extents and
-a journal; ahci, with the drives and their partitions as block devices, e1000, ps/2, the
-console and the serial line; terminals on the consoles and ptys, with sessions and job
-control, and fifos; and a tcp/ip stack, with an address a program sets. there is
-no shell in it: what the kernel has to say about itself is in `/proc` and the kernel log,
-for a program to read.
+what is in here: the boot protocol, which says what a loader leaves the kernel; physical
+and virtual memory, with demand paging and copy on write, and memory shared between
+processes, a file's carried back to it; threads, processes, signals and an init; programs
+built to be loaded anywhere, the loaders they name, and scripts; smp with a scheduler on
+every core; a root in memory made of the archive the loader hands over, and mounts on it,
+moved and pivoted; fat32, and ext4 with extents and a journal; ahci, with the drives and
+their partitions as block devices, e1000, ps/2, the console and the serial line; terminals
+on the consoles and ptys, with sessions and job control, and fifos; and a tcp/ip stack,
+with an address a program sets. there is no shell in it: what the kernel has to say about
+itself is in `/proc` and the kernel log, for a program to read.
 
 still a non-goal: being useful in any practical sense.
 

@@ -15,6 +15,59 @@ a kernel that booted.
 
 ---
 
+- **0.4.10**: a program that names its loader. **programs as most are
+  made.** most programs are built to be loaded anywhere and linked
+  against a libc's shared library, and they name the loader that puts
+  the two together. exec put a program only where it was linked and
+  refused any that named a loader. now one built to be loaded anywhere
+  goes to `0x555555554000`, and one that names a loader is started by
+  it, the loader put where mmap puts the first thing it is asked for,
+  with `AT_BASE`, `AT_PHDR` and `AT_ENTRY` saying where each went. a
+  loader that will not do fails the exec as the build machine's kernel
+  fails it, which the selftest was run against: `ENOENT` when nothing is
+  at its name, though the program is there, `EACCES` when the caller may
+  not run it, `EIO` when it is too short to hold a header, `ELIBBAD` when
+  it is no program and `ENOEXEC` when its name has no end. the disk the
+  selftests run on carries musl's loader at `/lib/ld-musl-x86_64.so.1`
+  and a program linked against it. and a program is read out of its
+  file a page at a time as it is touched, rather than all of it before
+  it runs, the region holding the file open the way a descriptor does.
+
+  **scripts.** a file whose first line starts with `#!` is run by the
+  program the line names, which is handed the name, the one argument the
+  line may give, the script's name as the caller gave it and the rest of
+  the caller's arguments. a script may name a script, five deep, and the
+  sixth is `ELOOP`. `AT_EXECFN` is now the name the caller gave, for any
+  program.
+
+  **memory shared.** a file mapped shared was a copy, and refused
+  whenever it could be written. now a file has one set of shared pages,
+  one frame a page, which every space mapping it maps and a fork shares
+  as it is. a read of the file says what the pages have, a write to it
+  lands in them, and what was stored reaches the file, as far as it goes
+  and never further, by `msync`, which is new, `fsync`, `sync`, and when
+  the last mapping goes. memory mapped shared with no file is shared
+  across a fork the same way. a mapping through a descriptor that may
+  not write the file may not be made writable, and `maps` says which
+  regions are shared. a file on fat32, which has no inodes, is still a
+  copy when mapped shared to be read, and refused when it could be
+  written.
+
+  **futexes between processes.** a futex word in memory mapped shared
+  is one word to every process mapping it, so a mutex or a condition
+  variable shared between processes wakes its waiters wherever they are,
+  and `FUTEX_PRIVATE_FLAG` keeps a word to its process. a thread ending
+  holding a robust mutex, however it ends, has the kernel mark it as its
+  owner gone and wake one waiter, which a libc turns into `EOWNERDEAD`.
+  `get_robust_list` answers, which musl asks before it makes a mutex
+  robust at all.
+
+  the scripts, the shared memory and the robust mutexes are selftests
+  that run on the machine the build is on as well, where they say the
+  same. the documents say what the kernel is built for, legibility,
+  rather than that it is small, which it no longer is, and the lint
+  leaves the prose and its voice to review.
+
 - **0.4.9**: `/proc` the way programs read it. **a directory for every
   process.** a program written for another kernel finds out about itself,
   and about every other program, by reading a directory named by its

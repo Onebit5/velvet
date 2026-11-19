@@ -55,26 +55,14 @@ mount things under and the drives and the network a client, an installer
 and a checker need, since 0.4.7 terminals the way such a program asks
 for them, a pty among them, and fifos, since 0.4.8 threads, made the way
 a thread library makes them and waiting on futexes, and a child
-posix_spawn makes in its parent's memory, and since 0.4.9 a `/proc` laid
-out the way such a program reads it. what is left of the series is the
-rest of what such a program takes for granted: a loader, and at the end
+posix_spawn makes in its parent's memory, since 0.4.9 a `/proc` laid
+out the way such a program reads it, and since 0.4.10 a program linked
+against a shared libc, started by the loader it names, scripts, and
+memory shared between processes. what is left of the series is
 somebody else's programs run unmodified. the reason is the one every
 checker in this project rests on, an outside answer: the same static
 binary run on both machines says, call by call, where this kernel
 differs.
-
-**0.4.10 a program that names its loader.** a dynamically linked program
-does not start at its own entry point: it names a loader in `PT_INTERP`,
-and the kernel maps that too and starts there, with `AT_BASE`, `AT_PHDR`
-and `AT_ENTRY` in the auxiliary vector saying where everything went. a
-libc's dynamic linking needs exactly this from the kernel, and so does
-every program on a linux machine that was not built static. with it
-comes what a loader does to the files it maps: a program built position
-independent, loaded wherever the kernel puts it, and a file mapped
-shared, its writes carried back to the file. and a script names its
-interpreter on its first line, `#!`, which is the same idea one level
-up. *ends when a dynamically linked program and its loader, both copied
-off a linux machine, start here.*
 
 **0.4.11 somebody else's programs.** busybox, built static for linux and
 not touched: a shell, `ls`, `sed`, `awk` and a hundred more, each written
