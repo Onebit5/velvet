@@ -158,6 +158,7 @@ void kfree(void *p)
 #include <velvet/vmm.h>
 #include <velvet/addrspace.h>
 #include <velvet/file.h>
+#include <velvet/shared.h>
 
 /*
  * a file the test makes up, which a region reads its pages out of: its
@@ -193,6 +194,32 @@ int64_t vfs_read_file(struct file *p_file, uint64_t u_offset, void *p_buf,
         ((uint8_t *)p_buf)[sz_at] = (uint8_t)((u_offset + sz_at) & 0xff);
     }
     return (int64_t)sz_at;
+}
+
+/*
+ * the file as the shared pages read it, by its node, and what they write
+ * back to it, kept to be looked at
+ */
+static uint8_t s_arr_back[3 * 4096];
+static uint64_t s_u_back_end;
+static int s_i_backs;
+
+int64_t vfs_read_store(const struct vfs_file *p_node, uint64_t u_offset,
+                       void *p_buf, uint64_t u_len)
+{
+    (void)p_node;
+    return vfs_read_file(&s_file, u_offset, p_buf, (size_t)u_len);
+}
+int64_t vfs_write_store(struct vfs_file *p_node, uint64_t u_offset,
+                        const void *p_buf, uint64_t u_len)
+{
+    (void)p_node;
+    memcpy(s_arr_back + u_offset, p_buf, (size_t)u_len);
+    if (u_offset + u_len > s_u_back_end) {
+        s_u_back_end = u_offset + u_len;
+    }
+    s_i_backs++;
+    return (int64_t)u_len;
 }
 
 static int failures;
@@ -637,7 +664,7 @@ int main(void)
         /* and a file mapped where mmap puts things, read from an offset */
         s_u_file_size = 4096 + 100;
         uint64_t u_at = addrspace_map_file(p, 0, 2 * 4096, PTE_USER, false,
-                                           &s_file, 4096);
+                                           &s_file, 4096, true);
         CHECK(u_at != 0 && s_i_holds == 3
               && addrspace_fault(p, u_at, false, false)
               && memcmp(pmm_phys_to_virt(vmm_translate(p->pml4, u_at)),
@@ -651,6 +678,99 @@ int main(void)
         addrspace_put(p);
         CHECK(outstanding == level && s_i_holds == 0,
               "with nothing left over, the file let go of");
+    }
+
+    /*
+     * a file mapped shared: one frame a page, whichever space touches it
+     * first, kept writable across a fork, and what was stored written
+     * back to the file as far as it goes when the last mapping goes
+     */
+    {
+        uint64_t u_level = outstanding;
+        uint64_t u_rw = PTE_USER | PTE_WRITE;
+        s_file.node.u_ino = 7;
+        s_file.node.size = 4096 + 100;
+        s_u_file_size = 4096 + 100;
+        struct addrspace *p_a = addrspace_create(kernel_space);
+        struct addrspace *p_b = addrspace_create(kernel_space);
+        struct shared_pages *p_set = shared_of_file(&s_file);
+        CHECK(p_set != NULL && shared_of_file(&s_file) == p_set,
+              "a file has one set of shared pages, however often it is "
+              "asked for");
+        shared_put(p_set);
+        uint64_t u_a = addrspace_map_shared(p_a, 0, 2 * 4096, u_rw, false,
+                                            p_set, &s_file, 0, true);
+        uint64_t u_b = addrspace_map_shared(p_b, 0, 2 * 4096, PTE_USER,
+                                            false, p_set, &s_file, 0, false);
+        shared_put(p_set);
+        CHECK(u_a != 0 && u_b != 0 && s_i_holds == 3,
+              "two spaces map it, each region holding the file, and the "
+              "set holding it too");
+        CHECK(addrspace_fault(p_a, u_a + 4096, true, false)
+              && addrspace_fault(p_b, u_b + 4096, false, false)
+              && vmm_translate(p_a->pml4, u_a + 4096)
+                 == vmm_translate(p_b->pml4, u_b + 4096),
+              "and a page of it is one frame in both");
+        uint8_t *p_page = pmm_phys_to_virt(vmm_translate(p_a->pml4,
+                                                         u_a + 4096));
+        CHECK(p_page[0] == 0 && p_page[99] == 99 && p_page[100] == 0,
+              "read in from the file, and zeroes past its end");
+        CHECK(!addrspace_may_write(p_b, u_b, 4096)
+              && addrspace_may_write(p_a, u_a, 4096),
+              "one mapped through a descriptor that may not write it may "
+              "not be made writable");
+
+        struct addrspace *p_kid = addrspace_fork(p_a, kernel_space);
+        CHECK(p_kid != NULL && addrspace_fault(p_kid, u_a, true, false)
+              && vmm_translate(p_kid->pml4, u_a + 4096)
+                 == vmm_translate(p_a->pml4, u_a + 4096),
+              "a fork maps the same frames, a page touched after it too");
+        uint8_t *p_first = pmm_phys_to_virt(vmm_translate(p_kid->pml4, u_a));
+        CHECK(addrspace_fault(p_a, u_a, true, false)
+              && pmm_phys_to_virt(vmm_translate(p_a->pml4, u_a)) == p_first,
+              "and the page the child made is the parent's when it looks");
+        p_first[5] = 0xaa;
+        p_page[7] = 0xbb;
+        p_page[200] = 0xcc;
+
+        int i_backs = s_i_backs;
+        CHECK(addrspace_sync(p_a, u_a, 2 * 4096) == 0
+              && s_i_backs == i_backs + 2 && s_arr_back[5] == 0xaa
+              && s_arr_back[4096 + 7] == 0xbb && s_u_back_end == 4096 + 100,
+              "msync writes back what was stored, and the file is no "
+              "longer for a store past its end");
+        CHECK(addrspace_sync(p_a, u_a, 3 * 4096) == -12,
+              "a range not all mapped is ENOMEM");
+
+        addrspace_put(p_kid);
+        addrspace_put(p_a);
+        CHECK(s_i_holds == 2, "spaces gone, their regions let go");
+        memset(s_arr_back, 0, sizeof s_arr_back);
+        s_i_backs = 0;
+        addrspace_put(p_b);
+        CHECK(s_i_backs == 2 && s_arr_back[4096 + 7] == 0xbb
+              && s_i_holds == 0 && outstanding == u_level,
+              "and with the last the set writes back and lets the file "
+              "and its frames go");
+
+        /* memory of no file, shared across a fork */
+        struct addrspace *p_m = addrspace_create(kernel_space);
+        struct shared_pages *p_anon = shared_anon();
+        uint64_t u_m = addrspace_map_shared(p_m, 0, 4096, u_rw, false,
+                                            p_anon, NULL, 0, true);
+        shared_put(p_anon);
+        struct addrspace *p_mk = addrspace_fork(p_m, kernel_space);
+        CHECK(u_m != 0 && p_mk != NULL
+              && addrspace_fault(p_mk, u_m, true, false)
+              && addrspace_fault(p_m, u_m, false, false)
+              && vmm_translate(p_m->pml4, u_m)
+                 == vmm_translate(p_mk->pml4, u_m),
+              "memory mapped shared is one frame on both sides of a fork");
+        addrspace_put(p_mk);
+        addrspace_put(p_m);
+        CHECK(outstanding == u_level, "and goes with the last of them");
+        s_file.node.u_ino = 0;
+        s_u_file_size = 8192;
     }
 
 

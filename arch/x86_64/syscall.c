@@ -134,6 +134,7 @@ CALL0(sched_yield)
 CALL3(sched_getaffinity, int, u64, u64)
 CALL5(mremap, u64, u64, u64, int, u64)
 CALL3(madvise, u64, u64, int)
+CALL3(msync, u64, u64, int)
 CALL1(dup, int)
 CALL2(dup2, int, int)
 CALL0(pause)
@@ -991,7 +992,8 @@ static const syscall_fn s_arr_table[NR_SYSCALLS] = {
     ENTRY(pread64), ENTRY(pwrite64), ENTRY(readv), ENTRY(writev),
     ENTRY(access), ENTRY(pipe), ENTRY(select), ENTRY(sched_yield),
     ENTRY(sched_getaffinity),
-    ENTRY(mremap), ENTRY(madvise), ENTRY(dup), ENTRY(dup2), ENTRY(pause),
+    ENTRY(mremap), ENTRY(msync), ENTRY(madvise), ENTRY(dup), ENTRY(dup2),
+    ENTRY(pause),
     ENTRY(nanosleep), ENTRY(getitimer), ENTRY(alarm), ENTRY(setitimer),
     ENTRY(getpid), ENTRY(socket), ENTRY(connect), ENTRY(accept),
     ENTRY(sendto), ENTRY(recvfrom), ENTRY(sendmsg), ENTRY(recvmsg),

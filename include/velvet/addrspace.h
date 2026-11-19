@@ -15,6 +15,7 @@
 #include <velvet/spinlock.h>
 
 struct file;
+struct shared_pages;
 
 /*
  * a private view of memory: the lower half belongs to the program, the
@@ -48,10 +49,22 @@ enum vma_kind {
      * copy. zeroes past file_end
      */
     VMA_FILE,
+    /*
+     * pages a set of them has, which every space mapping the set maps:
+     * a file's from image_offset, or memory of no file's, and stores to
+     * them are in every mapping at once and the file's later
+     */
+    VMA_SHARED,
 };
 
 struct vma {
     enum vma_kind kind;
+    /*
+     * whether the region may be made writable: a file mapped shared
+     * through a descriptor that may not write it may not be written
+     * through the mapping either, which would write the file
+     */
+    bool b_may_write;
     uint64_t start, end;        /* [start, end), page aligned */
     uint64_t flags;             /* what a page here is allowed to be */
 
@@ -62,7 +75,14 @@ struct vma {
      */
     struct file *p_file;
     uint64_t image_offset;      /* offset in the file of `start` */
-    uint64_t file_end;          /* last address with a byte behind it */
+    /*
+     * a region is one kind or the other, and the space is a page of them,
+     * so what only one kind has is in the same place
+     */
+    union {
+        uint64_t file_end;      /* VMA_FILE: the last with a file byte */
+        struct shared_pages *p_shared;  /* VMA_SHARED: its set, held */
+    };
 };
 
 struct addrspace {
@@ -127,11 +147,41 @@ uint64_t addrspace_map_anon(struct addrspace *p_as, uint64_t u_hint,
  * p_file from u_offset, u_len rounded up to pages, put where
  * addrspace_map_anon would put memory: each page read in the first time
  * it is touched, and the space's own after, which no write to the file
- * reaches and no write to it reaches the file. where it went, or 0
+ * reaches and no write to it reaches the file. never made writable when
+ * not b_may_write. where it went, or 0
  */
 uint64_t addrspace_map_file(struct addrspace *p_as, uint64_t u_hint,
                             uint64_t u_len, uint64_t u_flags, bool b_fixed,
-                            struct file *p_file, uint64_t u_offset);
+                            struct file *p_file, uint64_t u_offset,
+                            bool b_may_write);
+
+/*
+ * the pages of p_set from u_offset, u_len rounded up to pages, put where
+ * addrspace_map_anon would put memory, and named for p_file, which may be
+ * NULL: each page the set's own, mapped by every space mapping the set.
+ * the region holds the set and the file. where it went, or 0
+ */
+uint64_t addrspace_map_shared(struct addrspace *p_as, uint64_t u_hint,
+                              uint64_t u_len, uint64_t u_flags, bool b_fixed,
+                              struct shared_pages *p_set,
+                              struct file *p_file, uint64_t u_offset,
+                              bool b_may_write);
+
+/*
+ * whether all of [u_start, u_start + u_len) may be made writable: false
+ * when some of it is a file mapped shared through a descriptor that may
+ * not write it
+ */
+bool addrspace_may_write(struct addrspace *p_as, uint64_t u_start,
+                         uint64_t u_len);
+
+/*
+ * what was stored to the files mapped shared in [u_start, u_start +
+ * u_len) written to them: 0, -ENOMEM when some of the range is not
+ * mapped, or -EIO
+ */
+int64_t addrspace_sync(struct addrspace *p_as, uint64_t u_start,
+                       uint64_t u_len);
 
 /*
  * nothing at [u_start, u_start + u_len) any more, whatever regions it cut

@@ -97,6 +97,7 @@ int64_t sys_munmap(uint64_t u_addr, uint64_t u_len);
 int64_t sys_mprotect(uint64_t u_addr, uint64_t u_len, int i_prot);
 int64_t sys_brk(uint64_t u_want);
 int64_t sys_madvise(uint64_t u_addr, uint64_t u_len, int i_advice);
+int64_t sys_msync(uint64_t u_addr, uint64_t u_len, int i_flags);
 int64_t sys_mremap(uint64_t u_old, uint64_t u_old_len, uint64_t u_new_len,
                    int i_flags, uint64_t u_new);
 

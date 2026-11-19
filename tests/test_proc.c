@@ -317,13 +317,15 @@ void addrspace_sizes(struct addrspace *p_as, struct addrspace_sizes *p_out)
 
 /* code, data, a heap and the stack */
 static const struct vma s_arr_regions[] = {
-    { VMA_FILE, 0x400000, 0x401000, PTE_USER, &s_exe, 0, 0 },
-    { VMA_FILE, 0x401000, 0x402000, PTE_USER | PTE_WRITE | PTE_NX, &s_exe,
-      0x1000, 0 },
-    { VMA_ANON, 0x402000, 0x404000, PTE_USER | PTE_WRITE | PTE_NX, NULL,
-      0, 0 },
-    { VMA_ANON, USER_STACK_TOP - 0x100000, USER_STACK_TOP,
-      PTE_USER | PTE_WRITE | PTE_NX, NULL, 0, 0 },
+    { .kind = VMA_FILE, .start = 0x400000, .end = 0x401000,
+      .flags = PTE_USER, .p_file = &s_exe },
+    { .kind = VMA_FILE, .start = 0x401000, .end = 0x402000,
+      .flags = PTE_USER | PTE_WRITE | PTE_NX, .p_file = &s_exe,
+      .image_offset = 0x1000 },
+    { .kind = VMA_ANON, .start = 0x402000, .end = 0x404000,
+      .flags = PTE_USER | PTE_WRITE | PTE_NX },
+    { .kind = VMA_ANON, .start = USER_STACK_TOP - 0x100000,
+      .end = USER_STACK_TOP, .flags = PTE_USER | PTE_WRITE | PTE_NX },
 };
 
 size_t addrspace_regions(struct addrspace *p_as, struct vma *p_out,

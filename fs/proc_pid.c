@@ -482,14 +482,22 @@ static void file_of(const struct file *p_file, struct image_file *p_out)
                                              : path_ino(p_file->arr_path);
 }
 
-/* one line of maps: a region, what it allows, and what is in it */
+/*
+ * one line of maps: a region, what it allows, whether it is shared or
+ * the space's own, and what is in it. memory shared with no file is
+ * named as a mapping of /dev/zero whose name is gone, which is what such
+ * memory is elsewhere
+ */
 static void show_region(const struct vma *v, const struct addrspace *p_space,
                         const struct image_file *p_image)
 {
-    bool b_file = v->kind == VMA_FILE;
-    bool b_heap = !b_file && v->start <= p_space->u_brk
+    bool b_shared = v->kind == VMA_SHARED;
+    bool b_file = v->p_file != NULL
+                  && (v->kind == VMA_FILE || v->kind == VMA_SHARED);
+    bool b_heap = v->kind == VMA_ANON && v->start <= p_space->u_brk
                   && v->end >= p_space->u_brk_start;
     const char *str_name = b_file ? p_image->arr_name
+                         : b_shared ? "/dev/zero (deleted)"
                          : (v->end == USER_STACK_TOP) ? "[stack]"
                          : b_heap ? "[heap]" : NULL;
     uint64_t u_offset = b_file ? v->image_offset : 0;
@@ -499,8 +507,8 @@ static void show_region(const struct vma *v, const struct addrspace *p_space,
 
     kprintf("%08lx-%08lx %c%c%c%c %08lx %02lx:%02lx %lu ", v->start, v->end,
             b_read ? 'r' : '-', (v->flags & PTE_WRITE) ? 'w' : '-',
-            (b_read && !(v->flags & PTE_NX)) ? 'x' : '-', 'p', u_offset,
-            u_dev >> 8, u_dev & 0xff, u_ino);
+            (b_read && !(v->flags & PTE_NX)) ? 'x' : '-', b_shared ? 's' : 'p',
+            u_offset, u_dev >> 8, u_dev & 0xff, u_ino);
     if (str_name == NULL || str_name[0] == '\0') {
         kprintf("\n");
         return;

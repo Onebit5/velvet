@@ -122,6 +122,11 @@ int64_t vfs_readlink(const char *path, char *out, size_t size);
 int64_t vfs_expand(char *str_path, bool b_last);
 bool vfs_open_nofollow(const char *path, struct vfs_file *out);
 
+/*
+ * a file's bytes read and written. a file mapped shared has its newest
+ * bytes in the pages its mappings share, so a read says what they have
+ * and a write lands in them too, as one with the file's
+ */
 int64_t vfs_read(const struct vfs_file *f, uint64_t offset, void *buf,
                  uint64_t len);
 int64_t vfs_write(struct vfs_file *f, uint64_t offset, const void *buf,
@@ -133,6 +138,16 @@ int64_t vfs_write(struct vfs_file *f, uint64_t offset, const void *buf,
  * for a directory
  */
 bool vfs_truncate(struct vfs_file *p_node, uint64_t u_size);
+
+/*
+ * the same two of what the filesystem has alone, for the shared pages,
+ * which hold the lock the two above take while they read a page in or
+ * write one back
+ */
+int64_t vfs_read_store(const struct vfs_file *p_node, uint64_t u_offset,
+                       void *p_buf, uint64_t u_len);
+int64_t vfs_write_store(struct vfs_file *p_node, uint64_t u_offset,
+                        const void *p_buf, uint64_t u_len);
 
 bool vfs_may_read(const struct vfs_file *f, int uid);
 

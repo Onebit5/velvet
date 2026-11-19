@@ -57,6 +57,11 @@ enum lock_rank {
      * into ring 3, and which takes nothing but the memory under it
      */
     LOCK_RANK_MM,
+    /*
+     * the pages spaces share, which a fault takes under the memory's
+     * lock, and which reads and writes the file they are of under it
+     */
+    LOCK_RANK_SHARED,
     LOCK_RANK_DEVICE,           /* input, pci, the disk, ramfs */
 
     LOCK_RANK_CLOCK,

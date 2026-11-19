@@ -7,7 +7,9 @@
 
 #include <velvet/addrspace.h>
 #include <velvet/file.h>
+#include <velvet/errno.h>
 #include <velvet/pmm.h>
+#include <velvet/shared.h>
 #include <velvet/pressure.h>
 #include <velvet/vmm.h>
 #include <velvet/kmalloc.h>
@@ -62,6 +64,9 @@ static void shoot(const struct addrspace *as)
 }
 
 static struct slab_cache addrspace_cache;
+
+_Static_assert(sizeof(struct addrspace) <= 4096,
+               "a space is a slab's object, which fits in a page");
 
 struct addrspace *addrspace_create(uint64_t kernel_pml4)
 {
@@ -124,10 +129,12 @@ static uint64_t copy_level(uint64_t phys, int level)
              * both remember why, and the frame learns it has two
              * holders. the *parent's* entry is changed too, a fork
              * where only the child is protected is a fork where the
-             * parent quietly writes through the child's memory
+             * parent quietly writes through the child's memory. a page
+             * of a shared set is the one thing kept writable: being
+             * written by both is what it is for
              */
             uint64_t entry = in[i];
-            if (entry & PTE_WRITE) {
+            if ((entry & PTE_WRITE) && !(entry & PTE_SHARED)) {
                 entry = (entry & ~PTE_WRITE) | PTE_COW;
                 in[i] = entry;
             }
@@ -197,6 +204,9 @@ struct addrspace *addrspace_fork(struct addrspace *from,
         as->vmas[i] = from->vmas[i];
         if (as->vmas[i].kind != VMA_NONE && as->vmas[i].p_file != NULL) {
             file_get(as->vmas[i].p_file);
+        }
+        if (as->vmas[i].kind == VMA_SHARED) {
+            shared_get(as->vmas[i].p_shared);
         }
     }
     as->u_brk_start = from->u_brk_start;
@@ -286,14 +296,14 @@ static struct vma *region_for(struct addrspace *as, uint64_t virt)
     return NULL;
 }
 
-/* the lock is held */
-static bool add_region(struct addrspace *as, uint64_t u_start, uint64_t u_end,
-                       uint64_t u_flags, enum vma_kind e_kind,
-                       struct file *p_file, uint64_t u_image_offset,
-                       uint64_t u_file_end)
+/* the region made, or NULL. the lock is held */
+static struct vma *add_region(struct addrspace *as, uint64_t u_start,
+                              uint64_t u_end, uint64_t u_flags,
+                              enum vma_kind e_kind, struct file *p_file,
+                              uint64_t u_image_offset, uint64_t u_file_end)
 {
     if (u_end <= u_start) {
-        return false;
+        return NULL;
     }
 
     u_start &= ~(PAGE_SIZE - 1);
@@ -312,13 +322,14 @@ static bool add_region(struct addrspace *as, uint64_t u_start, uint64_t u_end,
          * refusing to make the second
          */
         if (u_start < as->vmas[i].end && u_end > as->vmas[i].start) {
-            return false;
+            return NULL;
         }
     }
     if (p_slot == NULL) {
-        return false;
+        return NULL;
     }
 
+    memset(p_slot, 0, sizeof *p_slot);
     p_slot->kind = e_kind;
     p_slot->start = u_start;
     p_slot->end = u_end;
@@ -326,10 +337,11 @@ static bool add_region(struct addrspace *as, uint64_t u_start, uint64_t u_end,
     p_slot->p_file = p_file;
     p_slot->image_offset = u_image_offset;
     p_slot->file_end = u_file_end;
+    p_slot->b_may_write = true;
     if (p_file != NULL) {
         file_get(p_file);
     }
-    return true;
+    return p_slot;
 }
 
 bool addrspace_add_region(struct addrspace *as, uint64_t start, uint64_t end,
@@ -342,7 +354,7 @@ bool addrspace_add_region(struct addrspace *as, uint64_t start, uint64_t end,
     }
     uint64_t u_flags = spin_lock_irq(&as->lock);
     bool b_added = add_region(as, start, end, flags, kind, p_file,
-                              image_offset, file_end);
+                              image_offset, file_end) != NULL;
     spin_unlock_irq(&as->lock, u_flags);
     return b_added;
 }
@@ -419,11 +431,14 @@ static void split_at(struct vma *p_vma, struct vma *p_slot, uint64_t u_at)
 {
     *p_slot = *p_vma;
     p_slot->start = u_at;
-    if (p_vma->kind == VMA_FILE) {
+    if (p_vma->kind == VMA_FILE || p_vma->kind == VMA_SHARED) {
         p_slot->image_offset += u_at - p_vma->start;
     }
     if (p_slot->p_file != NULL) {
         file_get(p_slot->p_file);
+    }
+    if (p_slot->kind == VMA_SHARED) {
+        shared_get(p_slot->p_shared);
     }
     p_vma->end = u_at;
 }
@@ -471,9 +486,10 @@ static void cut_at_edges(struct addrspace *p_as, uint64_t u_start,
  * another thread of the space may still be holding a translation to one,
  * and a frame given back to the allocator while it is would be some
  * other program's memory written through it, so each is let go of only
- * once every core has thrown its translations away. and the files of the
- * regions that went with them, which are let go of only once the lock is,
- * since letting go of the last hold on a file may reach the filesystem
+ * once every core has thrown its translations away. and the files and
+ * the sets of shared pages of the regions that went with them, which are
+ * let go of only once the lock is, since letting go of the last hold on
+ * either may reach the filesystem
  */
 #define DROPPED_MAX 64
 
@@ -483,6 +499,8 @@ struct dropped {
     bool b_changed;             /* an entry some core may hold changed */
     size_t sz_files;
     struct file *arr_files[VMA_MAX];
+    size_t sz_sets;
+    struct shared_pages *arr_sets[VMA_MAX];
 };
 
 /* every core's translations thrown away, and then the frames let go of */
@@ -507,14 +525,25 @@ static void let_go(const struct addrspace *p_as, struct dropped *p_drop)
         file_put(p_drop->arr_files[sz_at]);
     }
     p_drop->sz_files = 0;
+    for (size_t sz_at = 0; sz_at < p_drop->sz_sets; sz_at++) {
+        shared_put(p_drop->arr_sets[sz_at]);
+    }
+    p_drop->sz_sets = 0;
 }
 
-/* a region gone, its file into p_drop. a space has VMA_MAX of them */
+/*
+ * a region gone, its file and its set into p_drop. a space has VMA_MAX
+ * of them
+ */
 static void drop_region(struct vma *p_vma, struct dropped *p_drop)
 {
     if (p_vma->p_file != NULL) {
         p_drop->arr_files[p_drop->sz_files++] = p_vma->p_file;
         p_vma->p_file = NULL;
+    }
+    if (p_vma->kind == VMA_SHARED) {
+        p_drop->arr_sets[p_drop->sz_sets++] = p_vma->p_shared;
+        p_vma->p_shared = NULL;
     }
     p_vma->kind = VMA_NONE;
 }
@@ -580,7 +609,7 @@ static bool unmap(struct addrspace *p_as, uint64_t u_start, uint64_t u_len,
         } else if (p_vma->start < u_start) {
             p_vma->end = u_start;
         } else if (p_vma->end > u_end) {
-            if (p_vma->kind == VMA_FILE) {
+            if (p_vma->kind == VMA_FILE || p_vma->kind == VMA_SHARED) {
                 p_vma->image_offset += u_end - p_vma->start;
             }
             p_vma->start = u_end;
@@ -613,7 +642,7 @@ bool addrspace_unmap(struct addrspace *p_as, uint64_t u_start, uint64_t u_len)
  */
 static uint64_t reprotect(uint64_t u_pte, uint64_t u_flags)
 {
-    uint64_t u_kept = u_pte & (PTE_ADDR_MASK | PTE_COW);
+    uint64_t u_kept = u_pte & (PTE_ADDR_MASK | PTE_COW | PTE_SHARED);
     uint64_t u_want = u_flags & ~(uint64_t)PTE_ADDR_MASK;
     if (u_pte & PTE_COW) {
         u_want &= ~(uint64_t)PTE_WRITE;
@@ -649,6 +678,15 @@ static bool protect(struct addrspace *p_as, uint64_t u_start, uint64_t u_len,
                 *p_pte = reprotect(*p_pte, u_flags);
                 vmm_flush_page(u_addr);
                 p_drop->b_changed = true;
+                /*
+                 * a shared page made writable may be stored to from
+                 * here on, which the set has to know to write it back
+                 */
+                if (p_vma->kind == VMA_SHARED && (u_flags & PTE_WRITE)) {
+                    shared_dirty(p_vma->p_shared,
+                                 (p_vma->image_offset
+                                  + (u_addr - p_vma->start)) / PAGE_SIZE);
+                }
             }
         }
     }
@@ -728,7 +766,8 @@ static bool add_anon(struct addrspace *p_as, uint64_t u_start,
         p_above->start = u_start;
         return true;
     }
-    return add_region(p_as, u_start, u_end, u_flags, VMA_ANON, NULL, 0, 0);
+    return add_region(p_as, u_start, u_end, u_flags, VMA_ANON, NULL, 0, 0)
+           != NULL;
 }
 
 /* the lowest free stretch of u_len in the mmap area, or 0 */
@@ -809,7 +848,8 @@ uint64_t addrspace_map_anon(struct addrspace *p_as, uint64_t u_hint,
 
 uint64_t addrspace_map_file(struct addrspace *p_as, uint64_t u_hint,
                             uint64_t u_len, uint64_t u_flags, bool b_fixed,
-                            struct file *p_file, uint64_t u_offset)
+                            struct file *p_file, uint64_t u_offset,
+                            bool b_may_write)
 {
     if (p_as == NULL || p_file == NULL || u_len == 0
         || PAGE_UP(u_len) < u_len) {
@@ -819,14 +859,111 @@ uint64_t addrspace_map_file(struct addrspace *p_as, uint64_t u_hint,
     struct dropped drop = { 0 };
     uint64_t u_lock = spin_lock_irq(&p_as->lock);
     uint64_t u_at = place(p_as, u_hint, u_len, b_fixed, &drop);
-    if (u_at != 0
-        && !add_region(p_as, u_at, u_at + u_len, u_flags, VMA_FILE, p_file,
-                       u_offset, u_at + u_len)) {
-        u_at = 0;
+    struct vma *p_vma = (u_at != 0)
+                        ? add_region(p_as, u_at, u_at + u_len, u_flags,
+                                     VMA_FILE, p_file, u_offset,
+                                     u_at + u_len)
+                        : NULL;
+    if (p_vma != NULL) {
+        p_vma->b_may_write = b_may_write;
     }
     spin_unlock_irq(&p_as->lock, u_lock);
     let_go(p_as, &drop);
-    return u_at;
+    return (p_vma != NULL) ? u_at : 0;
+}
+
+uint64_t addrspace_map_shared(struct addrspace *p_as, uint64_t u_hint,
+                              uint64_t u_len, uint64_t u_flags, bool b_fixed,
+                              struct shared_pages *p_set,
+                              struct file *p_file, uint64_t u_offset,
+                              bool b_may_write)
+{
+    if (p_as == NULL || p_set == NULL || u_len == 0
+        || PAGE_UP(u_len) < u_len) {
+        return 0;
+    }
+    u_len = PAGE_UP(u_len);
+    struct dropped drop = { 0 };
+    uint64_t u_lock = spin_lock_irq(&p_as->lock);
+    uint64_t u_at = place(p_as, u_hint, u_len, b_fixed, &drop);
+    struct vma *p_vma = (u_at != 0)
+                        ? add_region(p_as, u_at, u_at + u_len, u_flags,
+                                     VMA_SHARED, p_file, u_offset,
+                                     u_at + u_len)
+                        : NULL;
+    if (p_vma != NULL) {
+        shared_get(p_set);
+        p_vma->p_shared = p_set;
+        p_vma->b_may_write = b_may_write;
+    }
+    spin_unlock_irq(&p_as->lock, u_lock);
+    let_go(p_as, &drop);
+    return (p_vma != NULL) ? u_at : 0;
+}
+
+bool addrspace_may_write(struct addrspace *p_as, uint64_t u_start,
+                         uint64_t u_len)
+{
+    bool b_may = true;
+    uint64_t u_end = u_start + PAGE_UP(u_len);
+    uint64_t u_lock = spin_lock_irq(&p_as->lock);
+    for (size_t sz_at = 0; sz_at < VMA_MAX; sz_at++) {
+        const struct vma *p_vma = &p_as->vmas[sz_at];
+        if (p_vma->kind != VMA_NONE && p_vma->start < u_end
+            && p_vma->end > u_start && !p_vma->b_may_write) {
+            b_may = false;
+        }
+    }
+    spin_unlock_irq(&p_as->lock, u_lock);
+    return b_may;
+}
+
+/*
+ * the sets of the files the range maps shared, each held, and which of
+ * its pages the range covers, gathered under the lock and written back
+ * after it, since writing reaches the filesystem
+ */
+struct to_sync {
+    struct shared_pages *p_set;
+    uint64_t u_first;
+    uint64_t u_last;
+};
+
+int64_t addrspace_sync(struct addrspace *p_as, uint64_t u_start,
+                       uint64_t u_len)
+{
+    struct to_sync arr_sync[VMA_MAX];
+    size_t sz_sync = 0;
+    uint64_t u_end = u_start + PAGE_UP(u_len);
+    uint64_t u_lock = spin_lock_irq(&p_as->lock);
+    bool b_covered = range_covered(p_as, u_start, u_end);
+    for (size_t sz_at = 0; sz_at < VMA_MAX && b_covered; sz_at++) {
+        const struct vma *p_vma = &p_as->vmas[sz_at];
+        if (p_vma->kind != VMA_SHARED || p_vma->p_file == NULL
+            || p_vma->start >= u_end || p_vma->end <= u_start) {
+            continue;
+        }
+        uint64_t u_from = (p_vma->start > u_start) ? p_vma->start : u_start;
+        uint64_t u_to = (p_vma->end < u_end) ? p_vma->end : u_end;
+        shared_get(p_vma->p_shared);
+        arr_sync[sz_sync].p_set = p_vma->p_shared;
+        arr_sync[sz_sync].u_first = (p_vma->image_offset
+                                     + (u_from - p_vma->start)) / PAGE_SIZE;
+        arr_sync[sz_sync].u_last = (p_vma->image_offset
+                                    + (u_to - p_vma->start)) / PAGE_SIZE - 1;
+        sz_sync++;
+    }
+    spin_unlock_irq(&p_as->lock, u_lock);
+
+    int64_t i_why = b_covered ? 0 : -ENOMEM;
+    for (size_t sz_at = 0; sz_at < sz_sync; sz_at++) {
+        if (shared_sync(arr_sync[sz_at].p_set, arr_sync[sz_at].u_first,
+                        arr_sync[sz_at].u_last) < 0) {
+            i_why = -EIO;
+        }
+        shared_put(arr_sync[sz_at].p_set);
+    }
+    return i_why;
 }
 
 /* the lock is held */
@@ -879,6 +1016,27 @@ static bool populate(struct addrspace *as, struct vma *v, uint64_t virt)
     /* a program may not take the last of the machine's memory. */
     if (!pressure_allow(pmm_free_bytes() / PAGE_SIZE, 1, PRESSURE_USER)) {
         return false;
+    }
+
+    /*
+     * a page of a set is the set's, made by it the first time any space
+     * touches it, and the same frame for every space after
+     */
+    if (v->kind == VMA_SHARED) {
+        uint64_t u_frame = 0;
+        if (!shared_frame(v->p_shared,
+                          (v->image_offset + (page - v->start)) / PAGE_SIZE,
+                          (v->flags & PTE_WRITE) != 0, &u_frame)) {
+            return false;
+        }
+        if (!vmm_map_range(as->pml4, page, u_frame, PAGE_SIZE,
+                           v->flags | PTE_SHARED)) {
+            pmm_unref(u_frame);
+            return false;
+        }
+        as->pages_in_use++;
+        vmm_flush_page(page);
+        return true;
     }
 
     uint64_t phys = pmm_alloc_pages(1);
@@ -1108,6 +1266,9 @@ static void destroy(struct addrspace *as)
         if (as->vmas[sz_at].kind != VMA_NONE) {
             file_put(as->vmas[sz_at].p_file);
         }
+        if (as->vmas[sz_at].kind == VMA_SHARED) {
+            shared_put(as->vmas[sz_at].p_shared);
+        }
     }
     slab_free(as);
 }
@@ -1293,6 +1454,9 @@ size_t addrspace_regions(struct addrspace *p_as, struct vma *p_out,
         }
         if (sz_count < sz_max) {
             p_out[sz_count] = *p_next;
+            if (p_next->kind == VMA_SHARED) {
+                p_out[sz_count].p_shared = NULL;
+            }
             if (p_next->p_file != NULL) {
                 file_get(p_next->p_file);
             }

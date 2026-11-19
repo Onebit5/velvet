@@ -36,6 +36,11 @@
 #define PTE_NX      (1ull << 63)    /* needs EFER.NXE, or its a fault */
 
 #define PTE_COW     (1ull << 9)
+/*
+ * a frame a set of shared pages holds, which every space mapping the set
+ * maps: a fork shares it as it is, rather than marking it for copying
+ */
+#define PTE_SHARED  (1ull << 10)
 
 #define PTE_ADDR_MASK 0x000ffffffffff000ull
 

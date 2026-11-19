@@ -281,8 +281,9 @@ SELFTEST_ROOT := fs/blockdev fs/fsck fs/install fs/mknod fs/mount fs/root \
 # make test runs them as programs on the machine the build is on as
 # well, and each saying ok there is the check that what they ask is
 # answered the same on both
-SELFTEST_BOTH := fs/procself fs/procstat fs/ps mm/meminfo sched/futex \
-                 sched/pthread sched/script sched/spawn sched/usage
+SELFTEST_BOTH := fs/procself fs/procstat fs/ps mm/meminfo mm/shared \
+                 sched/futex sched/pthread sched/script sched/spawn \
+                 sched/usage
 
 # the image's /init: asks which tests to run, runs each as a guest and
 # powers the machine off. built the way a test is, since it is a program
@@ -545,7 +546,7 @@ $(T)/slab:     tests/test_slab.c     sched/spinlock.c \
                mm/pmm.c mm/buddy.c \
                mm/kmalloc.c lib/string.c
 $(T)/addrspace: tests/test_addrspace.c mm/addrspace.c mm/pressure.c \
-               mm/vmm.c mm/slab.c \
+               mm/vmm.c mm/slab.c mm/shared.c \
                sched/spinlock.c lib/string.c
 $(T)/vmm:      tests/test_vmm.c      mm/vmm.c \
                lib/string.c
@@ -715,7 +716,7 @@ $(T)/epoch:    tests/test_epoch.c    lib/epoch.c lib/clock.c
 # structure, and its interesting cases are all at the edges
 $(T)/pressure: tests/test_pressure.c mm/pressure.c
 $(T)/vfs:      tests/test_vfs.c      fs/vfs.c fs/file.c fs/dev.c \
-               fs/ramdisk.c fs/ramfs.c fs/path.c sched/spinlock.c \
+               fs/ramdisk.c fs/ramfs.c fs/path.c sched/spinlock.c mm/shared.c \
                lib/string.c
 # the protocol as the kernel declares it against the loader's own header,
 # field by field, since the two describe the same bytes and neither can

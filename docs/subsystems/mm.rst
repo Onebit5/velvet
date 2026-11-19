@@ -169,6 +169,21 @@ dereferencing nonsense are told apart.
   under it and an unlinked program's file from going while it runs. a
   page still shared after a fork is copied to be written only when its
   region allows writing.
+- a file mapped shared is a region of the file's set of shared pages,
+  ``mm/shared.c``: a frame for each page any space has touched, read in
+  the first time, which every space mapping the file maps and the set
+  holds for as long as any does. its entries are marked ``PTE_SHARED``,
+  so a fork shares them as they are, writable, rather than marking them
+  to be copied. a write to the file lands in the set's pages as well as
+  in the file, and a read of the file says what the set's pages have
+  over what the file has, both under the set's lock, which ranks between
+  the space's and the filesystems', so a mapping and the file never
+  disagree. what was stored is written back to the file, as far as the
+  file goes and never further, by msync, fsync and sync, and when the
+  last region of the set goes. a set is found by filesystem, mount and
+  inode, so every open of a file finds the one set, and a file with no
+  inode has none. memory mapped shared with no file is a set of no file,
+  which a fork shares the same way and nothing writes back.
 - ``addrspace_fault()`` either makes a private copy of a
   copy-on-write page, or populates a page inside an agreed region, or
   reports that the fault was real.
@@ -303,9 +318,23 @@ program going wrong.
     whatever was there when fixed. nothing is mapped below 64 KiB, where
     NULL points.
 
-``uint64_t addrspace_map_file(as, hint, len, flags, fixed, p_file, offset)``
+``addrspace_map_file(as, hint, len, flags, fixed, p_file, offset, may_write)``
     the same for a file from ``offset``: each page read in the first time
     it is touched, and the space's own after, which is a private ``mmap``.
+    never made writable when not ``may_write``.
+
+``addrspace_map_shared(as, hint, len, flags, fixed, p_set, p_file, ...)``
+    the same for the pages of a set of shared pages, from ``offset``,
+    named for ``p_file`` when there is one, and never made writable when
+    not ``may_write``: a shared ``mmap``. the region holds the set.
+
+``bool addrspace_may_write(struct addrspace *as, uint64_t start, uint64_t len)``
+    whether a range may be made writable, which a file mapped shared
+    through a descriptor that may not write it may not.
+
+``int64_t addrspace_sync(struct addrspace *as, uint64_t start, uint64_t len)``
+    what was stored to the files a range maps shared written back to
+    them: 0, ``-ENOMEM`` when part of it is in no region, or ``-EIO``.
 
 ``bool addrspace_discard(struct addrspace *as, uint64_t start, uint64_t len)``
     every page made in a range given back, the regions kept: the next
@@ -380,6 +409,57 @@ program going wrong.
 ``uint64_t pages_in_use``
     how many pages the program has actually been given, as opposed to how
     many it has been promised.
+
+the shared interface
+--------------------
+
+the pages more than one space maps: a file's, mapped shared, or memory
+mapped shared with no file behind it. what is in them is the newest of
+the file, so a read of the file is laid over with them and a write to it
+lands in them, and they are carried back to the file when asked and
+when the last mapping goes.
+
+``struct shared_pages *shared_of_file(struct file *p_file)``
+    the set of a file, the one every mapping of it has however it was
+    opened, held. NULL for a file with no inode, or with no memory.
+
+``struct shared_pages *shared_anon(void)``
+    a set of no file, its pages zeroes to start with, held.
+
+``void shared_get(p_set)`` and ``void shared_put(p_set)``
+    a hold taken and let go of. the last writes back what was stored and
+    gives the frames back, so it is never called with a lock held.
+
+``bool shared_frame(p_set, index, b_write, p_frame)``
+    a page of the set, made the first time, with a reference to its frame
+    for the caller to map, and stored to from then on when ``b_write``.
+
+``void shared_dirty(p_set, index)``
+    a page stored to from now on, for a mapping made writable.
+
+``int64_t shared_sync(p_set, first, last)``
+    the pages in a range that were stored to, written to the file as far
+    as the file goes. a page stays stored to once it has been: nothing
+    can tell when a space stores to it again, so every msync writes it.
+
+``int64_t shared_sync_all(void)``
+    the same for every file's set, for fsync and sync.
+
+``uint64_t shared_lock(void)`` and ``void shared_unlock(uint64_t flags)``
+    the lock a read and a write of a file hold, for the set's pages to be
+    the file's newest bytes and for none to be read in half written.
+
+``void shared_wrote(p_node, offset, p_buf, len)``
+    bytes written to a file, taken by its set's pages. the lock is held.
+
+``void shared_overlay(p_node, offset, p_buf, len)``
+    bytes read from a file, its set's pages laid over them. the lock is
+    held.
+
+``void shared_resized(const struct vfs_file *p_node)``
+    a file's new length, past which its set's pages are zeroes. the lock
+    is held.
+
 
 the buddy interface
 -------------------

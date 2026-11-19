@@ -47,8 +47,8 @@ number  name               where                  notes
 6       lstat              arch/x86_64/syscall.c  newfstatat, not following one
 7       poll               fs/select.c            every 10 ms
 8       lseek              fs/read_write.c
-9       mmap               mm/mmap.c              anonymous, or a private copy
-                                                  of a file
+9       mmap               mm/mmap.c              anonymous or of a file,
+                                                  private or shared
 10      mprotect           mm/mmap.c
 11      munmap             mm/mmap.c
 12      brk                mm/mmap.c
@@ -70,6 +70,8 @@ number  name               where                  notes
 24      sched_yield        sched/sys.c
 25      mremap             mm/mmap.c              smaller in place; larger is
                                                   -ENOMEM
+26      msync              mm/mmap.c              writes back before it
+                                                  returns, MS_ASYNC too
 28      madvise            mm/mmap.c              MADV_DONTNEED gives pages back
 32      dup                fs/fcntl.c
 33      dup2               fs/fcntl.c
@@ -337,13 +339,20 @@ these answer, but less than they will:
   ``CLONE_DETACHED`` are taken and mean nothing.
 - futex waits and wakes, requeues, and does both with a bitset.
   ``FUTEX_WAKE_OP`` and the priority inheriting calls are ``-ENOSYS``,
-  since nothing here keeps a priority, and every word is the process's
-  own, so ``FUTEX_PRIVATE_FLAG`` changes nothing. a wait with a time
-  limit that a signal ends with no handler is made again with the whole
-  of its timespec.
-- a file is mapped as a private copy. ``MAP_SHARED`` over a file is
-  refused with ``-ENODEV`` when it could be written, since nothing would
-  carry the writes back.
+  since nothing here keeps a priority. every word is known by its
+  address in the space that waits on it, so ``FUTEX_PRIVATE_FLAG``
+  changes nothing, and a word in memory mapped shared is no different: a
+  wake from another process mapping it does not reach the waiter. a wait
+  with a time limit that a signal ends with no handler is made again
+  with the whole of its timespec.
+- a file on a filesystem with no inodes, fat32, has no pages to share,
+  since nothing says two opens of it are one file. mapped shared it is
+  mapped as a copy through a descriptor that may not write it, which
+  reads the same, and refused with ``-ENODEV`` through one that may.
+- a store through a shared mapping is written back to the file as far as
+  the file goes. a file truncated under one leaves the pages past its new
+  end mapped, as zeroes, where a program touching them would be sent
+  ``SIGBUS`` elsewhere.
 - mremap only makes a mapping smaller.
 - poll and select look again every 10 ms rather than being woken.
 - the interval timers count real time only; ``ITIMER_VIRTUAL`` and

@@ -22,6 +22,7 @@
 #include <velvet/pty.h>
 #include <velvet/spinlock.h>
 #include <velvet/string.h>
+#include <velvet/shared.h>
 
 /* what a file on the disk is allowed to be. */
 #define DISK_MODE 0644
@@ -823,8 +824,8 @@ bool vfs_rename(const char *from, const char *to)
     return b_ok;
 }
 
-int64_t vfs_read(const struct vfs_file *f, uint64_t offset, void *buf,
-                 uint64_t len)
+int64_t vfs_read_store(const struct vfs_file *f, uint64_t offset, void *buf,
+                       uint64_t len)
 {
     if (f->is_dir) {
         return -1;
@@ -846,8 +847,8 @@ int64_t vfs_read(const struct vfs_file *f, uint64_t offset, void *buf,
     return -1;
 }
 
-int64_t vfs_write(struct vfs_file *f, uint64_t offset, const void *buf,
-                  uint64_t len)
+int64_t vfs_write_store(struct vfs_file *f, uint64_t offset,
+                        const void *buf, uint64_t len)
 {
     if (f->kind == VFS_RAMFS && !f->is_dir) {
         int64_t i_put = ramfs_write(f->u_ino, offset, buf, len);
@@ -876,7 +877,35 @@ int64_t vfs_write(struct vfs_file *f, uint64_t offset, const void *buf,
     return n;
 }
 
-bool vfs_truncate(struct vfs_file *p_node, uint64_t u_size)
+/*
+ * a read under the lock a write holds, so it sees all of one or none of
+ * it, and then whatever the shared pages of the file have over it
+ */
+int64_t vfs_read(const struct vfs_file *p_node, uint64_t u_offset,
+                 void *p_buf, uint64_t u_len)
+{
+    uint64_t u_flags = shared_lock();
+    int64_t i_got = vfs_read_store(p_node, u_offset, p_buf, u_len);
+    if (i_got > 0) {
+        shared_overlay(p_node, u_offset, p_buf, (uint64_t)i_got);
+    }
+    shared_unlock(u_flags);
+    return i_got;
+}
+
+int64_t vfs_write(struct vfs_file *p_node, uint64_t u_offset,
+                  const void *p_buf, uint64_t u_len)
+{
+    uint64_t u_flags = shared_lock();
+    int64_t i_put = vfs_write_store(p_node, u_offset, p_buf, u_len);
+    if (i_put > 0) {
+        shared_wrote(p_node, u_offset, p_buf, (uint64_t)i_put);
+    }
+    shared_unlock(u_flags);
+    return i_put;
+}
+
+static bool truncate_store(struct vfs_file *p_node, uint64_t u_size)
 {
     if (p_node->kind == VFS_RAMFS && !p_node->is_dir) {
         bool b_ok = ramfs_truncate(p_node->u_ino, u_size);
@@ -900,6 +929,17 @@ bool vfs_truncate(struct vfs_file *p_node, uint64_t u_size)
     p_node->size = entry.size;
     p_node->cluster = entry.cluster;
     return true;
+}
+
+bool vfs_truncate(struct vfs_file *p_node, uint64_t u_size)
+{
+    uint64_t u_flags = shared_lock();
+    bool b_ok = truncate_store(p_node, u_size);
+    if (b_ok) {
+        shared_resized(p_node);
+    }
+    shared_unlock(u_flags);
+    return b_ok;
 }
 
 bool vfs_may_read(const struct vfs_file *f, int uid)

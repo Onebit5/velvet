@@ -10,6 +10,7 @@
 #include <velvet/errno.h>
 #include <velvet/file.h>
 #include <velvet/process.h>
+#include <velvet/shared.h>
 #include <velvet/string.h>
 #include <velvet/disk.h>
 #include <asm/uaccess.h>
@@ -355,6 +356,7 @@ int64_t sys_umask(uint32_t u_mask)
 
 int64_t sys_sync(void)
 {
+    shared_sync_all();
     if (disk_dirty()) {
         disk_sync();
     }
@@ -362,7 +364,8 @@ int64_t sys_sync(void)
 }
 
 /*
- * one file is all of them: the disk is written out whole, which is more
+ * one file is all of them: what was stored to every file mapped shared
+ * goes to its file, and the disk is written out whole, which is more
  * than was asked for and never less
  */
 int64_t sys_fsync(int i_fd)
@@ -372,8 +375,9 @@ int64_t sys_fsync(int i_fd)
         return -EBADF;
     }
     file_put(p_file);
+    bool b_mapped = shared_sync_all() == 0;
     if (disk_dirty() && !disk_sync()) {
         return -EIO;
     }
-    return 0;
+    return b_mapped ? 0 : -EIO;
 }

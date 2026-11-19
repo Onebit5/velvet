@@ -887,6 +887,15 @@ which has no working directory, is the root's.
 ``bool vfs_truncate(struct vfs_file *f, uint64_t size);``
     a file on a disk or in memory made any length. /proc refuses, and so does a directory
 
+``int64_t vfs_read(p_node, u_offset, p_buf, u_len)``
+    a file's bytes, and over them what the pages its shared mappings
+    share have, which are newer. ``vfs_write`` lands in those pages as it
+    lands in the file, and ``vfs_truncate`` leaves them zeroes past the
+    end, all three under the pages' lock, so a mapping and the file never
+    disagree. ``vfs_read_store`` and ``vfs_write_store`` are what the
+    filesystem has alone, for the pages to be read in and written back
+    with that lock held.
+
 ``bool vfs_chmod(const char *path, uint32_t mode);``
     every one of these answers false in /proc and /dev, and on a fat disk.
 

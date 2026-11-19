@@ -36,6 +36,10 @@
 #define MADV_DONTNEED   4
 #define MADV_FREE       8
 
+#define MS_ASYNC      1
+#define MS_INVALIDATE 2
+#define MS_SYNC       4
+
 #define MREMAP_MAYMOVE 1
 #define MREMAP_FIXED   2
 

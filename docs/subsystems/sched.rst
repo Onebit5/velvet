@@ -130,6 +130,7 @@ locks of *lower* rank. it is checked, not hoped for.
     LOCK_RANK_MOUNT     the mount table, held to look a name up
     LOCK_RANK_TTY       a terminal, which takes keys out of input
     LOCK_RANK_MM        a program's memory, which a fault takes
+    LOCK_RANK_SHARED    pages spaces share, and a file's bytes under them
     LOCK_RANK_DEVICE    input, pci, the disk
     LOCK_RANK_CLOCK     the cmos clock, a leaf: anything may ask it
     LOCK_RANK_SCHED     the run queue

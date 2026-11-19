@@ -11,6 +11,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 void panic(const char *fmt, ...)
 {
@@ -49,6 +50,40 @@ uint64_t pmm_hhdm_offset(void)
     return 0;
 }
 
+/* and who else holds one, as the shared pages count their frames */
+static struct {
+    uint64_t u_frame;
+    unsigned u_extra;
+} s_arr_refs[64];
+
+uint64_t pmm_alloc_pages(size_t sz_count)
+{
+    (void)sz_count;
+    return pmm_alloc();
+}
+void pmm_ref(uint64_t u_phys)
+{
+    size_t sz_at = 0;
+    while (sz_at < 63 && s_arr_refs[sz_at].u_frame != u_phys
+           && s_arr_refs[sz_at].u_frame != 0) {
+        sz_at++;
+    }
+    s_arr_refs[sz_at].u_frame = u_phys;
+    s_arr_refs[sz_at].u_extra++;
+}
+bool pmm_unref(uint64_t u_phys)
+{
+    for (size_t sz_at = 0; sz_at < 64; sz_at++) {
+        if (s_arr_refs[sz_at].u_frame == u_phys
+            && s_arr_refs[sz_at].u_extra > 0) {
+            s_arr_refs[sz_at].u_extra--;
+            return false;
+        }
+    }
+    pmm_free(u_phys);
+    return true;
+}
+
 #include <velvet/vfs.h>
 #include <velvet/disk.h>
 #include <velvet/ramdisk.h>
@@ -56,6 +91,8 @@ uint64_t pmm_hhdm_offset(void)
 #include <velvet/blockdev.h>
 #include <velvet/process.h>
 #include <velvet/epoch.h>
+#include <velvet/file.h>
+#include <velvet/shared.h>
 #include <uapi/velvet/errno.h>
 
 static int failures = 0;
@@ -892,6 +929,38 @@ int main(void)
               && memcmp(arr_got, "in memory", 9) == 0,
               "a file made there is made in memory, and reads back by its "
               "name");
+
+        /*
+         * the file mapped shared: a page of it in the set its mappings
+         * share, which a read of the file says what it has over what
+         * the file has, and which a write and a truncation reach
+         */
+        struct file *p_made = vfs_open_file(&r, FILE_READ | FILE_WRITE);
+        struct shared_pages *p_set = shared_of_file(p_made);
+        uint64_t u_frame = 0;
+        CHECK(p_set != NULL && shared_frame(p_set, 0, true, &u_frame)
+              && memcmp(pmm_phys_to_virt(u_frame), "in memory", 9) == 0,
+              "a file mapped shared has its page read in from the file");
+        uint8_t *p_mapped = pmm_phys_to_virt(u_frame);
+        memcpy(p_mapped, "IN", 2);
+        CHECK(vfs_read(&q, 0, arr_got, sizeof arr_got) == 9
+              && memcmp(arr_got, "IN memory", 9) == 0,
+              "a store through a mapping is what a read of the file says, "
+              "before it is written back");
+        CHECK(vfs_write(&q, 3, "MEM", 3) == 3
+              && memcmp(p_mapped, "IN MEMory", 9) == 0,
+              "and a write to the file is in the mapping at once");
+        CHECK(vfs_truncate(&q, 4) && p_mapped[3] == 'M' && p_mapped[4] == 0
+              && p_mapped[8] == 0,
+              "a truncation leaves zeroes in the mapping past the end");
+        CHECK(shared_sync(p_set, 0, 0) == 0
+              && vfs_read_store(&q, 0, arr_got, sizeof arr_got) == 4
+              && memcmp(arr_got, "IN M", 4) == 0,
+              "and msync carries the store to the file, as far as the file "
+              "goes and no further");
+        pmm_unref(u_frame);
+        shared_put(p_set);
+        file_put(p_made);
         int i_deeps = 0;
         for (size_t sz_at = 0; vfs_readdir("/mnt", sz_at, &q); sz_at++) {
             i_deeps += strcmp(q.name, "deep") == 0;
