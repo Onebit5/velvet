@@ -10,14 +10,17 @@ entry below should be a version on its own: buildable, bootable, and worth
 a paragraph in the changelog. the numbers run without gaps.
 
 this is the kernel's plan and only the kernel's. accounts, passwords,
-logins, shells, libraries and installers belong to the system built on top
-of it, even where they are why the kernel needs something; an entry here is
-the mechanism underneath, and says what a program can do with it.
+logins, shells, libraries, installers and every program a person uses
+belong to the system built on top of it, even where they are why the
+kernel needs something: an entry here is the mechanism underneath, and
+says what a program can do with it. a program can still be an entry's
+yardstick, and the best one there is: a program written elsewhere and
+run here unchanged is an outside answer about the kernel under it.
 
-0.4.x is the kernel's half of a machine that rebuilds itself, and on the
-way there velvet learns to answer the way linux does. 0.5.x is what the
-kernel owes a machine with more than one person on it, 0.6.x is hardware
-nobody emulated, and 0.7.x is a kernel that can say what it is doing.
+0.4.x is linux's interface to programs, answered here the way linux
+answers it. 0.5.x is what the kernel holds between people who share a
+machine, 0.6.x is hardware nobody emulated, and 0.7.x is a kernel that
+can say what it is doing.
 
 ## non-goals
 
@@ -36,18 +39,11 @@ nobody emulated, and 0.7.x is a kernel that can say what it is doing.
   removed again in 0.2.20, and the rule it left is that a thing that cannot be checked here does not ship. a second
   architecture comes back when there is a machine to check it on.
 
-## 0.4.x: the machine builds itself
+## 0.4.x: the interface programs already speak
 
-a machine that rebuilds itself from its own disk ends by building a
-kernel, installing it and rebooting into it. the kernel's half of that is
-a program that can reach a drive at all. a boot that can choose between
-two kernels, and one that cannot be lost to a kernel that does not come
-up, are the loader's, and philemon's roadmap has them.
-
-the programs that do the building are not this machine's own. a
-compiler, a shell and an archiver are written against linux's interface
-to programs by people who have never heard of this kernel, and since
-0.4.5 that interface is this kernel's: the system calls every x86_64
+a compiler, a shell and an archiver are written against linux's
+interface to programs by people who have never heard of this kernel, and
+since 0.4.5 that interface is this kernel's: the system calls every x86_64
 program and libc already makes, numbered and shaped the way they expect,
 the signals and the frame a handler is entered on, errno, the stack exec
 leaves, and floating point in ring 3, since 0.4.6 a root of its own to
@@ -78,38 +74,33 @@ nobody builds any more. no vdso, so `clock_gettime` is a real call here,
 which is slower and exactly as correct. and none of what the non-goals
 rule out: this is linux's interface to programs, and only that.
 
-## 0.5.x: a machine for more than one person
+## 0.5.x: what the kernel holds between people
 
-0.4.x is about what the machine can do. this is the first series about who
-it belongs to, and most of what that means to a person is programs: the
-account files, the shadow file and the login that reads it, `who`, a way
-to act as somebody else, tls and the log of who did what. what is here is
-what those stand on, and what the kernel has to enforce because nothing in
-ring 3 can.
+0.4.x is about what a program can do. this series is about what one
+person's programs cannot do to another's, which only the kernel can
+hold, since nothing in ring 3 can stop the rest of ring 3. who the people
+are, their names and passwords and how they prove who they are, is the
+system's to keep: the kernel deals in numbers, and in what each number
+may reach.
 
-there have been users since 0.1.5 and a session per console since 0.2.16,
-and both entries were careful about what they did not mean. the
-interesting part of a user is not how the password is stored but what its
-uid can and cannot reach, and that part is enforced by ring 3 and by a
-kernel that checks before it hands anything over. what has changed is
-that there is now something here worth reaching: a filesystem that
-survives a reboot, the source the machine was built from, and after 0.4.x
-the compiler that rebuilds it.
+there have been users since 0.1.5, and since 0.4.5 a process carries a
+gid and supplementary groups beside its uid, and a file's group bits are
+read for them. what is left is what a machine with more than one person
+on it stands on: bytes nobody can predict, a superuser that is a set of
+permissions rather than a number, keys that never touch the disk, an
+address space an exploit cannot count on, limits one person cannot spend
+for everybody, and a log nobody can rewrite.
 
-and one comment in `fs/vfs.c` is the kernel's half of this series in
-miniature: **"the group bits are deliberately not consulted. there is no
-notion of belonging to a group anywhere in this system, so checking them
-would be reading a number nobody ever sets and calling it a
-permission."** every entry below deletes a clause of that sentence.
-
-**0.5.0 something genuinely unpredictable.** this machine has no source of
-randomness at all, and this series cannot be finished without one: a salt
-for a shadow file, a vault key, an address that moves, and every
-nonce in a tls handshake. a csprng in `lib/`, seeded from `rdseed` where
-the cpu admits to having it, from timing jitter where it does not, and
-reseeded from the arrival times of interrupts, which is the one thing a
-machine on a wire has plenty of. ring 3 gets it through a `getrandom` and
-a `/dev/urandom` that are the same pool.
+**0.5.0 something genuinely unpredictable.** there is a generator: a
+chacha20 key behind `getrandom`, `/dev/random` and `/dev/urandom`, seeded
+at boot from the wall clock, the cycle counter and `rdrand` where the cpu
+has it, and stirred by every timer tick and every write to `/dev/random`.
+what it cannot say is how good its seed was, and a vault key, an address
+that moves and whatever ring 3 asks for need bytes that are
+unpredictable, not merely different. so the seed comes from `rdseed`
+where the cpu admits to having it and from timing jitter where it does
+not, and the pool is reseeded from the arrival times of interrupts,
+which is the one thing a machine on a wire has plenty of.
 
 the awkward part is in the middle of it: **this machine boots identically
 every time**, which is what makes everything else here testable and is
@@ -118,30 +109,26 @@ which source it got, because "seeded from the cpu" and "seeded from
 nothing" look the same from the outside and are not the same machine at
 all. and checking it needs a different shape than anything so far.
 statistics over the output can only catch a generator that is obviously
-broken, so what gets checked is the *construction*, against published
-vectors the way `hashcheck.py` once did sha-1, and then the plumbing
-separately by asking whether two boots differ. *ends when the pool is
+broken, so what is checked is the *construction*, which chacha20's
+published vectors already are, and then the plumbing separately, by
+asking whether two boots differ. *ends when the pool is
 seeded from at least three independent sources, refuses to hand out bytes
 before it is, and writes no state to disk.*
 
-**0.5.1 credentials, groups, and real permissions.** a gid beside the uid
-on every process, the supplementary groups beside that, and the calls that
-set them, as 0.4.1's `setuid` sets the uid a login becomes. ext4 has recorded a gid on every inode since 0.2.14 and nothing has
-ever set one to anything; the vfs starts consulting the group bits, and
-gains a `capable()` check so the kernel stops asking "is this uid 0",
-which it asks by name in the vfs and in the ramdisk driver, and starts
-asking "is this allowed to mount a disk". and `exec`
-honours the setuid bit, which nothing in this tree knows how to set
-today, for a program that acts as somebody else to stand on. which uid
-is called what, and which groups exist, is the system's to say.
-the kernel's own login went in 0.4.2, and the kernel deals in numbers.
+**0.5.1 permissions rather than uid 0.** the kernel asks "is this uid 0"
+by name wherever it decides whether something is allowed: to mount a
+disk, to change a file's owner, to signal somebody else's program, to
+read the kernel's caches. a `capable()` check takes its place, so each
+is a permission a process holds, all of them uid 0's to begin with, and
+one that can be given away without the rest. and `exec` honours the
+setuid and setgid bits, which nothing here acts on today, so that a
+program runs as the file's owner rather than as whoever started it: the
+one way a person can act as another without being them.
 
 **0.5.2 the primitives, and the first thing here that a right answer does
 not prove.** the ones the kernel itself uses: aes-xts, the cipher a vault
 (0.5.3) is written in, and sha-256 and hmac for the verifier in a vault's
-header. they go in `lib/`, beside `hash.c`. tls's are not here: nothing
-in the kernel speaks tls, and arithmetic the kernel does not use is a
-library's to keep.
+header. they go in `lib/`, beside `hash.c`.
 checked in isolation and against everybody: published vectors, and
 python's `hashlib` and `cryptography` over the same inputs, which is
 `hashcheck.py` doing again what it did for sha-1 in 0.3.17.
@@ -160,9 +147,9 @@ out of a comparison and no branch on a secret.
 0.2.13's block cache already sits, and it got there by being handed the
 two function pointers fat32 was already using, so the seam exists and has
 been load-bearing for a while. a vault is a large file that, given a key,
-mounts as a directory: aes-xts, with the key handed in from ring 3, which
-derives it from a password however it likes. the header is a salt and a verifier and nothing else. **the key
-never touches the disk**: powered off, the whole of it is noise.
+mounts as a directory: aes-xts, with the key handed in from ring 3. the
+header is a salt and a verifier and nothing else. **the key never
+touches the disk**: powered off, the whole of it is noise.
 
 this is better than full disk encryption for a machine like this one, and
 the reason is worth writing down rather than assuming: it protects
@@ -179,19 +166,17 @@ the path, which is the real test of whether the layer went in the right
 place.
 
 **0.5.4 an address space that moves.** the vmm can place things anywhere
-and places them in the same place every time: `0x400000` for every
-program, one constant for the top of every stack, one `MMAP_BASE` for
-every heap. stacks, heaps and mappings move on every spawn. **it makes a
-fault a security feature rather than only a bug**: an exploit that
-assumes a location crashes instead, and the kernel says so.
+and places them in the same place every time: `0x555555554000` for a
+program built to be loaded anywhere, `MMAP_BASE` for its loader and for
+the first of its mappings, one constant for the top of every stack. all
+of them move on every exec. **it makes a fault a security feature rather
+than only a bug**: an exploit that assumes a location crashes instead,
+and the kernel says so. a program linked for one place stays in it,
+since that is what it was built for.
 
-the program's own base is the one that cannot move yet, and the
-dependency is worth naming rather than discovering: a program linked at a
-fixed address stays there, so a program that can be loaded anywhere is
-position-independent code, which is the compiler's problem and not the
-kernel's. same for stack
-canaries: every build in this tree has `-fno-stack-protector` on it, and
-turning that around is a flag rather than a version.
+and the kernel's own stack: it is built with `-fno-stack-protector`, and
+turning that around is a flag rather than a version, with a canary out
+of 0.5.0's pool.
 
 what is already here and should be finished with it: NX is on. the vmm
 sets `EFER.NXE` at boot, says so when the cpu has no such bit, and maps
@@ -200,13 +185,15 @@ not set at all, **SMEP and SMAP**: two bits in cr4 that make the hardware
 refuse to run or read user memory while in kernel mode, which turns a
 whole family of kernel bugs into an immediate fault.
 
-**0.5.5 resource limits.** a program can take every page of memory or
-every descriptor there is. `setrlimit`, and defaults set by init. 0.3.13
-drew this line once already and drew it in the other direction: a reserve
-only the kernel may draw on, so that running out costs the program rather
-than the machine. this is the same line between two *people*: a user
-should not be able to fork-bomb a machine into a state where the admin
-cannot log in to kill it.
+**0.5.5 resource limits that hold.** `setrlimit` and `prlimit64` keep
+every limit a program sets, and only the one on descriptors is held to: a
+program can still take every page of memory and every process there is.
+0.3.13 drew this line once already and drew it in the other direction: a
+reserve only the kernel may draw on, so that running out costs the
+program rather than the machine. this is the same line between two
+*people*: memory, processes, the size of a file and time on a cpu held
+to, per process and per user, so that one person cannot fork-bomb a
+machine into a state where another cannot log in to kill it.
 
 and the scheduler learns about niceness, which it currently has no notion
 of. there are no priorities anywhere in it, only one shared run queue
@@ -221,8 +208,7 @@ left is the other direction: a program writing to the kernel's log, which
 is the orderly version of the serial-port logging this project has leaned
 on since 0.1.x. and a file can be made append-only to everybody but the
 kernel, with the kernel holding to it, because a log the logged-in can
-edit is not a log. a system's record of who logged in, and who acted as
-whom, is what such a file is for.
+edit is not a log.
 
 **what this series deliberately does not reach.** no acls and no
 mandatory access control, because owner-group-other with a `capable()`
@@ -249,12 +235,9 @@ finished in an emulator first. what none of them can settle is whether
 the thing boots on hardware somebody else owns, and that is the whole
 point of the series. the cancelled arm port is the precedent and the
 warning: a thing that cannot be tested here does not ship, so each of
-these has to be testable here *and* confirmed there. what reaching that
-hardware means for the system, an installer that writes a disk the
-firmware will boot and the time from somewhere that knows it, is the
-system's, and starting the kernel on firmware with no bios is the
-loader's: uefi is in philemon's roadmap, and what this series owes it is a
-kernel that boots from it unchanged.
+these has to be testable here *and* confirmed there. starting the kernel
+on firmware with no bios is the loader's: uefi is in philemon's roadmap,
+and what this series owes it is a kernel that boots from it unchanged.
 
 **0.6.0 usb.** xhci, and a **keyboard first**, because a machine you cannot
 type on is one you cannot even read the panic off. ps/2 is present on
@@ -286,13 +269,12 @@ cheapest possible second implementation of two drivers that have never had
 one, which is what will find the e1000-shaped assumptions in `net/` and
 the ahci-shaped ones underneath the cache.
 
-**0.6.4 a clock that is right rather than merely increasing.** the tsc's
-frequency has to be measured rather than assumed, the lapic timer
-calibrated against something that is not itself, and the rtc read with its
-drift admitted. and the clock becomes something ring 3 can set and slew,
-because a laptop whose coin cell died is a machine that rejects the entire
-internet until somebody tells it what year it is, and the somebody is an
-ntp client.
+**0.6.4 a clock that is right rather than merely increasing.** the lapic
+timer is calibrated against the pit already; the tsc's frequency has to
+be measured rather than assumed too, and the rtc read with its drift
+admitted. ring 3 can set the clock, and it has to be able to slew it as
+well, with `adjtimex`, because a clock that is only ever set jumps, and
+every timestamp taken across the jump is wrong by it.
 
 **0.6.5 power.** `machine_poweroff` writes 0x2000 to port 0x604 and then to
 0xb004, which is qemu and bochs, and on real hardware neither does
@@ -325,8 +307,8 @@ first three real machines will each say something nobody predicted.
 this kernel has been able to say *what* went wrong since 0.1.x: a panic
 with a symbolised backtrace, `bt`, `ps`, `top`, a memory column, a count
 of syscalls by kind. what it cannot say is why, or where the time went, or
-what a program was doing at the moment it stopped. a debugger is a
-program, and what it needs from the kernel is in this series.
+what a program was doing at the moment it stopped. what a debugger, a
+tracer and a profiler need from the kernel is in this series.
 
 the outside answers here are unusually good, and one of them has been
 sitting in the build the whole time: **the kernel is compiled with `-g`
@@ -358,8 +340,7 @@ reported to whoever is watching. it is the one thing this kernel has
 always refused, one process reaching into another's address space, which
 is why it is a version rather than a program, and why it wants 0.5.1's
 `capable()` underneath it, so that reaching in is a permission somebody
-holds rather than a thing that is possible. the debugger that uses it is
-a program.
+holds rather than a thing that is possible.
 
 **0.7.3 a gdb stub.** the remote serial protocol, over the wire or the
 serial line, so that *real gdb* attaches to this kernel. it is the
@@ -373,9 +354,7 @@ attempt.
 stream: which call, from whom, its arguments as the registers held them,
 and what came back, with every string a call was handed copied out as the
 call read it, since by the time anybody reads the stream the program may
-have written over it. that is the kernel's half, and it is all numbers.
-turning them into words, a path, a set of flag names, the file a
-descriptor is, is a program's work: a tracer's.
+have written over it. the stream is numbers, as the call had them.
 
 **0.7.5 a profiler.** sampling on the lapic timer, which has been per-cpu
 since 0.2.2, and unwinding from wherever the interrupt happened to land,
@@ -409,5 +388,5 @@ much of 0.4.5's errno was aspiration.
 **what the machine still cannot say.** no reverse debugging and no record
 and replay, which is the thing that would make an intermittent bug
 reproducible and is a project rather than a version. no way to see inside
-optimised code, which is a real limit here: gcc optimises the userland,
-and nothing in this plan reads the result.
+optimised code: the kernel is built without the optimiser, and the line
+table read here says nothing about what one did.
