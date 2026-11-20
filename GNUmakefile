@@ -305,6 +305,12 @@ MACHINE_FSCK := $(BINDIR)/bin/fsckext4
 MACHINE_LOADER := $(BINDIR)/lib/ld-musl-x86_64.so.1
 MACHINE_DYNAMIC := $(BINDIR)/bin/dynamic
 
+# and the same program built by the machine's own compiler against its
+# own libc, glibc on the machines this is built on. that libc's shared
+# library and its loader go on the disk too, copied off the machine as
+# they are, to where the machine keeps them, which ldd says
+MACHINE_NATIVE := $(BINDIR)/bin/dynamic-native
+
 # what goes on the medium: init, the checker, those tests and the
 # directories they are in, named one by one rather than the whole of
 # bin/selftests/, so a binary left behind by a test that has since gone
@@ -374,6 +380,11 @@ $(MACHINE_DYNAMIC): $(SELFTEST_DIR)/dynamic.c $(SELFTEST_DIR)/kselftest.h
 	@mkdir -p $(@D)
 	$(MUSL_GCC) $(filter-out -fno-pie,$(SELFTEST_CFLAGS)) -fpie -pie \
 		-Wl,--dynamic-linker=/lib/ld-musl-x86_64.so.1 \
+		-Wl,--build-id=none $< -o $@
+
+$(MACHINE_NATIVE): $(SELFTEST_DIR)/dynamic.c $(SELFTEST_DIR)/kselftest.h
+	@mkdir -p $(@D)
+	$(HOSTCC) $(filter-out -fno-pie,$(SELFTEST_CFLAGS)) -fpie -pie \
 		-Wl,--build-id=none $< -o $@
 
 # the makefile too, since what the archive is made from is written here,
@@ -457,12 +468,13 @@ run: $(BOOTIMG) $(DISK)
 		$(QEMU_EXTRA)
 
 # the disk, which is a real filesystem rather than an archive: built out
-# of whatever is in base/diskroot/, with the program linked against
-# musl's shared library and its loader beside it, and attached to qemu
-# as a second drive. it is deliberately NOT rebuilt by `make run` once
-# it exists: the whole point is that what you write to it stays written,
-# and regenerating it every boot would quietly undo that. `make disk`
-# starts over when you want a clean one.
+# of whatever is in base/diskroot/, with the programs linked against
+# musl's shared library and the machine's own libc's, and their loaders
+# and libraries, beside it, and attached to qemu as a second drive. it
+# is deliberately NOT rebuilt by `make run` once it exists: the whole
+# point is that what you write to it stays written, and regenerating it
+# every boot would quietly undo that. `make disk` starts over when you
+# want a clean one.
 #
 # three partitions: the system, somewhere to *work* that is not the
 # system, and a fat32 one, so the partition scan has something of another
@@ -473,12 +485,19 @@ run: $(BOOTIMG) $(DISK)
 # the resize call exists for, so `make run` boots a machine with
 # something to grow
 $(DISK): $(T)/mkext4 tools/mkfat.py tools/mkdisk.py $(MACHINE_LOADER) \
-         $(MACHINE_DYNAMIC) $(shell find base/diskroot -type f 2>/dev/null)
+         $(MACHINE_DYNAMIC) $(MACHINE_NATIVE) \
+         $(shell find base/diskroot -type f 2>/dev/null)
 	@rm -rf $(BINDIR)/diskroot
 	@cp -r base/diskroot $(BINDIR)/diskroot
 	@mkdir -p $(BINDIR)/diskroot/bin $(BINDIR)/diskroot/lib
-	@install -m 0755 $(MACHINE_DYNAMIC) $(BINDIR)/diskroot/bin/
+	@install -m 0755 $(MACHINE_DYNAMIC) $(MACHINE_NATIVE) \
+		$(BINDIR)/diskroot/bin/
 	@install -m 0755 $(MACHINE_LOADER) $(BINDIR)/diskroot/lib/
+	@libs=$$(ldd $(MACHINE_NATIVE)) && \
+		for f in $$(echo "$$libs" | tr ' \t' '\n\n' | grep '^/'); do \
+			mkdir -p $(BINDIR)/diskroot$$(dirname $$f) && \
+			cp -L $$f $(BINDIR)/diskroot$$f || exit 1; \
+		done
 	@mkdir -p $(BINDIR)/workroot
 	@echo 'somewhere to work that is not the system' > $(BINDIR)/workroot/readme.txt
 	@$(T)/mkext4 $(BINDIR)/diskroot.img $(BINDIR)/diskroot 32 >/dev/null

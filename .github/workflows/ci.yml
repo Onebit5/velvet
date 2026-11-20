@@ -29,12 +29,19 @@ jobs:
       # musl's static libc there is built for a cpu with avx2, which the
       # selftests would link into programs for any x86_64. no variants
       # is the plain amd64 archive, and said on the command line it wins
-      # over the runner's own apt.conf.d, whatever its files are called
+      # over the runner's own apt.conf.d, whatever its files are called.
+      # the runner's own glibc is the plain build, but its start file,
+      # which libc6-dev has, is the amd64v3 one and marks every program
+      # linked with it as needing that cpu, so the program the disk
+      # carries built against glibc would not start on any other: it is
+      # put back as the plain one
       - name: install the toolchain
         run: |
           sudo apt-get -o APT::Architecture-Variants= update -qq
           sudo apt-get -o APT::Architecture-Variants= install -y \
             --no-install-recommends nasm musl-tools qemu-system-x86
+          sudo apt-get -o APT::Architecture-Variants= install -y \
+            --no-install-recommends --reinstall libc6-dev
 
       - name: versions, for when something inevitably breaks
         run: |

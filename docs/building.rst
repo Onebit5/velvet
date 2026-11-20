@@ -8,7 +8,10 @@ requirements
 ------------
 
 - ``gcc``, the machine's compiler, for the kernel, the host suites and the
-  C tools, and for philemon's 64-bit half
+  C tools, and for philemon's 64-bit half, and a program linked against
+  the machine's own libc, whose shared library and loader, found by
+  ``ldd``, the disk carries as the machine has them. that libc has to be
+  built for any x86_64, as the musl below does
 - ``nasm``, for the ``.asm`` sources under ``arch/x86_64/``, and for
   philemon's first stage
 - ``git``, which fetches philemon the first time an image is built
@@ -203,8 +206,9 @@ everything generated comes back out with ``make clean``:
    the data disk ``make run`` attaches.
 
 ``base/diskroot/`` is input, not output: the files that go onto the data
-disk in ``make run`` come from it, and the program linked against musl's
-shared libc and musl's loader go beside them, in ``bin/`` and ``lib/``.
+disk in ``make run`` come from it, and the programs linked against musl's
+shared libc and the machine's own go beside them, in ``bin/``, with
+their loaders and libraries where each libc keeps them.
 the tar the loader hands the kernel has no input directory of its own; it
 is ``bin/init``, ``bin/selftests/`` and ``bin/bin/fsckext4``, packed.
 

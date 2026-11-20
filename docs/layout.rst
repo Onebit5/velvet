@@ -123,8 +123,9 @@ inputs and outputs
 ------------------
 
 ``base/diskroot/`` is an *input*, copied onto the data disk by ``make
-run``, with a program linked against musl's shared libc in ``bin/`` and
-musl's loader in ``lib/`` put beside it. the boot tar the loader hands
+run``, with programs linked against musl's shared libc and the machine's
+own in ``bin/``, and their loaders and libraries where each libc keeps
+them, put beside it. the boot tar the loader hands
 the kernel has no input directory: it is ``/init``, the selftests under
 ``selftests/`` and the checker in ``bin/``, built from
 ``tools/testing/selftests/`` and ``tools/``, and nothing else. it is the

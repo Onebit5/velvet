@@ -188,7 +188,11 @@ contributing new tests (details)
   linked against musl's shared libc and built to be loaded anywhere, and
   goes on the disk, the root ``/init`` moves into, as ``/bin/dynamic``,
   with musl's loader at ``/lib/ld-musl-x86_64.so.1``, the path it names
-  it by, for ``sched/loader`` to start.
+  it by, for ``sched/loader`` to start. it is built a second time by the
+  machine's own compiler against the machine's own libc, as
+  ``/bin/dynamic-native``, and that libc's shared library and its loader
+  are copied off the machine as they are, to the paths ``ldd`` gives,
+  so a program and a loader nobody here built start here too.
 - a test defines ``main`` and includes ``../kselftest.h``. it ends with
   ``ksft_finished()``, which exits with the right status.
 - it is linked static against musl, so the whole of a libc is there. its

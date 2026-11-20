@@ -8,7 +8,9 @@
  * of its own here, and it loads the other, which says what it found.
  * then the program is started by its own name, which the kernel starts
  * the loader it names for, and copies of it name other loaders, there
- * and not, runnable and not, programs and not. last, it runs a script.
+ * and not, runnable and not, programs and not. it runs a script, and
+ * last the same program built against the libc of the machine the build
+ * is on, started by that libc's own loader, both copied off it.
  */
 
 #include "../kselftest.h"
@@ -17,6 +19,9 @@
 
 #define LOADER  "/lib/ld-musl-x86_64.so.1"
 #define PROGRAM "/bin/dynamic"
+
+/* built against the build machine's libc, which is not musl there */
+#define NATIVE "/bin/dynamic-native"
 
 /* a copy of the program naming another loader: one as long as LOADER */
 #define RENAMED   "/tmp/loader-renamed"
@@ -155,7 +160,7 @@ int main(void)
     static char s_arr_out[8192];
 
     ksft_print_header();
-    ksft_set_plan(16);
+    ksft_set_plan(18);
 
     char *arr_alone[] = { LOADER, NULL };
     int i_status = run(LOADER, arr_alone, s_arr_out, sizeof s_arr_out);
@@ -256,6 +261,25 @@ int main(void)
     }
     ksft_test_result(b_ok, "a script whose program names a loader is run "
                      "by the two of them\n");
+
+    char *arr_native[] = { NATIVE, "two", NULL };
+    i_status = run(NATIVE, arr_native, s_arr_out, sizeof s_arr_out);
+    b_ok = ksft_exited(i_status, 0) && says(s_arr_out, "relocated 1")
+           && says(s_arr_out, "moved 1") && says(s_arr_out, "arg two");
+    if (!b_ok) {
+        tell(i_status, s_arr_out);
+    }
+    ksft_test_result(b_ok, "a program linked against the build machine's "
+                     "own libc is started by that libc's loader, both "
+                     "copied off the machine\n");
+    ksft_test_result(ends(s_arr_out, "started", NATIVE)
+                     && says(s_arr_out, "described 1")
+                     && !says(s_arr_out, "base 0")
+                     && !says(s_arr_out, "loader -")
+                     && !says(s_arr_out, "libc -")
+                     && !ends(s_arr_out, "libc", NATIVE),
+                     "and finds the auxiliary vector and maps saying where "
+                     "it, its loader and its libc are\n");
     unlink(RENAMED);
     unlink(ELSEWHERE);
     unlink(SCRIPT);
