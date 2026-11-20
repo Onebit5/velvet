@@ -20,7 +20,8 @@ run here unchanged is an outside answer about the kernel under it.
 0.4.x is linux's interface to programs, all of it, until any program
 built for linux runs here unchanged, however many versions that takes.
 0.5.x is what the kernel keeps from an attacker, 0.6.x is hardware
-nobody emulated, and 0.7.x is a kernel that can say what it is doing.
+nobody emulated, 0.7.x is a kernel that can say what it is doing, and
+0.8.x is a machine a person can use every day, at least a bit.
 
 ## non-goals
 
@@ -81,9 +82,11 @@ asleep for ten milliseconds it never asked for. a waiter on a descriptor
 is woken by whatever changed it, and the calls every event loop is built
 on are here: `epoll`, its create, its ctl and its three waits; `eventfd`,
 a counter a descriptor can wait on; `timerfd`, a timer one can; and
-`signalfd`, signals read as data. *ends when a web server copied off a
-linux machine serves pages here to many clients at once, and no wait
-outlasts what woke it.*
+`signalfd`, signals read as data. and a program has as many descriptors
+as its limit allows, rather than the 64 a fixed table holds, since a
+server with many clients has a descriptor for each. *ends when a web
+server copied off a linux machine serves pages here to many clients at
+once, and no wait outlasts what woke it.*
 
 **0.4.13 programs talking on one machine.** sockets are `AF_INET` only,
 and programs on one machine talk to each other through `AF_UNIX`:
@@ -134,9 +137,12 @@ nothing can be kept from being paged. a mapping that grows and moves,
 answered for the one node there is, protection keys answered as on a cpu
 that has none, `mseal`, and a shadow stack where the cpu keeps one. and
 memory past memory: swap, pages written to a disk when the machine runs
-short and read back when they are touched, `swapon` and `swapoff`. *ends
-when a program with a garbage collector and a jit, a javascript runtime
-copied off a linux machine, passes its own tests here.*
+short and read back when they are touched, `swapon` and `swapoff`. and a
+space holds as many mappings as a program makes, rather than the 64 a
+fixed table holds, since a runtime with a garbage collector and a jit
+makes thousands. *ends when a program with a garbage collector and a
+jit, a javascript runtime copied off a linux machine, passes its own
+tests here.*
 
 **0.4.18 time the rest of the way.** the interval timers count real time
 only, and a process has no timer of its own. the posix timers,
@@ -188,10 +194,12 @@ program rather than the machine. this is the same line between two
 *people*: memory, processes, the size of a file, time on a cpu and the
 size of a core, held to per process and per user, so that one person
 cannot fork-bomb a machine into a state where another cannot log in to
-kill it. and process accounting, `acct`, a record of every process that
-ended. *ends when a fork bomb under one user's limit leaves the machine
-answering another's login, and `prlimit` from a linux machine sets and
-reads the limits here.*
+kill it. the tables of processes and threads grow as they fill, so a
+limit is the only ceiling there is, rather than tables of 32 processes
+and 64 threads. and process accounting, `acct`, a record of every
+process that ended. *ends when a fork bomb under one user's limit
+leaves the machine answering another's login, and `prlimit` from a
+linux machine sets and reads the limits here.*
 
 **0.4.22 one process reaching into another.** what a debugger needs from
 a kernel: stopping a process, reading and writing its registers and its
@@ -527,5 +535,88 @@ much of 0.4.5's errno was aspiration.
 **what the machine still cannot say.** no reverse debugging and no record
 and replay, which is the thing that would make an intermittent bug
 reproducible and is a project rather than a version. no way to see inside
-optimised code: the kernel is built without the optimiser, and the line
-table read here says nothing about what one did.
+optimised code, which the kernel is from 0.8.0 on: the line table says
+which line, and nothing in this plan says what the optimiser did to it.
+
+## 0.8.x: a machine a person can live on
+
+everything above runs on a machine; this series is about a machine a
+person can use every day, at least a bit: a laptop or a desktop from the
+last ten years, with its network, its screen, its sound, its touchpad
+and its battery. it is the least of that, one family of each kind of
+device, the one most machines have, rather than every one, and each
+entry ends with somebody else's program using the device the way it uses
+it on linux, since that is the interface a desktop's programs speak.
+
+**0.8.0 fast enough to live on.** the kernel is built without the
+optimiser, a disk is read with interrupts off while the drive is polled,
+a file is read through a cache of disk blocks and nothing that knows it
+is a file, and every core takes work from one queue. so: the optimiser
+on, with every suite still passing; a drive's completion an interrupt
+rather than a loop; a page cache that keeps a file's pages for every
+reader and reads ahead of one reading in order, which the pages 0.4.10
+shares between mappings grow into; and a run queue per core, with work
+moved between them when one runs dry. *ends when velvet builds itself
+here in no more than twice the time linux takes on the same machine,
+which 0.7.3's numbers keep.*
+
+**0.8.1 the network cards machines have.** e1000 is the card emulators
+pretend to be; desktops and laptops have intel's later ones and
+realtek's. their drivers, and the firmware some of them want, loaded
+from `/lib/firmware` the way linux finds it. *ends when a desktop with
+an intel card and one with a realtek card each lease an address on real
+hardware and move a gigabyte without an error.*
+
+**0.8.2 acpi, read whole.** 0.6.5 reads the first bytes of aml to find a
+sleep type. a laptop says everything else in aml too: its battery, its
+charger, its lid, its buttons, its thermal zones and fans, its
+backlight, and where its touchpad hangs. so an interpreter of the whole
+language, the namespace, the methods and the regions they reach, and
+what it finds put in `/sys` the way linux programs read it. checked
+against acpica's own interpreter running the same tables, method for
+method. *ends when a laptop's battery, charger, lid and backlight read
+here as a linux program reads them there.*
+
+**0.8.3 sleep, and waking up.** a laptop is closed many times a day:
+suspend to memory, and to idle where the firmware has no deeper sleep,
+every driver saving what it needs and putting it back. *ends when a
+laptop closes its lid, sleeps, and wakes with its programs running, a
+hundred times in a row.*
+
+**0.8.4 power that is not wasted.** a core here runs at whatever speed
+the firmware left it and spins when it has nothing to do. frequency
+scaling, and the idle states acpi lists, so an idle machine is a cool
+one. *ends when an idle laptop draws close to what it draws idle under
+linux, measured at the battery.*
+
+**0.8.5 hands on a laptop.** 0.6.0 brings a usb keyboard; a laptop's
+touchpad and touchscreen are on i2c, found through acpi, and a mouse is
+usb too. the i2c controllers, hid over i2c and over usb, and every input
+device in `/dev/input` as the events linux programs read. *ends when
+libinput's own tool, copied off a linux machine, shows the touchpad's
+fingers and the mouse's moves.*
+
+**0.8.6 sound.** intel's high definition audio, its controller and the
+codecs machines carry, and the interface programs play and record
+through, in `/dev/snd`. *ends when `aplay` and `arecord` from a linux
+machine play through the speakers and the headphones and record from
+the microphone.*
+
+**0.8.7 a screen programs draw on.** the framebuffer as `/dev/dri`'s
+simplest device first, which every machine has, then intel's display
+engine: modes chosen rather than inherited, more than one output, and a
+screen that follows a cable plugged in. drawing is the programs' and the
+cpu's: no acceleration. *ends when a wayland compositor copied off a
+linux machine draws a terminal here, on the laptop's screen and on a
+monitor plugged into it.*
+
+**0.8.8 wireless.** intel's wireless cards, with their firmware, and the
+802.11 underneath them that the programs which join networks speak to
+over netlink. *ends when `iwd` from a linux machine joins a wpa2 and a
+wpa3 network, and the machine stays on them as it moves between rooms.*
+
+**what this series deliberately does not reach.** no acceleration for
+graphics, so the desktop is drawn by the cpu; no display engines but
+intel's; no bluetooth, cameras, fingerprint readers or thunderbolt; no
+hibernation. each is a driver, or a family of them, and each can come
+the same way once a machine with one is here to check it on.
