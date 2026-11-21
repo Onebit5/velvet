@@ -21,6 +21,8 @@ jobs:
 
   build-and-test:
     runs-on: ubuntu-latest
+    # the job takes three minutes. a hang is a failure, not six hours
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
