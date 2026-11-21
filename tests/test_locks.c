@@ -157,6 +157,22 @@ static void *hammer_heap(void *arg)
     return NULL;
 }
 
+/*
+ * the heap's first allocations, every thread at once: its classes are
+ * set up by whoever gets there first
+ */
+static pthread_barrier_t s_first_heap_use;
+
+static void *first_heap_use(void *arg)
+{
+    (void)arg;
+    pthread_barrier_wait(&s_first_heap_use);
+    for (size_t sz_want = 16; sz_want <= 1024; sz_want *= 2) {
+        kfree(kmalloc(sz_want));
+    }
+    return NULL;
+}
+
 static void run(void *(*fn)(void *))
 {
     pthread_t t[THREADS];
@@ -209,6 +225,22 @@ int main(void)
           "and the pmm's books balance after all of it");
 
 
+
+    pthread_barrier_init(&s_first_heap_use, NULL, THREADS);
+    run(first_heap_use);
+
+    /* bounded, so a cache linked twice fails here rather than hanging */
+    size_t sz_caches = 0;
+    for (const struct slab_cache *p_cache = slab_first_cache();
+         p_cache != NULL && sz_caches <= 64; p_cache = p_cache->next) {
+        sz_caches++;
+    }
+    CHECK(sz_caches <= 64,
+          "the heap's classes, set up by eight threads at once, are each "
+          "listed once");
+    if (sz_caches > 64) {
+        return failures;        /* every check below walks the caches */
+    }
 
     double_handouts = 0;
     uint64_t heap_at_rest = pmm_free_bytes();
