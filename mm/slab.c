@@ -39,19 +39,7 @@ static struct slab *page_of(const void *object)
 void slab_cache_init(struct slab_cache *cache, const char *name,
                      size_t obj_size)
 {
-    /*
-     * XXX: this check is not atomic and the list below is appended to with
-     * nothing holding it. two cores making an address space at the same
-     * instant both find obj_size zero and both run the rest of this, so
-     * the second links the same node in twice: cache->next ends up
-     * pointing at the cache, and every walk of all_caches then runs
-     * forever, which is what /proc/slabinfo and the heap counters
-     * do. kmalloc's own classes get away with it because they
-     * are built long before a second core exists; addrspace_create calls
-     * this lazily on the first fork. take the slab lock across the whole
-     * of it.
-     */
-    if (cache->obj_size != 0) {
+    if (__atomic_load_n(&cache->obj_size, __ATOMIC_ACQUIRE) != 0) {
         return;             /* already set up */
     }
 
@@ -64,17 +52,27 @@ void slab_cache_init(struct slab_cache *cache, const char *name,
               name, obj_size);
     }
 
-    cache->name = name;
-    cache->obj_size = size;
-    cache->per_slab = (PAGE_SIZE - SLAB_HEADER) / size;
-    cache->partial = NULL;
-    cache->full = NULL;
-    cache->pages = 0;
-    cache->in_use = 0;
-    cache->high_water = 0;
+    /*
+     * checked again under the lock: two first users at once would both
+     * link the cache, leaving it pointing at itself
+     */
+    uint64_t u_flags = spin_lock_irq(&slab_lock);
+    if (cache->obj_size == 0) {
+        cache->name = name;
+        cache->per_slab = (PAGE_SIZE - SLAB_HEADER) / size;
+        cache->partial = NULL;
+        cache->full = NULL;
+        cache->pages = 0;
+        cache->in_use = 0;
+        cache->high_water = 0;
 
-    cache->next = all_caches;
-    all_caches = cache;
+        cache->next = all_caches;
+        all_caches = cache;
+
+        /* last, since the check above reads it without the lock */
+        __atomic_store_n(&cache->obj_size, size, __ATOMIC_RELEASE);
+    }
+    spin_unlock_irq(&slab_lock, u_flags);
 }
 
 

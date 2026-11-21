@@ -218,9 +218,14 @@ static struct thread *pick_next(void)
         return ME->idle;
     }
 
+    /*
+     * and not still on a cpu: one woken between queueing itself and
+     * going to sleep is ready while it is still running there
+     */
     struct thread *t = start->next;
     while (t != start) {
-        if (!is_idle(t) && t->state == THREAD_READY && !t->stopped) {
+        if (!is_idle(t) && t->state == THREAD_READY && !t->stopped
+            && t->on_cpu < 0) {
             return t;
         }
         t = t->next;

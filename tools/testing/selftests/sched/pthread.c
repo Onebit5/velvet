@@ -13,6 +13,13 @@
 #define COUNTERS 4
 #define COUNT_TO 20000
 
+/*
+ * the counting and the handing over, again and again, with new threads
+ * each time: a wake that lands while its waiter is still on its way to
+ * sleep is rare, and every round is another chance at one
+ */
+#define ROUNDS 30
+
 static pid_t gettid_now(void)
 {
     return (pid_t)syscall(SYS_gettid);
@@ -187,30 +194,35 @@ int main(int i_argc, char **arr_argv)
                      && who.i_tid > 0 && gettid_now() == getpid(),
                      "in the same process, a thread of its own\n");
 
-    pthread_t arr_counters[COUNTERS];
-    for (int i_at = 0; i_at < COUNTERS; i_at++) {
-        pthread_create(&arr_counters[i_at], NULL, count, NULL);
-    }
-    for (int i_at = 0; i_at < COUNTERS; i_at++) {
-        pthread_join(arr_counters[i_at], NULL);
-    }
-    ksft_test_result(s_l_count == (long)COUNTERS * COUNT_TO,
-                     "threads counting under one mutex miss nothing\n");
-
+    bool b_counted = true;
     long l_sum = 0;
-    pthread_create(&thread, NULL, produce, NULL);
-    for (int i_at = 1; i_at <= 100; i_at++) {
-        pthread_mutex_lock(&s_lock);
-        while (!s_b_full) {
-            pthread_cond_wait(&s_cond, &s_lock);
+    for (int i_round = 0; i_round < ROUNDS; i_round++) {
+        s_l_count = 0;
+        pthread_t arr_counters[COUNTERS];
+        for (int i_at = 0; i_at < COUNTERS; i_at++) {
+            pthread_create(&arr_counters[i_at], NULL, count, NULL);
         }
-        l_sum += s_i_box;
-        s_b_full = false;
-        pthread_cond_broadcast(&s_cond);
-        pthread_mutex_unlock(&s_lock);
+        for (int i_at = 0; i_at < COUNTERS; i_at++) {
+            pthread_join(arr_counters[i_at], NULL);
+        }
+        b_counted = b_counted && s_l_count == (long)COUNTERS * COUNT_TO;
+
+        pthread_create(&thread, NULL, produce, NULL);
+        for (int i_at = 1; i_at <= 100; i_at++) {
+            pthread_mutex_lock(&s_lock);
+            while (!s_b_full) {
+                pthread_cond_wait(&s_cond, &s_lock);
+            }
+            l_sum += s_i_box;
+            s_b_full = false;
+            pthread_cond_broadcast(&s_cond);
+            pthread_mutex_unlock(&s_lock);
+        }
+        pthread_join(thread, NULL);
     }
-    pthread_join(thread, NULL);
-    ksft_test_result(l_sum == 5050,
+    ksft_test_result(b_counted,
+                     "threads counting under one mutex miss nothing\n");
+    ksft_test_result(l_sum == ROUNDS * 5050L,
                      "and a condition variable hands each value over once\n");
 
     int i_theirs = 0;

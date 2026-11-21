@@ -21,6 +21,8 @@ jobs:
 
   build-and-test:
     runs-on: ubuntu-latest
+    # the job takes three minutes. a hang is a failure, not six hours
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -30,18 +32,20 @@ jobs:
       # selftests would link into programs for any x86_64. no variants
       # is the plain amd64 archive, and said on the command line it wins
       # over the runner's own apt.conf.d, whatever its files are called.
-      # the runner's own glibc is the plain build, but its start file,
-      # which libc6-dev has, is the amd64v3 one and marks every program
-      # linked with it as needing that cpu, so the program the disk
-      # carries built against glibc would not start on any other: it is
-      # put back as the plain one
+      # the runner's own glibc is the amd64v3 build too. its loader and
+      # shared library, which libc6 has and the disk carries as the
+      # machine has them, run avx before the program is started, and its
+      # start file, which libc6-dev has, marks every program linked with
+      # it as needing that cpu. both are put back as the plain ones, and
+      # together: libc6-dev on its own asks for the version of libc6 the
+      # runner already has, and leaves the amd64v3 one in place
       - name: install the toolchain
         run: |
           sudo apt-get -o APT::Architecture-Variants= update -qq
           sudo apt-get -o APT::Architecture-Variants= install -y \
             --no-install-recommends nasm musl-tools qemu-system-x86
           sudo apt-get -o APT::Architecture-Variants= install -y \
-            --no-install-recommends --reinstall libc6-dev
+            --no-install-recommends --reinstall libc6 libc6-dev
 
       - name: versions, for when something inevitably breaks
         run: |

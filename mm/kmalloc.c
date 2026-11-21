@@ -50,7 +50,12 @@ static uint64_t large_pages;    /* pages held by over-sized allocations */
 
 static void ensure_classes(void)
 {
-    if (classes[0].obj_size != 0) {
+    /*
+     * the last one, since they are set up in order: class 0 being ready
+     * says nothing about the rest while another thread is at them
+     */
+    if (__atomic_load_n(&classes[CLASS_COUNT - 1].obj_size,
+                        __ATOMIC_ACQUIRE) != 0) {
         return;
     }
     for (size_t i = 0; i < CLASS_COUNT; i++) {
