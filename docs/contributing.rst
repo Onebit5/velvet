@@ -99,11 +99,14 @@ the workflow
 #. **run the checks locally**: ``make test``, ``make``, ``make boottest``,
    ``make kselftest``. the same commands CI runs.
 
-#. **push and open the pull request** against ``master``. in the description,
-   say what the change is, why it is needed, which subsystem it touches, and
-   how you tested it. if it maps to a roadmap entry, name the entry. if it
-   closes an issue, say so. a new feature must also say where its
-   documentation is (see below).
+#. **push and open the pull request** against ``master``. its description
+   reads like a cover letter. for one commit, it is that commit's message,
+   which ``gh pr create --fill`` puts there. for several, it says what the
+   series does and why, how it was tested, and a line or two on each
+   commit, in order. either way it names the roadmap entry or the issue it
+   is for, and a new feature says where its documentation is (see below).
+   the `pull request template <../.github/PULL_REQUEST_TEMPLATE.md>`_ has
+   the shape.
 
 #. **expect review.** comments are about the code, not the person, and
    "this is wrong because X" is a complete sentence. push follow-up commits
@@ -151,6 +154,11 @@ the body
    commit. `CHANGELOG.md <../CHANGELOG.md>`_ is a hundred of these telling
    one story, and it is the model for how much context is worth writing
    down.
+
+no functional change
+   optional. a commit that changes nothing a program or a user sees may
+   say so in one line at the end of its body: ``no functional change
+   intended.``
 
 no versions
    a commit never names a version. the log records changes, and the numbers
