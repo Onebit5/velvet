@@ -1,30 +1,21 @@
-<!-- thanks for sending a patch. the guide is docs/contributing.rst; this is
-     the checklist it asks for, so a reviewer does not have to ask. -->
+<!-- one commit: put its message here, as it is (`gh pr create --fill`
+     does that), and delete the rest.
 
-## what this changes
+     several: the title is a subject for the series, `subsystem: what it
+     does`, and below is its cover. docs/contributing.rst has the rules. -->
 
-<!-- a paragraph on what it does and why. the diff already shows how. -->
+<!-- what the series does and why, how it was tested, and the roadmap
+     entry or issue it is for (`fixes #12`). -->
 
-## subsystem
+## the commits
 
-<!-- arch, boot, mm, sched, fs, drivers, net, lib, shell, tools, docs -->
+1. `subsystem: subject`
 
-## checklist
+   what it does.
 
-- [ ] branched from the latest `master`
-- [ ] one change, and one subsystem, per commit
-- [ ] `make lint` passes
-- [ ] `make test` passes
-- [ ] `make boottest` passes, if it changes what the machine does
-- [ ] `make kselftest` passes, and a bug a program can see comes with a
-      selftest that fails before the fix
-- [ ] if it changes the syscalls or anything else a program sees, what a
-      program does about it is described above
-- [ ] a new feature brings its documentation in `docs/`
-- [ ] signed off with `git commit -s`
-- [ ] any model assistance disclosed with an `Assisted-by:` trailer
+2. `subsystem: subject`
 
-## notes for review
+   what it does.
 
-<!-- what a reviewer should look at first, or a question you want answered.
-     if you are fixing an issue, quote the number: `fixes #12`. -->
+<!-- optional, when nothing a program or a user sees changes:
+     no functional change intended. -->
