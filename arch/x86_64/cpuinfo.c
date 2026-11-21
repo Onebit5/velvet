@@ -141,6 +141,9 @@ static const struct cpu_flag s_arr_flags[] = {
     { CPUID_EXT_ECX, 27, "ptsc" }, { CPUID_EXT_ECX, 28, "perfctr_llc" },
     { CPUID_EXT_ECX, 29, "mwaitx" },
 
+    /* a word of the kernel's own, which this bit is one way to set */
+    { CPUID_7_EDX, 31, "ssbd" },
+
     { CPUID_7_EBX, 1, "tsc_adjust" }, { CPUID_7_EBX, 3, "bmi1" },
     { CPUID_7_EBX, 4, "hle" }, { CPUID_7_EBX, 8, "bmi2" },
     { CPUID_7_EBX, 9, "erms" }, { CPUID_7_EBX, 10, "invpcid" },
@@ -159,7 +162,6 @@ static const struct cpu_flag s_arr_flags[] = {
     { CPUID_7_EDX, 14, "serialize" }, { CPUID_7_EDX, 16, "tsxldtrk" },
     { CPUID_7_EDX, 18, "pconfig" }, { CPUID_7_EDX, 28, "flush_l1d" },
     { CPUID_7_EDX, 29, "arch_capabilities" },
-    { CPUID_7_EDX, 31, "spec_ctrl_ssbd" },
 };
 
 void cpu_identify(struct cpu_ident *p_out)
